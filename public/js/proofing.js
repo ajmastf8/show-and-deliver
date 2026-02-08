@@ -7,10 +7,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const galleryName = document.getElementById('gallery-name');
   const videoListEl = document.getElementById('video-list');
   const downloadAllBtn = document.getElementById('download-all-btn');
-  // Finish review
+  // Finish review (global)
   const finishReview = document.getElementById('finish-review');
   const finishReviewBtn = document.getElementById('finish-review-btn');
   const finishReviewStatus = document.getElementById('finish-review-status');
+  // Lightbox send review
+  const lightboxSendReview = document.getElementById('lightbox-send-review');
+  const lightboxSendBtn = document.getElementById('lightbox-send-btn');
+  const lightboxSendStatus = document.getElementById('lightbox-send-status');
   // Name modal
   const nameModal = document.getElementById('name-modal');
   const nameForm = document.getElementById('name-form');
@@ -216,6 +220,10 @@ document.addEventListener('DOMContentLoaded', () => {
       lightboxDownloadBtn.style.display = 'none';
     }
 
+    // Reset send status
+    lightboxSendStatus.textContent = '';
+    lightboxSendStatus.className = 'lightbox-send-status';
+
     renderLightboxComments();
   }
 
@@ -243,6 +251,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (!videoComments.length) {
       lightboxComments.innerHTML = '<div class="lb-no-comments">No comments yet. Be the first!</div>';
+      lightboxSendReview.style.display = 'none';
       return;
     }
 
@@ -259,6 +268,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Scroll to bottom
     lightboxComments.scrollTop = lightboxComments.scrollHeight;
+
+    // Show send button if the current viewer has comments on this video
+    const viewerHasComments = viewerName && videoComments.some(c => c.name === viewerName);
+    lightboxSendReview.style.display = viewerHasComments ? 'flex' : 'none';
   }
 
   // Click on timestamp to seek
@@ -318,7 +331,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============ Finish Review & Send Comments ============
 
   function updateFinishReviewVisibility() {
-    // Show if the current viewer has any comments
+    // Show if the current viewer has any comments anywhere
     if (viewerName && allComments.some(c => c.name === viewerName)) {
       finishReview.style.display = '';
     } else {
@@ -326,16 +339,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  finishReviewBtn.addEventListener('click', async () => {
+  async function sendReview(btn, statusEl, originalText) {
     if (!viewerName) {
       showNameModal();
       return;
     }
 
-    finishReviewBtn.disabled = true;
-    finishReviewBtn.textContent = 'Sending...';
-    finishReviewStatus.textContent = '';
-    finishReviewStatus.className = 'finish-review-status';
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+    statusEl.textContent = '';
+    statusEl.className = statusEl.className.replace(/ (success|error)/g, '');
 
     try {
       const res = await fetch(`/api/proofing/${token}/send-review`, {
@@ -345,20 +358,30 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       if (res.ok) {
-        finishReviewStatus.textContent = 'Comments sent! Thank you for your review.';
-        finishReviewStatus.className = 'finish-review-status success';
+        statusEl.textContent = 'Comments sent! Thank you.';
+        statusEl.className += ' success';
       } else {
         const data = await res.json().catch(() => ({}));
-        finishReviewStatus.textContent = data.error || 'Failed to send comments.';
-        finishReviewStatus.className = 'finish-review-status error';
+        statusEl.textContent = data.error || 'Failed to send.';
+        statusEl.className += ' error';
       }
     } catch (err) {
-      finishReviewStatus.textContent = 'Network error. Please try again.';
-      finishReviewStatus.className = 'finish-review-status error';
+      statusEl.textContent = 'Network error. Try again.';
+      statusEl.className += ' error';
     } finally {
-      finishReviewBtn.disabled = false;
-      finishReviewBtn.textContent = 'Finish Review & Send Comments';
+      btn.disabled = false;
+      btn.textContent = originalText;
     }
+  }
+
+  // Global send button (below video list)
+  finishReviewBtn.addEventListener('click', () => {
+    sendReview(finishReviewBtn, finishReviewStatus, 'Finish Review & Send All Comments');
+  });
+
+  // Lightbox send button (per-video comment panel)
+  lightboxSendBtn.addEventListener('click', () => {
+    sendReview(lightboxSendBtn, lightboxSendStatus, 'Finish & Send Comments');
   });
 
   // ============ Download All ============

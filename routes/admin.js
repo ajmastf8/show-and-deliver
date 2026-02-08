@@ -99,14 +99,15 @@ router.put('/galleries/:gid/videos/:vid/thumbnail', requireAuth, (req, res) => {
 
   // Use ffmpeg to extract a single frame at the given timestamp
   // -ss before -i = fast seek, -frames:v 1 = grab one frame
-  // -pix_fmt yuv420p converts 10-bit video to 8-bit for JPEG compatibility
-  // -vf scale with force_divisible_by ensures even dimensions for the encoder
+  // -pix_fmt yuvj420p is the native JPEG pixel format (full-range 8-bit)
+  // -threads 1 avoids thread_encoder_init failures on shared hosting
   const args = [
     '-ss', seekTime,
     '-i', videoPath,
     '-frames:v', '1',
-    '-vf', 'scale=320:180:force_original_aspect_ratio=decrease',
-    '-pix_fmt', 'yuv420p',
+    '-vf', 'scale=320:180',
+    '-pix_fmt', 'yuvj420p',
+    '-threads', '1',
     '-q:v', '2',
     '-y',
     thumbPath
@@ -114,15 +115,16 @@ router.put('/galleries/:gid/videos/:vid/thumbnail', requireAuth, (req, res) => {
 
   execFile(FFMPEG_PATH, args, { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
     // ffmpeg writes info to stderr even on success, so check if the output file exists
-    if (err && (!fs.existsSync(thumbPath) || fs.statSync(thumbPath).size < 100)) {
-      console.error('ffmpeg thumbnail error:', err.message);
-      console.error('ffmpeg stderr (last 500 chars):', stderr ? stderr.slice(-500) : 'none');
-      return res.status(500).json({ error: 'Failed to extract thumbnail. Check server logs.' });
-    }
+    const thumbExists = fs.existsSync(thumbPath) && fs.statSync(thumbPath).size >= 100;
 
-    // Verify the file was actually created
-    if (!fs.existsSync(thumbPath) || fs.statSync(thumbPath).size < 100) {
-      return res.status(500).json({ error: 'ffmpeg produced an empty or missing thumbnail' });
+    if (!thumbExists) {
+      const lastStderr = stderr ? stderr.slice(-800) : 'no stderr';
+      console.error('ffmpeg thumbnail failed:', err ? err.message : 'unknown');
+      console.error('ffmpeg stderr:', lastStderr);
+      return res.status(500).json({
+        error: 'Failed to extract thumbnail',
+        detail: lastStderr.split('\n').filter(l => l.includes('Error') || l.includes('failed') || l.includes('Conversion')).join('; ') || 'Check server logs'
+      });
     }
 
     video.thumbnail = thumbFilename;

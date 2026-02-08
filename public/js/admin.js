@@ -713,7 +713,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadVideos();
       } else {
         const err = await res.json().catch(() => ({}));
-        alert(err.error || 'Failed to save thumbnail.');
+        alert((err.error || 'Failed to save thumbnail.') + (err.detail ? '\n\n' + err.detail : ''));
       }
     } catch (err) {
       alert('Network error saving thumbnail.');

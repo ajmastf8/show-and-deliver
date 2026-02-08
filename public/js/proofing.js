@@ -161,36 +161,42 @@ document.addEventListener('DOMContentLoaded', () => {
 
     videos.forEach(item => {
       if (item.type === 'header') {
-        const header = document.createElement('div');
-        header.className = 'proofing-section-header';
-        header.textContent = item.text;
-        videoListEl.appendChild(header);
+        const h = document.createElement('h2');
+        h.className = 'proofing-section-header';
+        h.textContent = item.text;
+        videoListEl.appendChild(h);
         return;
       }
 
       const commentCount = allComments.filter(c => c.videoId === item.id).length;
 
-      const row = document.createElement('div');
-      row.className = 'proofing-video-item';
-      row.dataset.id = item.id;
+      const card = document.createElement('div');
+      card.className = 'proofing-video-card';
+      card.dataset.id = item.id;
 
       const thumbSrc = item.thumbnail
         ? '/thumbnails/' + encodeURIComponent(item.thumbnail)
         : '';
 
-      row.innerHTML = `
-        ${thumbSrc
-          ? `<img src="${thumbSrc}" class="proofing-thumb" alt="${escapeHtml(item.title)}">`
-          : `<video src="/uploads/${encodeURIComponent(item.filename)}" muted preload="metadata" class="proofing-thumb"></video>`
-        }
-        <div class="proofing-video-info">
-          <div class="proofing-video-title">${escapeHtml(item.title)}</div>
-          <div class="proofing-video-meta">${commentCount} comment${commentCount !== 1 ? 's' : ''}</div>
+      const commentLabel = commentCount > 0
+        ? `<span class="proofing-card-comments">${commentCount} comment${commentCount !== 1 ? 's' : ''}</span>`
+        : '';
+
+      card.innerHTML = `
+        <div class="proofing-thumb-wrapper">
+          ${thumbSrc
+            ? `<img src="${thumbSrc}" alt="${escapeHtml(item.title)}" loading="lazy">`
+            : `<video src="/uploads/${encodeURIComponent(item.filename)}" muted preload="metadata"></video>`
+          }
+        </div>
+        <div class="proofing-card-info">
+          <span class="proofing-card-title">${escapeHtml(item.title)}</span>
+          ${commentLabel}
         </div>
       `;
 
-      row.addEventListener('click', () => openLightbox(item.id));
-      videoListEl.appendChild(row);
+      card.addEventListener('click', () => openLightbox(item.id));
+      videoListEl.appendChild(card);
     });
   }
 

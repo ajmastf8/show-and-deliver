@@ -50,15 +50,21 @@ router.get('/galleries/:gid/videos', requireAuth, (req, res) => {
 });
 
 router.post('/galleries/:gid/videos', requireAuth, (req, res) => {
+  console.log('Upload request received for gallery:', req.params.gid, 'content-length:', req.headers['content-length']);
   upload.single('video')(req, res, (err) => {
     if (err) {
-      console.error('Upload error:', err.message, err.code || '');
+      console.error('Upload error:', err.message, err.code || '', err.stack || '');
       if (err.code === 'LIMIT_FILE_SIZE') {
         return res.status(413).json({ error: 'File too large (max 500 MB)' });
       }
       return res.status(400).json({ error: err.message || 'Upload failed' });
     }
-    if (!req.file) return res.status(400).json({ error: 'No video file — file may have been rejected (allowed: .mp4, .webm, .mov, .m4v)' });
+    if (!req.file) {
+      console.error('Upload rejected: no file in request. Content-Type:', req.headers['content-type']);
+      return res.status(400).json({ error: 'No video file — file may have been rejected (allowed: .mp4, .webm, .mov, .m4v)' });
+    }
+
+    console.log('Upload OK:', req.file.originalname, '->', req.file.filename, '(' + req.file.size + ' bytes, ' + req.file.mimetype + ')');
 
     const videos = readGalleryVideos(req.params.gid);
     const video = {

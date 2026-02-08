@@ -7,7 +7,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const galleryName = document.getElementById('gallery-name');
   const videoListEl = document.getElementById('video-list');
   const downloadAllBtn = document.getElementById('download-all-btn');
+  // Name modal
+  const nameModal = document.getElementById('name-modal');
+  const nameForm = document.getElementById('name-form');
   const viewerNameInput = document.getElementById('viewer-name');
+  const viewerDisplayName = document.getElementById('viewer-display-name');
+
+  let viewerName = localStorage.getItem('proofing-name') || '';
 
   // Lightbox
   const lightbox = document.getElementById('lightbox');
@@ -29,11 +35,19 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentVideoId = null;
   let allComments = [];
 
-  // Restore saved name
-  const savedName = localStorage.getItem('proofing-name') || '';
-  viewerNameInput.value = savedName;
-  viewerNameInput.addEventListener('change', () => {
-    localStorage.setItem('proofing-name', viewerNameInput.value.trim());
+  // Name modal: show if no saved name, otherwise set display name
+  if (viewerName) {
+    viewerDisplayName.textContent = viewerName;
+  }
+
+  nameForm.addEventListener('submit', e => {
+    e.preventDefault();
+    const name = viewerNameInput.value.trim();
+    if (!name) return;
+    viewerName = name;
+    localStorage.setItem('proofing-name', name);
+    viewerDisplayName.textContent = name;
+    nameModal.style.display = 'none';
   });
 
   // ============ Load Gallery ============
@@ -121,6 +135,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     renderVideoList();
+
+    // Show name modal if no saved name
+    if (!viewerName) {
+      nameModal.style.display = 'flex';
+    }
   }
 
   function renderVideoList() {
@@ -248,12 +267,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   commentForm.addEventListener('submit', async e => {
     e.preventDefault();
-    const name = viewerNameInput.value.trim();
-    if (!name) {
-      alert('Please enter your name above before commenting.');
+    if (!viewerName) {
+      nameModal.style.display = 'flex';
       viewerNameInput.focus();
       return;
     }
+    const name = viewerName;
 
     const text = commentText.value.trim();
     if (!text) return;

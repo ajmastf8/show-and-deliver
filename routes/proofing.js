@@ -3,7 +3,6 @@ const path = require('path');
 const fs = require('fs');
 const router = express.Router();
 const { findGalleryByToken, readGalleryVideos, readGalleryComments, writeGalleryComments, UPLOADS_DIR } = require('../lib/dataHelpers');
-const { sendCommentNotification } = require('../lib/email');
 const { generateId } = require('../lib/tokens');
 
 // Middleware: check gallery access + expiration
@@ -61,7 +60,7 @@ router.post('/:token/unlock', checkAccess, (req, res) => {
 });
 
 // POST comment
-router.post('/:token/comments', checkAccess, async (req, res) => {
+router.post('/:token/comments', checkAccess, (req, res) => {
   const { videoId, name, text, timestamp } = req.body;
   if (!videoId || !name || !text) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -78,23 +77,12 @@ router.post('/:token/comments', checkAccess, async (req, res) => {
     name: name.trim(),
     text: text.trim(),
     timestamp: parseFloat(timestamp) || 0,
-    createdAt: new Date().toISOString(),
-    notified: false
+    createdAt: new Date().toISOString()
   };
 
   const comments = readGalleryComments(gallery.id);
   comments.push(comment);
   writeGalleryComments(gallery.id, comments);
-
-  // Send email notification (don't block response)
-  sendCommentNotification({ gallery, video, comment })
-    .then(() => {
-      comment.notified = true;
-      const updated = readGalleryComments(gallery.id);
-      const idx = updated.findIndex(c => c.id === comment.id);
-      if (idx !== -1) { updated[idx].notified = true; writeGalleryComments(gallery.id, updated); }
-    })
-    .catch(err => console.error('Email notification failed:', err.message));
 
   res.json(comment);
 });

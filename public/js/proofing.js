@@ -7,6 +7,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const galleryName = document.getElementById('gallery-name');
   const videoListEl = document.getElementById('video-list');
   const downloadAllBtn = document.getElementById('download-all-btn');
+  // Finish review
+  const finishReview = document.getElementById('finish-review');
+  const finishReviewBtn = document.getElementById('finish-review-btn');
+  const finishReviewStatus = document.getElementById('finish-review-status');
   // Name modal
   const nameModal = document.getElementById('name-modal');
   const nameForm = document.getElementById('name-form');
@@ -312,10 +316,6 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ============ Finish Review & Send Comments ============
-
-  const finishReview = document.getElementById('finish-review');
-  const finishReviewBtn = document.getElementById('finish-review-btn');
-  const finishReviewStatus = document.getElementById('finish-review-status');
 
   function updateFinishReviewVisibility() {
     // Show if the current viewer has any comments

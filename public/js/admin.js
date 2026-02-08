@@ -569,10 +569,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function processUploadQueue(items) {
     for (const item of items) {
-      await uploadFile(item.file, item.title, item.rowId);
+      const ok = await uploadFile(item.file, item.title, item.rowId);
+      if (ok) loadVideos();
     }
-    // Reload once after all uploads complete
-    loadVideos();
   }
 
   function uploadFile(file, title, rowId) {
@@ -602,19 +601,20 @@ document.addEventListener('DOMContentLoaded', () => {
           fill.style.background = '#4caf50';
           status.textContent = 'Done';
           setTimeout(() => row.remove(), 2000);
+          resolve(true);
         } else {
           fill.style.background = '#e00';
           status.textContent = 'Failed';
           addDismissBtn(row);
+          resolve(false);
         }
-        resolve();
       });
 
       xhr.addEventListener('error', () => {
         fill.style.background = '#e00';
         status.textContent = 'Error';
         addDismissBtn(row);
-        resolve();
+        resolve(false);
       });
 
       xhr.open('POST', `/api/admin/galleries/${currentGalleryId}/videos`);

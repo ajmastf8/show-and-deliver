@@ -300,11 +300,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ============ Post Comment ============
 
-  // Enter key pauses video and submits comment, Shift+Enter for newline
+  // Enter key submits comment, Shift+Enter for newline
   commentText.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      lightboxVideo.pause();
       commentForm.requestSubmit();
     }
   });

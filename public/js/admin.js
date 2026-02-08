@@ -808,6 +808,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     const config = await res.json();
+    document.getElementById('resend-api-key').value = config.resendApiKey || '';
     document.getElementById('smtp-host').value = config.host || '';
     document.getElementById('smtp-port').value = config.port || 587;
     document.getElementById('smtp-secure').checked = !!config.secure;
@@ -820,6 +821,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('save-email-btn').addEventListener('click', async () => {
     const body = {
+      resendApiKey: document.getElementById('resend-api-key').value,
       host: document.getElementById('smtp-host').value,
       port: document.getElementById('smtp-port').value,
       secure: document.getElementById('smtp-secure').checked,

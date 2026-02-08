@@ -90,7 +90,7 @@ router.post('/:token/comments', checkAccess, (req, res) => {
 
 // POST send review summary email
 router.post('/:token/send-review', checkAccess, async (req, res) => {
-  const { reviewerName } = req.body;
+  const { reviewerName, videoId } = req.body;
   if (!reviewerName) {
     return res.status(400).json({ error: 'Reviewer name is required' });
   }
@@ -98,14 +98,23 @@ router.post('/:token/send-review', checkAccess, async (req, res) => {
   const gallery = req.gallery;
   const videos = readGalleryVideos(gallery.id);
   const comments = readGalleryComments(gallery.id);
-  const reviewerComments = comments.filter(c => c.name === reviewerName);
+
+  // Filter to this reviewer's comments, scoped to the current video if provided
+  let reviewerComments = comments.filter(c => c.name === reviewerName);
+  if (videoId) {
+    reviewerComments = reviewerComments.filter(c => c.videoId === videoId);
+  }
 
   if (!reviewerComments.length) {
     return res.status(400).json({ error: 'No comments found for this reviewer' });
   }
 
+  // Find the video title for the subject line
+  const video = videoId ? videos.find(v => v.id === videoId) : null;
+  const videoTitle = video ? video.title : null;
+
   try {
-    await sendReviewSummary({ gallery, videos, comments: reviewerComments, reviewerName });
+    await sendReviewSummary({ gallery, videos, comments: reviewerComments, reviewerName, videoTitle });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Failed to send review email' });

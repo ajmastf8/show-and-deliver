@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css?v=4">
-  <link rel="stylesheet" href="/css/proofing.css?v=3">
+  <link rel="stylesheet" href="/css/proofing.css?v=4">
 </head>
 <body>
   <header class="site-header">
@@ -133,12 +133,6 @@
 
     <div id="video-list" class="proofing-video-list"></div>
 
-    <!-- Finish Review (shown below video list when reviewer has comments) -->
-    <div id="finish-review" class="finish-review" style="display:none;">
-      <p class="finish-review-text">When you're done reviewing all videos, send your comments to the photographer.</p>
-      <button id="finish-review-btn" class="btn btn-primary">Finish Review &amp; Send All Comments</button>
-      <p id="finish-review-status" class="finish-review-status"></p>
-    </div>
   </div>
 
   <!-- Lightbox -->
@@ -173,7 +167,7 @@
     </div>
   </div>
 
-  <script src="/js/proofing.js?v=3"></script>
+  <script src="/js/proofing.js?v=4"></script>
   <script>
     document.querySelector('.mobile-menu-btn').addEventListener('click', () => {
       document.getElementById('mobile-nav').classList.toggle('open');

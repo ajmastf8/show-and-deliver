@@ -103,7 +103,14 @@
             <h2>Email Notification Settings</h2>
           </div>
           <div class="settings-panel">
-            <p class="setting-hint" style="margin-bottom:16px;">Configure SMTP to receive email notifications when clients leave comments on proofing galleries.</p>
+            <p class="setting-hint" style="margin-bottom:16px;">Configure email notifications when clients leave comments on proofing galleries. Use Resend (recommended) or SMTP.</p>
+            <div class="setting-group">
+              <label>Resend API Key</label>
+              <input type="password" id="resend-api-key" class="setting-input" placeholder="re_xxxxxxxxx">
+              <p class="setting-hint">Get a free API key at <a href="https://resend.com" target="_blank" style="color:var(--color-primary);">resend.com</a>. If set, SMTP fields below are ignored.</p>
+            </div>
+            <hr style="border:none;border-top:1px solid var(--color-gray-mid);margin:16px 0;">
+            <p class="setting-hint" style="margin-bottom:12px;font-weight:600;color:var(--color-gray-text);">SMTP (alternative to Resend)</p>
             <div class="setting-group">
               <label>SMTP Host</label>
               <input type="text" id="smtp-host" class="setting-input" placeholder="e.g. mail.hosting.com">
@@ -275,6 +282,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=11"></script>
+  <script src="/js/admin.js?v=12"></script>
 </body>
 </html>

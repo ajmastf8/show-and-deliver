@@ -7,10 +7,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const galleryName = document.getElementById('gallery-name');
   const videoListEl = document.getElementById('video-list');
   const downloadAllBtn = document.getElementById('download-all-btn');
-  // Finish review (global)
-  const finishReview = document.getElementById('finish-review');
-  const finishReviewBtn = document.getElementById('finish-review-btn');
-  const finishReviewStatus = document.getElementById('finish-review-status');
   // Lightbox send review
   const lightboxSendReview = document.getElementById('lightbox-send-review');
   const lightboxSendBtn = document.getElementById('lightbox-send-btn');
@@ -152,7 +148,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     renderVideoList();
-    updateFinishReviewVisibility();
 
     // Show name modal if no saved name
     if (!viewerName) {
@@ -322,22 +317,12 @@ document.addEventListener('DOMContentLoaded', () => {
       commentText.value = '';
       renderLightboxComments();
       renderVideoList(); // Update comment counts
-      updateFinishReviewVisibility();
     } else {
       alert('Failed to post comment.');
     }
   });
 
   // ============ Finish Review & Send Comments ============
-
-  function updateFinishReviewVisibility() {
-    // Show if the current viewer has any comments anywhere
-    if (viewerName && allComments.some(c => c.name === viewerName)) {
-      finishReview.style.display = '';
-    } else {
-      finishReview.style.display = 'none';
-    }
-  }
 
   async function sendReview(btn, statusEl, originalText) {
     if (!viewerName) {
@@ -354,7 +339,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch(`/api/proofing/${token}/send-review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reviewerName: viewerName })
+        body: JSON.stringify({ reviewerName: viewerName, videoId: currentVideoId })
       });
 
       if (res.ok) {
@@ -373,11 +358,6 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.textContent = originalText;
     }
   }
-
-  // Global send button (below video list)
-  finishReviewBtn.addEventListener('click', () => {
-    sendReview(finishReviewBtn, finishReviewStatus, 'Finish Review & Send All Comments');
-  });
 
   // Lightbox send button (per-video comment panel)
   lightboxSendBtn.addEventListener('click', () => {

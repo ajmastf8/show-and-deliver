@@ -277,37 +277,6 @@ a { color: inherit; text-decoration: none; }
   padding-top: 0;
 }
 
-/* ---- Finish Review ---- */
-
-.finish-review {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 24px 32px 48px;
-  text-align: center;
-}
-
-.finish-review-text {
-  font-size: 14px;
-  color: var(--color-gray-text);
-  margin-bottom: 16px;
-}
-
-.finish-review-status {
-  font-size: 13px;
-  margin-top: 12px;
-  min-height: 18px;
-}
-
-.finish-review-status.success {
-  color: #4caf50;
-  font-weight: 600;
-}
-
-.finish-review-status.error {
-  color: #e00;
-  font-weight: 600;
-}
-
 /* ---- Lightbox ---- */
 
 .proofing-lightbox {

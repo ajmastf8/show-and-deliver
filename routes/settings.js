@@ -6,10 +6,11 @@ const requireAuth = require('../middleware/auth');
 const { readSettings, writeSettings } = require('../lib/dataHelpers');
 const { sendTestEmail, getEmailConfig } = require('../lib/email');
 
-// Get current email settings (mask password)
+// Get current email settings (mask password and API key)
 router.get('/email', requireAuth, (req, res) => {
   const config = getEmailConfig();
   res.json({
+    resendApiKey: config.resendApiKey ? '••••••••' : '',
     host: config.host,
     port: config.port,
     secure: config.secure,
@@ -27,6 +28,10 @@ router.put('/email', requireAuth, (req, res) => {
   const settings = readSettings();
   const smtp = settings.smtp || {};
 
+  // Only update API key if a real value was sent (not the masked placeholder)
+  if (req.body.resendApiKey !== undefined && req.body.resendApiKey !== '••••••••') {
+    smtp.resendApiKey = req.body.resendApiKey.trim();
+  }
   if (req.body.host !== undefined) smtp.host = req.body.host.trim();
   if (req.body.port !== undefined) smtp.port = parseInt(req.body.port) || 587;
   if (req.body.secure !== undefined) smtp.secure = !!req.body.secure;

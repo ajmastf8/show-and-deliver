@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const router = express.Router();
 const { findGalleryByToken, readGalleryVideos, readGalleryComments, writeGalleryComments, UPLOADS_DIR } = require('../lib/dataHelpers');
+const { sendReviewSummary } = require('../lib/email');
 const { generateId } = require('../lib/tokens');
 
 // Middleware: check gallery access + expiration
@@ -85,6 +86,30 @@ router.post('/:token/comments', checkAccess, (req, res) => {
   writeGalleryComments(gallery.id, comments);
 
   res.json(comment);
+});
+
+// POST send review summary email
+router.post('/:token/send-review', checkAccess, async (req, res) => {
+  const { reviewerName } = req.body;
+  if (!reviewerName) {
+    return res.status(400).json({ error: 'Reviewer name is required' });
+  }
+
+  const gallery = req.gallery;
+  const videos = readGalleryVideos(gallery.id);
+  const comments = readGalleryComments(gallery.id);
+  const reviewerComments = comments.filter(c => c.name === reviewerName);
+
+  if (!reviewerComments.length) {
+    return res.status(400).json({ error: 'No comments found for this reviewer' });
+  }
+
+  try {
+    await sendReviewSummary({ gallery, videos, comments: reviewerComments, reviewerName });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Failed to send review email' });
+  }
 });
 
 // GET download single video

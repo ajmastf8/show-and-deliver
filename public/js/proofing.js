@@ -40,6 +40,12 @@ document.addEventListener('DOMContentLoaded', () => {
     viewerDisplayName.textContent = viewerName;
   }
 
+  function showNameModal() {
+    viewerNameInput.value = viewerName;
+    nameModal.style.display = 'flex';
+    setTimeout(() => viewerNameInput.focus(), 50);
+  }
+
   nameForm.addEventListener('submit', e => {
     e.preventDefault();
     const name = viewerNameInput.value.trim();
@@ -49,6 +55,9 @@ document.addEventListener('DOMContentLoaded', () => {
     viewerDisplayName.textContent = name;
     nameModal.style.display = 'none';
   });
+
+  // Click name badge to change name
+  viewerDisplayName.addEventListener('click', showNameModal);
 
   // ============ Load Gallery ============
 
@@ -135,10 +144,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     renderVideoList();
+    updateFinishReviewVisibility();
 
     // Show name modal if no saved name
     if (!viewerName) {
-      nameModal.style.display = 'flex';
+      showNameModal();
     }
   }
 
@@ -268,8 +278,7 @@ document.addEventListener('DOMContentLoaded', () => {
   commentForm.addEventListener('submit', async e => {
     e.preventDefault();
     if (!viewerName) {
-      nameModal.style.display = 'flex';
-      viewerNameInput.focus();
+      showNameModal();
       return;
     }
     const name = viewerName;
@@ -296,8 +305,59 @@ document.addEventListener('DOMContentLoaded', () => {
       commentText.value = '';
       renderLightboxComments();
       renderVideoList(); // Update comment counts
+      updateFinishReviewVisibility();
     } else {
       alert('Failed to post comment.');
+    }
+  });
+
+  // ============ Finish Review & Send Comments ============
+
+  const finishReview = document.getElementById('finish-review');
+  const finishReviewBtn = document.getElementById('finish-review-btn');
+  const finishReviewStatus = document.getElementById('finish-review-status');
+
+  function updateFinishReviewVisibility() {
+    // Show if the current viewer has any comments
+    if (viewerName && allComments.some(c => c.name === viewerName)) {
+      finishReview.style.display = '';
+    } else {
+      finishReview.style.display = 'none';
+    }
+  }
+
+  finishReviewBtn.addEventListener('click', async () => {
+    if (!viewerName) {
+      showNameModal();
+      return;
+    }
+
+    finishReviewBtn.disabled = true;
+    finishReviewBtn.textContent = 'Sending...';
+    finishReviewStatus.textContent = '';
+    finishReviewStatus.className = 'finish-review-status';
+
+    try {
+      const res = await fetch(`/api/proofing/${token}/send-review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewerName: viewerName })
+      });
+
+      if (res.ok) {
+        finishReviewStatus.textContent = 'Comments sent! Thank you for your review.';
+        finishReviewStatus.className = 'finish-review-status success';
+      } else {
+        const data = await res.json().catch(() => ({}));
+        finishReviewStatus.textContent = data.error || 'Failed to send comments.';
+        finishReviewStatus.className = 'finish-review-status error';
+      }
+    } catch (err) {
+      finishReviewStatus.textContent = 'Network error. Please try again.';
+      finishReviewStatus.className = 'finish-review-status error';
+    } finally {
+      finishReviewBtn.disabled = false;
+      finishReviewBtn.textContent = 'Finish Review & Send Comments';
     }
   });
 

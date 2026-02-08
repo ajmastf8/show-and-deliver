@@ -103,16 +103,18 @@ router.put('/galleries/:gid/videos/:vid/thumbnail', requireAuth, (req, res) => {
     '-ss', seekTime,
     '-i', videoPath,
     '-frames:v', '1',
-    '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2',
+    '-vf', 'scale=320:-1',
     '-q:v', '2',
     '-y',
     thumbPath
   ];
 
-  execFile(FFMPEG_PATH, args, { timeout: 15000 }, (err, stdout, stderr) => {
-    if (err) {
-      console.error('ffmpeg thumbnail error:', err.message, stderr);
-      return res.status(500).json({ error: 'Failed to extract thumbnail: ' + err.message });
+  execFile(FFMPEG_PATH, args, { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    // ffmpeg writes info to stderr even on success, so check if the output file exists
+    if (err && (!fs.existsSync(thumbPath) || fs.statSync(thumbPath).size < 100)) {
+      console.error('ffmpeg thumbnail error:', err.message);
+      console.error('ffmpeg stderr (last 500 chars):', stderr ? stderr.slice(-500) : 'none');
+      return res.status(500).json({ error: 'Failed to extract thumbnail. Check server logs.' });
     }
 
     // Verify the file was actually created

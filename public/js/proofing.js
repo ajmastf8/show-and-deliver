@@ -300,6 +300,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ============ Post Comment ============
 
+  // Enter key submits comment, Shift+Enter for newline
+  commentText.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      commentForm.requestSubmit();
+    }
+  });
+
   commentForm.addEventListener('submit', async e => {
     e.preventDefault();
     if (!viewerName) {

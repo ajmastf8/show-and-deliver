@@ -189,16 +189,40 @@ document.addEventListener('DOMContentLoaded', () => {
         ? `<span class="proofing-card-comments">${commentCount} comment${commentCount !== 1 ? 's' : ''}</span>`
         : '';
 
+      // Format duration
+      let durationLabel = '';
+      if (item.duration) {
+        const mins = Math.floor(item.duration / 60);
+        const secs = Math.floor(item.duration % 60).toString().padStart(2, '0');
+        durationLabel = `<span class="proofing-card-duration">${mins}:${secs}</span>`;
+      }
+
+      // Format resolution
+      let resLabel = '';
+      if (item.width && item.height) {
+        const h = Math.max(item.width, item.height);
+        const v = Math.min(item.width, item.height);
+        if (h >= 3840) resLabel = '4K';
+        else if (h >= 2560) resLabel = '1440p';
+        else if (v >= 1080 || h >= 1920) resLabel = '1080p';
+        else if (v >= 720 || h >= 1280) resLabel = '720p';
+        else resLabel = v + 'p';
+        resLabel = `<span class="proofing-card-res">${resLabel}</span>`;
+      }
+
+      const metaLabels = [durationLabel, resLabel, commentLabel].filter(Boolean).join('');
+
       card.innerHTML = `
         <div class="proofing-thumb-wrapper">
           ${thumbSrc
             ? `<img src="${thumbSrc}" alt="${escapeHtml(item.title)}" loading="lazy">`
             : `<video src="/uploads/${encodeURIComponent(item.filename)}" muted preload="metadata"></video>`
           }
+          ${durationLabel ? `<span class="proofing-thumb-duration">${Math.floor(item.duration / 60)}:${Math.floor(item.duration % 60).toString().padStart(2, '0')}</span>` : ''}
         </div>
         <div class="proofing-card-info">
           <span class="proofing-card-title">${escapeHtml(item.title)}</span>
-          ${commentLabel}
+          <div class="proofing-card-meta">${resLabel}${commentLabel}</div>
         </div>
       `;
 

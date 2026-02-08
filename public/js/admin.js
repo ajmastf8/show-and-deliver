@@ -504,6 +504,26 @@ document.addEventListener('DOMContentLoaded', () => {
     loadVideos();
   });
 
+  // ============ Refresh Metadata ============
+
+  document.getElementById('refresh-metadata-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('refresh-metadata-btn');
+    btn.disabled = true;
+    btn.textContent = 'Scanning...';
+    try {
+      const res = await fetch(`/api/admin/galleries/${currentGalleryId}/probe`, { method: 'POST' });
+      const data = await res.json();
+      btn.textContent = data.updated > 0 ? `Updated ${data.updated} video${data.updated !== 1 ? 's' : ''}` : 'All up to date';
+      if (data.updated > 0) loadVideos();
+    } catch (err) {
+      btn.textContent = 'Error';
+    }
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.textContent = 'Refresh Metadata';
+    }, 2500);
+  });
+
   // ============ Drag & Drop Upload ============
 
   const ALLOWED_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v', 'video/x-quicktime', 'video/mov'];

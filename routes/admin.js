@@ -8,8 +8,9 @@ const requireAuth = require('../middleware/auth');
 const { readGalleryVideos, writeGalleryVideos, readGalleryComments, UPLOADS_DIR, THUMBS_DIR } = require('../lib/dataHelpers');
 const { generateId } = require('../lib/tokens');
 
-// Find ffmpeg: check system PATH first, then home directory static build
+// Find ffmpeg/ffprobe: check system PATH first, then home directory static build
 let FFMPEG_PATH = 'ffmpeg';
+let FFPROBE_PATH = 'ffprobe';
 try {
   execSync('which ffmpeg', { stdio: 'ignore' });
 } catch {
@@ -19,9 +20,42 @@ try {
   if (dirs.length > 0) {
     const candidate = path.join(homeDir, dirs[0], 'ffmpeg');
     if (fs.existsSync(candidate)) FFMPEG_PATH = candidate;
+    const probeCandidate = path.join(homeDir, dirs[0], 'ffprobe');
+    if (fs.existsSync(probeCandidate)) FFPROBE_PATH = probeCandidate;
   }
 }
 console.log('ffmpeg path:', FFMPEG_PATH);
+console.log('ffprobe path:', FFPROBE_PATH);
+
+// Probe video metadata (duration, width, height)
+function probeVideo(filePath) {
+  return new Promise((resolve) => {
+    const args = [
+      '-v', 'quiet',
+      '-print_format', 'json',
+      '-show_format',
+      '-show_streams',
+      filePath
+    ];
+    execFile(FFPROBE_PATH, args, { timeout: 15000, maxBuffer: 5 * 1024 * 1024 }, (err, stdout) => {
+      if (err) {
+        console.error('ffprobe error:', err.message);
+        return resolve(null);
+      }
+      try {
+        const info = JSON.parse(stdout);
+        const videoStream = (info.streams || []).find(s => s.codec_type === 'video');
+        const duration = parseFloat(info.format?.duration) || 0;
+        const width = videoStream ? parseInt(videoStream.width) || 0 : 0;
+        const height = videoStream ? parseInt(videoStream.height) || 0 : 0;
+        resolve({ duration, width, height });
+      } catch (e) {
+        console.error('ffprobe parse error:', e.message);
+        resolve(null);
+      }
+    });
+  });
+}
 
 // Multer config
 const storage = multer.diskStorage({
@@ -51,7 +85,7 @@ router.get('/galleries/:gid/videos', requireAuth, (req, res) => {
 
 router.post('/galleries/:gid/videos', requireAuth, (req, res) => {
   console.log('Upload request received for gallery:', req.params.gid, 'content-length:', req.headers['content-length']);
-  upload.single('video')(req, res, (err) => {
+  upload.single('video')(req, res, async (err) => {
     if (err) {
       console.error('Upload error:', err.message, err.code || '', err.stack || '');
       if (err.code === 'LIMIT_FILE_SIZE') {
@@ -75,6 +109,15 @@ router.post('/galleries/:gid/videos', requireAuth, (req, res) => {
       visible: true,
       createdAt: new Date().toISOString()
     };
+
+    // Probe video metadata (duration, resolution)
+    const meta = await probeVideo(path.join(UPLOADS_DIR, req.file.filename));
+    if (meta) {
+      video.duration = meta.duration;
+      video.width = meta.width;
+      video.height = meta.height;
+    }
+
     videos.push(video);
     writeGalleryVideos(req.params.gid, videos);
     res.json(video);
@@ -286,6 +329,15 @@ router.post('/galleries/:gid/import', requireAuth, async (req, res) => {
         visible: true,
         createdAt: new Date().toISOString()
       };
+
+      // Probe video metadata
+      const meta = await probeVideo(destPath);
+      if (meta) {
+        video.duration = meta.duration;
+        video.width = meta.width;
+        video.height = meta.height;
+      }
+
       videos.push(video);
       imported.push(video);
 
@@ -322,6 +374,27 @@ router.post('/galleries/:gid/import', requireAuth, async (req, res) => {
 
   writeGalleryVideos(req.params.gid, videos);
   res.json({ imported, errors });
+});
+
+// --- Backfill metadata for existing videos ---
+
+router.post('/galleries/:gid/probe', requireAuth, async (req, res) => {
+  const videos = readGalleryVideos(req.params.gid);
+  let updated = 0;
+  for (const video of videos) {
+    if (video.type !== 'video' || video.duration) continue;
+    const filePath = path.join(UPLOADS_DIR, video.filename);
+    if (!fs.existsSync(filePath)) continue;
+    const meta = await probeVideo(filePath);
+    if (meta) {
+      video.duration = meta.duration;
+      video.width = meta.width;
+      video.height = meta.height;
+      updated++;
+    }
+  }
+  writeGalleryVideos(req.params.gid, videos);
+  res.json({ ok: true, updated });
 });
 
 // --- Headers ---

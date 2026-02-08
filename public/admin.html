@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=6">
+  <link rel="stylesheet" href="/css/style.css?v=7">
 </head>
 <body>
   <header class="site-header">
@@ -83,6 +83,7 @@
         <div class="sidebar-actions">
           <button id="new-reels-btn" class="btn btn-secondary btn-sm btn-block">+ Reels Gallery</button>
           <button id="new-proofing-btn" class="btn btn-primary btn-sm btn-block">+ Proofing Gallery</button>
+          <button id="new-collection-btn" class="btn btn-secondary btn-sm btn-block">+ Collection</button>
         </div>
         <div class="sidebar-footer">
           <button id="deploy-btn" class="btn btn-secondary btn-sm btn-block" style="margin-bottom:6px;">Deploy from GitHub</button>
@@ -153,6 +154,36 @@
               <button id="test-email-btn" class="btn btn-secondary">Send Test Email</button>
             </div>
             <div id="email-status" class="email-status"></div>
+          </div>
+        </div>
+
+        <!-- Collection Settings Panel -->
+        <div id="collection-panel" style="display:none;">
+          <div class="panel-header">
+            <h2 id="collection-title"></h2>
+          </div>
+          <div class="settings-panel">
+            <div class="setting-group">
+              <label>Collection Name</label>
+              <input type="text" id="col-setting-name" class="setting-input">
+            </div>
+            <div class="setting-group">
+              <label>Shareable Link</label>
+              <div class="setting-link-row">
+                <input type="text" id="col-setting-link" class="setting-input" readonly>
+                <button id="col-copy-link-btn" class="btn btn-icon" title="Copy link">&#128203;</button>
+                <button id="col-regen-link-btn" class="btn btn-icon" title="Regenerate link">&#x21bb;</button>
+              </div>
+            </div>
+            <div class="setting-group">
+              <label>Galleries in this Collection</label>
+              <div id="col-gallery-picker" class="col-gallery-picker"></div>
+              <p class="setting-hint">Check galleries to include in this collection</p>
+            </div>
+            <div class="settings-actions">
+              <button id="col-save-btn" class="btn btn-primary">Save Collection</button>
+              <button id="col-delete-btn" class="btn btn-danger">Delete Collection</button>
+            </div>
           </div>
         </div>
 
@@ -307,6 +338,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=17"></script>
+  <script src="/js/admin.js?v=18"></script>
 </body>
 </html>

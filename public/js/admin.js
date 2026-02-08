@@ -32,10 +32,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const thumbCtx = thumbCanvas.getContext('2d', { willReadFrequently: true });
   let thumbVideoId = null;
 
+  // Collection panel
+  const collectionPanel = document.getElementById('collection-panel');
+
   // State
   let galleries = [];
+  let collections = [];
   let currentGalleryId = null;
   let currentGallery = null;
+  let currentCollectionId = null;
 
   // ============ Auth ============
 
@@ -76,42 +81,108 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============ Gallery List (Sidebar) ============
 
   async function loadGalleries() {
-    const res = await fetch('/api/galleries');
-    if (!res.ok) {
-      if (res.status === 401) checkAuth();
+    const [gRes, cRes] = await Promise.all([
+      fetch('/api/galleries'),
+      fetch('/api/collections')
+    ]);
+    if (!gRes.ok) {
+      if (gRes.status === 401) checkAuth();
       return;
     }
-    galleries = await res.json();
+    galleries = await gRes.json();
+    collections = cRes.ok ? await cRes.json() : [];
     renderGalleryList();
   }
 
   function renderGalleryList() {
     galleryListEl.innerHTML = '';
-    galleries.forEach(g => {
-      const item = document.createElement('div');
-      item.className = 'gallery-item' + (g.id === currentGalleryId ? ' active' : '');
-      if (g.type === 'proofing') item.classList.add('proofing');
-      item.dataset.id = g.id;
 
-      const badge = g.type === 'proofing'
-        ? `<span class="gallery-badge proofing">Proofing</span>`
-        : `<span class="gallery-badge reels">Reels</span>`;
+    // Build set of gallery IDs that belong to a collection
+    const groupedIds = new Set();
+    collections.forEach(col => {
+      (col.galleryIds || []).forEach(gid => groupedIds.add(gid));
+    });
 
-      const count = g.type === 'proofing'
-        ? `${g.videoCount} video${g.videoCount !== 1 ? 's' : ''} &middot; ${g.commentCount} comment${g.commentCount !== 1 ? 's' : ''}`
-        : `${g.videoCount} video${g.videoCount !== 1 ? 's' : ''}`;
+    // Render collections as groups
+    collections.forEach(col => {
+      const group = document.createElement('div');
+      group.className = 'collection-group';
+      group.dataset.colId = col.id;
 
-      item.innerHTML = `
-        <div class="gallery-item-name">${escapeHtml(g.name)}</div>
-        <div class="gallery-item-meta">${badge} ${count}</div>
+      const colGalleries = (col.galleryIds || [])
+        .map(gid => galleries.find(g => g.id === gid))
+        .filter(Boolean);
+
+      const header = document.createElement('div');
+      header.className = 'collection-group-header' + (col.id === currentCollectionId ? ' active' : '');
+      header.innerHTML = `
+        <span class="collection-group-toggle">&#9660;</span>
+        <span class="collection-group-name">${escapeHtml(col.name)}</span>
+        <span class="collection-group-count">${colGalleries.length}</span>
       `;
 
-      item.addEventListener('click', () => {
-        window.location.hash = `gallery/${g.id}/videos`;
+      // Click header to open collection settings
+      header.addEventListener('click', (e) => {
+        if (e.target.closest('.collection-group-toggle')) {
+          // Toggle collapse
+          group.classList.toggle('collapsed');
+          e.stopPropagation();
+          return;
+        }
+        window.location.hash = `collection/${col.id}/settings`;
       });
 
-      galleryListEl.appendChild(item);
+      group.appendChild(header);
+
+      const galleriesContainer = document.createElement('div');
+      galleriesContainer.className = 'collection-group-galleries';
+
+      colGalleries.forEach(g => {
+        galleriesContainer.appendChild(createGalleryItem(g));
+      });
+
+      group.appendChild(galleriesContainer);
+      galleryListEl.appendChild(group);
     });
+
+    // Ungrouped galleries
+    const ungrouped = galleries.filter(g => !groupedIds.has(g.id));
+    if (ungrouped.length && collections.length) {
+      const label = document.createElement('div');
+      label.className = 'sidebar-ungrouped-label';
+      label.textContent = 'Ungrouped';
+      galleryListEl.appendChild(label);
+    }
+
+    ungrouped.forEach(g => {
+      galleryListEl.appendChild(createGalleryItem(g));
+    });
+  }
+
+  function createGalleryItem(g) {
+    const item = document.createElement('div');
+    item.className = 'gallery-item' + (g.id === currentGalleryId ? ' active' : '');
+    if (g.type === 'proofing') item.classList.add('proofing');
+    item.dataset.id = g.id;
+
+    const badge = g.type === 'proofing'
+      ? `<span class="gallery-badge proofing">Proofing</span>`
+      : `<span class="gallery-badge reels">Reels</span>`;
+
+    const count = g.type === 'proofing'
+      ? `${g.videoCount} video${g.videoCount !== 1 ? 's' : ''} &middot; ${g.commentCount} comment${g.commentCount !== 1 ? 's' : ''}`
+      : `${g.videoCount} video${g.videoCount !== 1 ? 's' : ''}`;
+
+    item.innerHTML = `
+      <div class="gallery-item-name">${escapeHtml(g.name)}</div>
+      <div class="gallery-item-meta">${badge} ${count}</div>
+    `;
+
+    item.addEventListener('click', () => {
+      window.location.hash = `gallery/${g.id}/videos`;
+    });
+
+    return item;
   }
 
   // Email settings panel
@@ -153,17 +224,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function handleHash() {
     const hash = window.location.hash.replace('#', '');
-    const match = hash.match(/^gallery\/([^/]+)\/(videos|settings|comments)$/);
+    const galleryMatch = hash.match(/^gallery\/([^/]+)\/(videos|settings|comments)$/);
+    const galleryShort = hash.match(/^gallery\/([^/]+)$/);
+    const collectionMatch = hash.match(/^collection\/([^/]+)\/settings$/);
 
     if (hash === 'email-settings') {
       showEmailSettings();
-    } else if (match) {
-      const gid = match[1];
-      const tab = match[2];
-      selectGallery(gid, tab);
-    } else if (hash.match(/^gallery\/([^/]+)$/)) {
-      const gid = hash.match(/^gallery\/([^/]+)$/)[1];
-      selectGallery(gid, 'videos');
+    } else if (collectionMatch) {
+      selectCollection(collectionMatch[1]);
+    } else if (galleryMatch) {
+      selectGallery(galleryMatch[1], galleryMatch[2]);
+    } else if (galleryShort) {
+      selectGallery(galleryShort[1], 'videos');
     } else {
       showNoGallery();
     }
@@ -174,9 +246,11 @@ document.addEventListener('DOMContentLoaded', () => {
   function showNoGallery() {
     currentGalleryId = null;
     currentGallery = null;
+    currentCollectionId = null;
     noGallery.style.display = '';
     videosPanel.style.display = 'none';
     emailSettingsPanel.style.display = 'none';
+    collectionPanel.style.display = 'none';
     renderGalleryList();
   }
 
@@ -186,9 +260,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     currentGalleryId = gid;
     currentGallery = gallery;
+    currentCollectionId = null;
     noGallery.style.display = 'none';
     videosPanel.style.display = '';
     emailSettingsPanel.style.display = 'none';
+    collectionPanel.style.display = 'none';
     galleryTitle.textContent = gallery.name;
 
     // Show/hide proofing-only elements
@@ -222,6 +298,110 @@ document.addEventListener('DOMContentLoaded', () => {
     tabContents.forEach(tc => tc.classList.toggle('active', tc.id === 'tab-' + tab));
   }
 
+  // ============ Collections ============
+
+  function selectCollection(colId) {
+    const col = collections.find(c => c.id === colId);
+    if (!col) { showNoGallery(); return; }
+
+    currentCollectionId = colId;
+    currentGalleryId = null;
+    currentGallery = null;
+    noGallery.style.display = 'none';
+    videosPanel.style.display = 'none';
+    emailSettingsPanel.style.display = 'none';
+    collectionPanel.style.display = '';
+
+    document.getElementById('collection-title').textContent = col.name;
+    document.getElementById('col-setting-name').value = col.name;
+    document.getElementById('col-setting-link').value = window.location.origin + '/collection/' + col.token;
+
+    // Gallery picker
+    const picker = document.getElementById('col-gallery-picker');
+    picker.innerHTML = '';
+    galleries.forEach(g => {
+      const row = document.createElement('label');
+      row.className = 'col-gallery-picker-row';
+      const checked = (col.galleryIds || []).includes(g.id) ? 'checked' : '';
+      const badgeClass = g.type === 'proofing' ? 'proofing' : 'reels';
+      const badgeText = g.type === 'proofing' ? 'Proofing' : 'Reels';
+      row.innerHTML = `
+        <input type="checkbox" value="${g.id}" ${checked}>
+        <span class="col-gallery-picker-name">${escapeHtml(g.name)}</span>
+        <span class="col-gallery-picker-badge ${badgeClass}">${badgeText}</span>
+      `;
+      picker.appendChild(row);
+    });
+
+    renderGalleryList();
+  }
+
+  document.getElementById('new-collection-btn').addEventListener('click', async () => {
+    const name = prompt('Collection name:');
+    if (!name) return;
+    const res = await fetch('/api/collections', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name })
+    });
+    if (res.ok) {
+      const col = await res.json();
+      await loadGalleries();
+      window.location.hash = `collection/${col.id}/settings`;
+    }
+  });
+
+  document.getElementById('col-save-btn').addEventListener('click', async () => {
+    if (!currentCollectionId) return;
+    const picker = document.getElementById('col-gallery-picker');
+    const checked = picker.querySelectorAll('input[type="checkbox"]:checked');
+    const galleryIds = Array.from(checked).map(c => c.value);
+
+    const res = await fetch(`/api/collections/${currentCollectionId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: document.getElementById('col-setting-name').value,
+        galleryIds
+      })
+    });
+
+    if (res.ok) {
+      await loadGalleries();
+      selectCollection(currentCollectionId);
+      alert('Collection saved.');
+    }
+  });
+
+  document.getElementById('col-copy-link-btn').addEventListener('click', () => {
+    navigator.clipboard.writeText(document.getElementById('col-setting-link').value);
+    alert('Link copied!');
+  });
+
+  document.getElementById('col-regen-link-btn').addEventListener('click', async () => {
+    if (!confirm('Regenerate link? The old link will stop working.')) return;
+    const res = await fetch(`/api/collections/${currentCollectionId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ regenerateToken: true })
+    });
+    if (res.ok) {
+      await loadGalleries();
+      selectCollection(currentCollectionId);
+      alert('Link regenerated.');
+    }
+  });
+
+  document.getElementById('col-delete-btn').addEventListener('click', async () => {
+    const col = collections.find(c => c.id === currentCollectionId);
+    if (!confirm(`Delete collection "${col ? col.name : ''}"? Galleries will be preserved.`)) return;
+    const res = await fetch(`/api/collections/${currentCollectionId}`, { method: 'DELETE' });
+    if (res.ok) {
+      window.location.hash = '';
+      await loadGalleries();
+    }
+  });
+
   // ============ Create Gallery ============
 
   document.getElementById('new-reels-btn').addEventListener('click', async () => {
@@ -244,6 +424,25 @@ document.addEventListener('DOMContentLoaded', () => {
       body: JSON.stringify({ name, type: 'proofing' })
     });
     const gallery = await res.json();
+
+    // If collections exist, prompt to add to one
+    if (collections.length > 0) {
+      const options = collections.map((c, i) => `${i + 1}. ${c.name}`).join('\n');
+      const choice = prompt(`Add to a collection?\n\n${options}\n\nEnter number (or leave empty to skip):`);
+      if (choice) {
+        const idx = parseInt(choice) - 1;
+        if (idx >= 0 && idx < collections.length) {
+          const col = collections[idx];
+          const updatedIds = [...(col.galleryIds || []), gallery.id];
+          await fetch(`/api/collections/${col.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ galleryIds: updatedIds })
+          });
+        }
+      }
+    }
+
     await loadGalleries();
     window.location.hash = `gallery/${gallery.id}/videos`;
   });
@@ -933,8 +1132,10 @@ document.addEventListener('DOMContentLoaded', () => {
   async function showEmailSettings() {
     currentGalleryId = null;
     currentGallery = null;
+    currentCollectionId = null;
     noGallery.style.display = 'none';
     videosPanel.style.display = 'none';
+    collectionPanel.style.display = 'none';
     emailSettingsPanel.style.display = '';
     renderGalleryList();
     await loadEmailSettings();

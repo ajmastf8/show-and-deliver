@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const router = express.Router();
 const requireAuth = require('../middleware/auth');
-const { readGalleries, writeGalleries, readGalleryVideos, ensureGalleryDir, galleryDir } = require('../lib/dataHelpers');
+const { readGalleries, writeGalleries, readGalleryVideos, ensureGalleryDir, galleryDir, readCollections, writeCollections } = require('../lib/dataHelpers');
 const { generateToken, generateId } = require('../lib/tokens');
 
 // GET all galleries
@@ -90,6 +90,19 @@ router.delete('/:id', requireAuth, (req, res) => {
 
   galleries.splice(index, 1);
   writeGalleries(galleries);
+
+  // Remove deleted gallery from any collections
+  const collections = readCollections();
+  let collectionsChanged = false;
+  collections.forEach(col => {
+    const idx = col.galleryIds.indexOf(gallery.id);
+    if (idx !== -1) {
+      col.galleryIds.splice(idx, 1);
+      collectionsChanged = true;
+    }
+  });
+  if (collectionsChanged) writeCollections(collections);
+
   res.json({ ok: true });
 });
 

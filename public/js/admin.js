@@ -121,6 +121,34 @@ document.addEventListener('DOMContentLoaded', () => {
     window.location.hash = 'email-settings';
   });
 
+  // ============ Deploy from GitHub ============
+
+  document.getElementById('deploy-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('deploy-btn');
+    if (!confirm('Pull latest code from GitHub and deploy?')) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Deploying...';
+
+    try {
+      const res = await fetch('/api/settings/deploy', { method: 'POST' });
+      const data = await res.json();
+
+      if (res.ok) {
+        const msg = data.output || 'Up to date';
+        alert('Deploy successful:\n\n' + msg + '\n\nPage will reload.');
+        window.location.reload();
+      } else {
+        alert('Deploy failed:\n\n' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      alert('Deploy error: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Deploy from GitHub';
+    }
+  });
+
   // ============ Hash Routing ============
 
   function handleHash() {

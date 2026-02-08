@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const { exec } = require('child_process');
+const path = require('path');
 const requireAuth = require('../middleware/auth');
 const { readSettings, writeSettings } = require('../lib/dataHelpers');
 const { sendTestEmail, getEmailConfig } = require('../lib/email');
@@ -51,6 +53,17 @@ router.post('/email/test', requireAuth, async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// Deploy: git pull from GitHub
+router.post('/deploy', requireAuth, (req, res) => {
+  const appDir = path.join(__dirname, '..');
+  exec('git pull origin main', { cwd: appDir, timeout: 30000 }, (err, stdout, stderr) => {
+    if (err) {
+      return res.status(500).json({ error: err.message, stderr });
+    }
+    res.json({ ok: true, output: stdout.trim(), stderr: stderr.trim() });
+  });
 });
 
 module.exports = router;

@@ -847,6 +847,31 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'email-status'; }, 4000);
   });
 
+  // Email error modal
+  const emailErrorModal = document.getElementById('email-error-modal');
+  const emailErrorText = document.getElementById('email-error-text');
+  const emailErrorCopyBtn = document.getElementById('email-error-copy-btn');
+  const emailErrorCloseBtn = document.getElementById('email-error-close-btn');
+
+  function showEmailErrorModal(message) {
+    emailErrorText.textContent = message;
+    emailErrorModal.style.display = 'flex';
+    emailErrorCopyBtn.textContent = 'Copy Error';
+  }
+
+  function closeEmailErrorModal() {
+    emailErrorModal.style.display = 'none';
+  }
+
+  emailErrorCloseBtn.addEventListener('click', closeEmailErrorModal);
+  document.querySelector('.email-error-backdrop').addEventListener('click', closeEmailErrorModal);
+  emailErrorCopyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(emailErrorText.textContent).then(() => {
+      emailErrorCopyBtn.textContent = 'Copied!';
+      setTimeout(() => { emailErrorCopyBtn.textContent = 'Copy Error'; }, 2000);
+    });
+  });
+
   document.getElementById('test-email-btn').addEventListener('click', async () => {
     const statusEl = document.getElementById('email-status');
     statusEl.textContent = 'Sending test email...';
@@ -857,12 +882,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (res.ok) {
       statusEl.textContent = 'Test email sent! Check your inbox.';
       statusEl.className = 'email-status success';
+      setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'email-status'; }, 6000);
     } else {
-      const data = await res.json();
-      statusEl.textContent = data.error || 'Failed to send test email.';
-      statusEl.className = 'email-status error';
+      statusEl.textContent = '';
+      statusEl.className = 'email-status';
+      const data = await res.json().catch(() => ({}));
+      showEmailErrorModal(data.error || 'Failed to send test email.');
     }
-    setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'email-status'; }, 6000);
   });
 
   // ============ Helpers ============

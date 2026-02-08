@@ -604,7 +604,12 @@ document.addEventListener('DOMContentLoaded', () => {
           resolve(true);
         } else {
           fill.style.background = '#e00';
-          status.textContent = 'Failed';
+          let msg = 'Failed';
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (data.error) msg = data.error;
+          } catch (e) { /* ignore */ }
+          status.textContent = msg;
           addDismissBtn(row);
           resolve(false);
         }

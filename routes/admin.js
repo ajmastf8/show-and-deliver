@@ -49,21 +49,30 @@ router.get('/galleries/:gid/videos', requireAuth, (req, res) => {
   res.json(readGalleryVideos(req.params.gid));
 });
 
-router.post('/galleries/:gid/videos', requireAuth, upload.single('video'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No video file' });
+router.post('/galleries/:gid/videos', requireAuth, (req, res) => {
+  upload.single('video')(req, res, (err) => {
+    if (err) {
+      console.error('Upload error:', err.message, err.code || '');
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'File too large (max 500 MB)' });
+      }
+      return res.status(400).json({ error: err.message || 'Upload failed' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No video file — file may have been rejected (allowed: .mp4, .webm, .mov, .m4v)' });
 
-  const videos = readGalleryVideos(req.params.gid);
-  const video = {
-    id: generateId('v_'),
-    type: 'video',
-    title: req.body.title || 'Untitled',
-    filename: req.file.filename,
-    visible: true,
-    createdAt: new Date().toISOString()
-  };
-  videos.push(video);
-  writeGalleryVideos(req.params.gid, videos);
-  res.json(video);
+    const videos = readGalleryVideos(req.params.gid);
+    const video = {
+      id: generateId('v_'),
+      type: 'video',
+      title: req.body.title || 'Untitled',
+      filename: req.file.filename,
+      visible: true,
+      createdAt: new Date().toISOString()
+    };
+    videos.push(video);
+    writeGalleryVideos(req.params.gid, videos);
+    res.json(video);
+  });
 });
 
 router.put('/galleries/:gid/videos/:vid', requireAuth, (req, res) => {
@@ -135,30 +144,39 @@ router.put('/galleries/:gid/videos/:vid/thumbnail', requireAuth, (req, res) => {
 });
 
 // Replace video file (keep metadata, comments, position)
-router.put('/galleries/:gid/videos/:vid/replace', requireAuth, upload.single('video'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No video file' });
+router.put('/galleries/:gid/videos/:vid/replace', requireAuth, (req, res) => {
+  upload.single('video')(req, res, (err) => {
+    if (err) {
+      console.error('Replace upload error:', err.message, err.code || '');
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(413).json({ error: 'File too large (max 500 MB)' });
+      }
+      return res.status(400).json({ error: err.message || 'Upload failed' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'No video file' });
 
-  const videos = readGalleryVideos(req.params.gid);
-  const video = videos.find(v => v.id === req.params.vid);
-  if (!video) return res.status(404).json({ error: 'Not found' });
+    const videos = readGalleryVideos(req.params.gid);
+    const video = videos.find(v => v.id === req.params.vid);
+    if (!video) return res.status(404).json({ error: 'Not found' });
 
-  // Delete old video file
-  const oldPath = path.join(UPLOADS_DIR, video.filename);
-  if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+    // Delete old video file
+    const oldPath = path.join(UPLOADS_DIR, video.filename);
+    if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
 
-  // Delete old thumbnail (new video needs a fresh one)
-  if (video.thumbnail) {
-    const thumbPath = path.join(THUMBS_DIR, video.thumbnail);
-    if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
-    video.thumbnail = null;
-  }
+    // Delete old thumbnail (new video needs a fresh one)
+    if (video.thumbnail) {
+      const thumbPath = path.join(THUMBS_DIR, video.thumbnail);
+      if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
+      video.thumbnail = null;
+    }
 
-  // Update to new file
-  video.filename = req.file.filename;
-  video.replacedAt = new Date().toISOString();
+    // Update to new file
+    video.filename = req.file.filename;
+    video.replacedAt = new Date().toISOString();
 
-  writeGalleryVideos(req.params.gid, videos);
-  res.json(video);
+    writeGalleryVideos(req.params.gid, videos);
+    res.json(video);
+  });
 });
 
 router.delete('/galleries/:gid/videos/:vid', requireAuth, (req, res) => {

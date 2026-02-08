@@ -149,6 +149,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
     renderVideoList();
 
+    // Deep link: open specific video if hash is #video-{id}
+    const hashMatch = window.location.hash.match(/^#video-(.+)$/);
+    if (hashMatch) {
+      const vid = galleryData.videos.find(v => v.id === hashMatch[1]);
+      if (vid) openLightbox(vid.id);
+    }
+
     // Show name modal if no saved name
     if (!viewerName) {
       showNameModal();

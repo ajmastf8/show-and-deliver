@@ -60,14 +60,16 @@ router.post('/email/test', requireAuth, async (req, res) => {
   }
 });
 
-// Deploy: git pull + npm install from GitHub
+// Deploy: git pull + npm install + restart from GitHub
 router.post('/deploy', requireAuth, (req, res) => {
   const appDir = path.join(__dirname, '..');
-  exec('git pull origin main && npm install --production', { cwd: appDir, timeout: 120000 }, (err, stdout, stderr) => {
+  // After pull + install, touch tmp/restart.txt to trigger Passenger restart (cPanel/LiteSpeed)
+  const cmd = 'git pull origin main && npm install --production && mkdir -p tmp && touch tmp/restart.txt';
+  exec(cmd, { cwd: appDir, timeout: 120000 }, (err, stdout, stderr) => {
     if (err) {
       return res.status(500).json({ error: err.message, stderr });
     }
-    res.json({ ok: true, output: stdout.trim(), stderr: stderr.trim() });
+    res.json({ ok: true, output: stdout.trim() + '\n\nNode.js app restart triggered.', stderr: stderr.trim() });
   });
 });
 

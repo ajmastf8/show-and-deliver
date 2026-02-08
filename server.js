@@ -36,6 +36,11 @@ app.use('/api/admin', require('./routes/admin'));
 app.use('/api/settings', require('./routes/settings'));
 app.use('/api/proofing', require('./routes/proofing'));
 
+// Serve admin.html for /admin (no .html needed)
+app.get('/admin', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
 // Serve proofing.html for /gallery/:token
 app.get('/gallery/:token', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'proofing.html'));

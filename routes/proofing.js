@@ -114,7 +114,7 @@ router.post('/:token/send-review', checkAccess, async (req, res) => {
   const videoTitle = video ? video.title : null;
 
   try {
-    await sendReviewSummary({ gallery, videos, comments: reviewerComments, reviewerName, videoTitle });
+    await sendReviewSummary({ gallery, videos, comments: reviewerComments, reviewerName, videoTitle, videoId });
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Failed to send review email' });

@@ -604,12 +604,15 @@ document.addEventListener('DOMContentLoaded', () => {
           resolve(true);
         } else {
           fill.style.background = '#e00';
-          let msg = 'Failed';
+          status.textContent = 'Failed';
+          let detail = `HTTP ${xhr.status}`;
           try {
             const data = JSON.parse(xhr.responseText);
-            if (data.error) msg = data.error;
-          } catch (e) { /* ignore */ }
-          status.textContent = msg;
+            if (data.error) detail = data.error;
+          } catch (e) {
+            if (xhr.responseText) detail += ': ' + xhr.responseText.substring(0, 200);
+          }
+          addErrorDetail(row, detail);
           addDismissBtn(row);
           resolve(false);
         }
@@ -617,7 +620,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
       xhr.addEventListener('error', () => {
         fill.style.background = '#e00';
-        status.textContent = 'Error';
+        status.textContent = 'Failed';
+        addErrorDetail(row, 'Network error — the server may have rejected the request before it reached the app. Check that the file is under 500 MB.');
         addDismissBtn(row);
         resolve(false);
       });
@@ -625,6 +629,13 @@ document.addEventListener('DOMContentLoaded', () => {
       xhr.open('POST', `/api/admin/galleries/${currentGalleryId}/videos`);
       xhr.send(formData);
     });
+  }
+
+  function addErrorDetail(row, message) {
+    const detail = document.createElement('div');
+    detail.className = 'upload-error-detail';
+    detail.textContent = message;
+    row.appendChild(detail);
   }
 
   function addDismissBtn(row) {

@@ -98,12 +98,15 @@ router.put('/galleries/:gid/videos/:vid/thumbnail', requireAuth, (req, res) => {
   const seekTime = Math.max(0, parseFloat(timestamp) || 0).toString();
 
   // Use ffmpeg to extract a single frame at the given timestamp
-  // -ss before -i = fast seek, -frames:v 1 = grab one frame, -vf scale = resize to 320x180
+  // -ss before -i = fast seek, -frames:v 1 = grab one frame
+  // -pix_fmt yuv420p converts 10-bit video to 8-bit for JPEG compatibility
+  // -vf scale with force_divisible_by ensures even dimensions for the encoder
   const args = [
     '-ss', seekTime,
     '-i', videoPath,
     '-frames:v', '1',
-    '-vf', 'scale=320:-1',
+    '-vf', 'scale=320:180:force_original_aspect_ratio=decrease',
+    '-pix_fmt', 'yuv420p',
     '-q:v', '2',
     '-y',
     thumbPath

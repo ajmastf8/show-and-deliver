@@ -1,7 +1,0 @@
-PassengerAppType node
-PassengerStartupFile app.js
-
-RewriteEngine On
-RewriteCond %{REQUEST_FILENAME} !-f
-RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^(.*)$ /app.js [L]

@@ -55,10 +55,10 @@ router.post('/email/test', requireAuth, async (req, res) => {
   }
 });
 
-// Deploy: git pull from GitHub
+// Deploy: git pull + npm install from GitHub
 router.post('/deploy', requireAuth, (req, res) => {
   const appDir = path.join(__dirname, '..');
-  exec('git pull origin main', { cwd: appDir, timeout: 30000 }, (err, stdout, stderr) => {
+  exec('git pull origin main && npm install --production', { cwd: appDir, timeout: 120000 }, (err, stdout, stderr) => {
     if (err) {
       return res.status(500).json({ error: err.message, stderr });
     }

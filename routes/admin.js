@@ -2,10 +2,26 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { execFile, execSync } = require('child_process');
 const router = express.Router();
 const requireAuth = require('../middleware/auth');
 const { readGalleryVideos, writeGalleryVideos, readGalleryComments, UPLOADS_DIR, THUMBS_DIR } = require('../lib/dataHelpers');
 const { generateId } = require('../lib/tokens');
+
+// Find ffmpeg: check system PATH first, then home directory static build
+let FFMPEG_PATH = 'ffmpeg';
+try {
+  execSync('which ffmpeg', { stdio: 'ignore' });
+} catch {
+  // Not in PATH — look for static build in home directory
+  const homeDir = require('os').homedir();
+  const dirs = fs.readdirSync(homeDir).filter(d => d.startsWith('ffmpeg-') && d.endsWith('-static'));
+  if (dirs.length > 0) {
+    const candidate = path.join(homeDir, dirs[0], 'ffmpeg');
+    if (fs.existsSync(candidate)) FFMPEG_PATH = candidate;
+  }
+}
+console.log('ffmpeg path:', FFMPEG_PATH);
 
 // Multer config
 const storage = multer.diskStorage({
@@ -67,27 +83,47 @@ router.put('/galleries/:gid/videos/:vid/thumbnail', requireAuth, (req, res) => {
   const video = videos.find(v => v.id === req.params.vid);
   if (!video) return res.status(404).json({ error: 'Not found' });
 
-  const { dataUrl } = req.body;
-  if (!dataUrl) return res.status(400).json({ error: 'No image data' });
-
-  // Strip data URL prefix — support any image MIME type (jpeg, jpg, png, webp, etc.)
-  const base64Data = dataUrl.replace(/^data:image\/[a-z+]+;base64,/, '');
-
-  // Validate: ensure prefix was actually stripped
-  if (base64Data === dataUrl) {
-    return res.status(400).json({ error: 'Invalid data URL format' });
+  const { timestamp } = req.body;
+  if (timestamp === undefined || timestamp === null) {
+    return res.status(400).json({ error: 'No timestamp provided' });
   }
-  // Validate: a real 320x180 JPEG is several KB; anything tiny means capture failed
-  if (base64Data.length < 100) {
-    return res.status(400).json({ error: 'Thumbnail data is too small — capture may have failed' });
+
+  const videoPath = path.join(UPLOADS_DIR, video.filename);
+  if (!fs.existsSync(videoPath)) {
+    return res.status(404).json({ error: 'Video file not found on disk' });
   }
 
   const thumbFilename = video.id + '.jpg';
-  fs.writeFileSync(path.join(THUMBS_DIR, thumbFilename), base64Data, 'base64');
+  const thumbPath = path.join(THUMBS_DIR, thumbFilename);
+  const seekTime = Math.max(0, parseFloat(timestamp) || 0).toString();
 
-  video.thumbnail = thumbFilename;
-  writeGalleryVideos(req.params.gid, videos);
-  res.json(video);
+  // Use ffmpeg to extract a single frame at the given timestamp
+  // -ss before -i = fast seek, -frames:v 1 = grab one frame, -vf scale = resize to 320x180
+  const args = [
+    '-ss', seekTime,
+    '-i', videoPath,
+    '-frames:v', '1',
+    '-vf', 'scale=320:180:force_original_aspect_ratio=decrease,pad=320:180:(ow-iw)/2:(oh-ih)/2',
+    '-q:v', '2',
+    '-y',
+    thumbPath
+  ];
+
+  execFile(FFMPEG_PATH, args, { timeout: 15000 }, (err, stdout, stderr) => {
+    if (err) {
+      console.error('ffmpeg thumbnail error:', err.message, stderr);
+      return res.status(500).json({ error: 'Failed to extract thumbnail: ' + err.message });
+    }
+
+    // Verify the file was actually created
+    if (!fs.existsSync(thumbPath) || fs.statSync(thumbPath).size < 100) {
+      return res.status(500).json({ error: 'ffmpeg produced an empty or missing thumbnail' });
+    }
+
+    video.thumbnail = thumbFilename;
+    writeGalleryVideos(req.params.gid, videos);
+    res.json(video);
+  });
 });
 
 // Replace video file (keep metadata, comments, position)

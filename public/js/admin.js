@@ -695,57 +695,31 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   thumbCaptureBtn.addEventListener('click', async () => {
-    let dataUrl;
+    const timestamp = thumbVideo.currentTime;
+
+    // Disable button while processing
+    thumbCaptureBtn.disabled = true;
+    thumbCaptureBtn.textContent = 'Generating...';
+
     try {
-      // Bypass GPU readback bug: grab frame via createImageBitmap,
-      // draw to a fresh software-backed canvas, then export from that
-      const bmp = await createImageBitmap(thumbVideo, {
-        resizeWidth: 320,
-        resizeHeight: 180,
-        resizeQuality: 'high'
+      const res = await fetch(`/api/admin/galleries/${currentGalleryId}/videos/${thumbVideoId}/thumbnail`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timestamp })
       });
-      const offscreen = document.createElement('canvas');
-      offscreen.width = 320;
-      offscreen.height = 180;
-      const offCtx = offscreen.getContext('2d', { willReadFrequently: true });
-      offCtx.drawImage(bmp, 0, 0);
-      bmp.close();
-      dataUrl = offscreen.toDataURL('image/jpeg', 0.9);
-    } catch (err) {
-      // Fallback: try reading from the visible thumb canvas
-      try {
-        drawThumbFrame();
-        dataUrl = thumbCanvas.toDataURL('image/jpeg', 0.9);
-      } catch (err2) {
-        alert('Cannot capture thumbnail. The video may be from a restricted source.');
-        return;
+
+      if (res.ok) {
+        closeThumbPicker();
+        loadVideos();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.error || 'Failed to save thumbnail.');
       }
-    }
-
-    // Validate: a real 320x180 JPEG at 0.9 quality is several KB
-    if (!dataUrl || dataUrl === 'data:,' || dataUrl.length < 1000) {
-      alert('Thumbnail capture produced invalid data. Please try again.');
-      return;
-    }
-
-    // DEBUG: download the captured thumbnail locally to verify quality
-    const debugLink = document.createElement('a');
-    debugLink.href = dataUrl;
-    debugLink.download = 'thumb-debug.jpg';
-    debugLink.click();
-
-    const res = await fetch(`/api/admin/galleries/${currentGalleryId}/videos/${thumbVideoId}/thumbnail`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dataUrl })
-    });
-
-    if (res.ok) {
-      closeThumbPicker();
-      loadVideos();
-    } else {
-      const err = await res.json().catch(() => ({}));
-      alert(err.error || 'Failed to save thumbnail.');
+    } catch (err) {
+      alert('Network error saving thumbnail.');
+    } finally {
+      thumbCaptureBtn.disabled = false;
+      thumbCaptureBtn.textContent = 'Use This Frame';
     }
   });
 

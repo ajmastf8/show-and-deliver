@@ -1,0 +1,10 @@
+PassengerAppType node
+PassengerStartupFile app.js
+
+# Allow uploads up to 500 MB (LiteSpeed default is much lower)
+LimitRequestBody 524288000
+
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ /app.js [L]

@@ -1114,17 +1114,53 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     noEl.style.display = 'none';
-    listEl.innerHTML = comments.map(c => `
-      <div class="comment-item">
-        <div class="comment-header">
-          <strong>${escapeHtml(c.name)}</strong>
-          <span class="comment-video-title">on ${escapeHtml(c.videoTitle)}</span>
-          <span class="comment-timestamp">@ ${formatTime(c.timestamp)}</span>
+
+    // Group comments by video
+    const grouped = {};
+    const videoOrder = [];
+    comments.forEach(c => {
+      const key = c.videoId || c.videoTitle || 'Unknown';
+      if (!grouped[key]) {
+        grouped[key] = { title: c.videoTitle || 'Unknown Video', comments: [] };
+        videoOrder.push(key);
+      }
+      grouped[key].comments.push(c);
+    });
+
+    listEl.innerHTML = '';
+    videoOrder.forEach(key => {
+      const group = grouped[key];
+      const section = document.createElement('div');
+      section.className = 'comments-video-group';
+
+      const header = document.createElement('div');
+      header.className = 'comments-video-header';
+      header.innerHTML = `
+        <span class="comments-video-toggle">&#9660;</span>
+        <span class="comments-video-name">${escapeHtml(group.title)}</span>
+        <span class="comments-video-count">${group.comments.length} comment${group.comments.length !== 1 ? 's' : ''}</span>
+      `;
+      header.addEventListener('click', () => {
+        section.classList.toggle('collapsed');
+      });
+
+      const body = document.createElement('div');
+      body.className = 'comments-video-body';
+      body.innerHTML = group.comments.map(c => `
+        <div class="comment-item">
+          <div class="comment-header">
+            <strong>${escapeHtml(c.name)}</strong>
+            <span class="comment-timestamp">@ ${formatTime(c.timestamp)}</span>
+          </div>
+          <div class="comment-text">${escapeHtml(c.text)}</div>
+          <div class="comment-date">${new Date(c.createdAt).toLocaleString()}</div>
         </div>
-        <div class="comment-text">${escapeHtml(c.text)}</div>
-        <div class="comment-date">${new Date(c.createdAt).toLocaleString()}</div>
-      </div>
-    `).join('');
+      `).join('');
+
+      section.appendChild(header);
+      section.appendChild(body);
+      listEl.appendChild(section);
+    });
   }
 
   // ============ Email Settings ============

@@ -375,6 +375,7 @@ a { color: inherit; text-decoration: none; }
   flex-direction: column;
   background: var(--color-black);
   min-width: 0;
+  padding: 0 16px;
 }
 
 .lightbox-video-side video {

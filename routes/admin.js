@@ -108,6 +108,7 @@ router.put('/galleries/:gid/videos/:vid/thumbnail', requireAuth, (req, res) => {
     '-vf', 'scale=320:180',
     '-pix_fmt', 'yuvj420p',
     '-threads', '1',
+    '-strict', 'unofficial',
     '-q:v', '2',
     '-y',
     thumbPath

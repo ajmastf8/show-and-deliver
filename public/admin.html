@@ -261,20 +261,20 @@
   <!-- Hidden file input for video replacement -->
   <input type="file" id="replace-file-input" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v" hidden>
 
-  <!-- Email Error Modal -->
-  <div id="email-error-modal" class="email-error-modal" style="display:none;">
-    <div class="email-error-backdrop"></div>
-    <div class="email-error-modal-inner">
-      <h3>Email Test Failed</h3>
-      <pre id="email-error-text" class="email-error-pre"></pre>
-      <div class="email-error-actions">
-        <button id="email-error-copy-btn" class="btn btn-secondary btn-sm">Copy Error</button>
-        <button id="email-error-close-btn" class="btn btn-primary btn-sm">Close</button>
+  <!-- Email Test Result Modal -->
+  <div id="email-result-modal" class="email-result-modal" style="display:none;">
+    <div class="email-result-backdrop"></div>
+    <div class="email-result-modal-inner">
+      <h3 id="email-result-title"></h3>
+      <pre id="email-result-text" class="email-result-pre"></pre>
+      <div class="email-result-actions">
+        <button id="email-result-copy-btn" class="btn btn-secondary btn-sm" style="display:none;">Copy Error</button>
+        <button id="email-result-close-btn" class="btn btn-primary btn-sm">Close</button>
       </div>
     </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=10"></script>
+  <script src="/js/admin.js?v=11"></script>
 </body>
 </html>

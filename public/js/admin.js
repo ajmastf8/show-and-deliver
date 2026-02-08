@@ -847,28 +847,33 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'email-status'; }, 4000);
   });
 
-  // Email error modal
-  const emailErrorModal = document.getElementById('email-error-modal');
-  const emailErrorText = document.getElementById('email-error-text');
-  const emailErrorCopyBtn = document.getElementById('email-error-copy-btn');
-  const emailErrorCloseBtn = document.getElementById('email-error-close-btn');
+  // Email test result modal
+  const emailResultModal = document.getElementById('email-result-modal');
+  const emailResultTitle = document.getElementById('email-result-title');
+  const emailResultText = document.getElementById('email-result-text');
+  const emailResultCopyBtn = document.getElementById('email-result-copy-btn');
+  const emailResultCloseBtn = document.getElementById('email-result-close-btn');
 
-  function showEmailErrorModal(message) {
-    emailErrorText.textContent = message;
-    emailErrorModal.style.display = 'flex';
-    emailErrorCopyBtn.textContent = 'Copy Error';
+  function showEmailResultModal(type, title, message) {
+    emailResultTitle.textContent = title;
+    emailResultTitle.className = type;
+    emailResultText.textContent = message;
+    emailResultText.className = 'email-result-pre ' + type;
+    emailResultCopyBtn.style.display = type === 'error' ? '' : 'none';
+    emailResultCopyBtn.textContent = 'Copy Error';
+    emailResultModal.style.display = 'flex';
   }
 
-  function closeEmailErrorModal() {
-    emailErrorModal.style.display = 'none';
+  function closeEmailResultModal() {
+    emailResultModal.style.display = 'none';
   }
 
-  emailErrorCloseBtn.addEventListener('click', closeEmailErrorModal);
-  document.querySelector('.email-error-backdrop').addEventListener('click', closeEmailErrorModal);
-  emailErrorCopyBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(emailErrorText.textContent).then(() => {
-      emailErrorCopyBtn.textContent = 'Copied!';
-      setTimeout(() => { emailErrorCopyBtn.textContent = 'Copy Error'; }, 2000);
+  emailResultCloseBtn.addEventListener('click', closeEmailResultModal);
+  document.querySelector('.email-result-backdrop').addEventListener('click', closeEmailResultModal);
+  emailResultCopyBtn.addEventListener('click', () => {
+    navigator.clipboard.writeText(emailResultText.textContent).then(() => {
+      emailResultCopyBtn.textContent = 'Copied!';
+      setTimeout(() => { emailResultCopyBtn.textContent = 'Copy Error'; }, 2000);
     });
   });
 
@@ -878,16 +883,14 @@ document.addEventListener('DOMContentLoaded', () => {
     statusEl.className = 'email-status';
 
     const res = await fetch('/api/settings/email/test', { method: 'POST' });
+    statusEl.textContent = '';
+    statusEl.className = 'email-status';
 
     if (res.ok) {
-      statusEl.textContent = 'Test email sent! Check your inbox.';
-      statusEl.className = 'email-status success';
-      setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'email-status'; }, 6000);
+      showEmailResultModal('success', 'Email Test Succeeded', 'Test email sent successfully! Check your inbox.');
     } else {
-      statusEl.textContent = '';
-      statusEl.className = 'email-status';
       const data = await res.json().catch(() => ({}));
-      showEmailErrorModal(data.error || 'Failed to send test email.');
+      showEmailResultModal('error', 'Email Test Failed', data.error || 'Failed to send test email.');
     }
   });
 

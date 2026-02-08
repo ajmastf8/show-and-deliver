@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=5">
+  <link rel="stylesheet" href="/css/style.css?v=6">
 </head>
 <body>
   <header class="site-header">
@@ -179,7 +179,10 @@
                 </label>
               </div>
               <div id="upload-queue" class="upload-queue"></div>
-              <button type="button" id="add-header-btn" class="btn btn-secondary btn-sm">+ Section Header</button>
+              <div class="upload-actions-row">
+                <button type="button" id="add-header-btn" class="btn btn-secondary btn-sm">+ Section Header</button>
+                <button type="button" id="import-server-btn" class="btn btn-secondary btn-sm">Import from Server</button>
+              </div>
             </div>
             <div id="admin-video-list" class="admin-video-list"></div>
           </div>
@@ -246,6 +249,27 @@
     </div>
   </section>
 
+  <!-- Import from Server Modal -->
+  <div id="import-modal" class="import-modal" style="display:none;">
+    <div class="import-modal-backdrop"></div>
+    <div class="import-modal-inner">
+      <h3>Import from Server</h3>
+      <p class="import-path-hint">Upload files via FTP to: <code id="import-path"></code></p>
+      <div id="import-file-list" class="import-file-list">
+        <p class="import-loading">Scanning...</p>
+      </div>
+      <div class="import-modal-actions">
+        <label class="import-select-all-label">
+          <input type="checkbox" id="import-select-all"> Select all
+        </label>
+        <div class="import-btns">
+          <button id="import-cancel-btn" class="btn btn-secondary btn-sm">Cancel</button>
+          <button id="import-confirm-btn" class="btn btn-primary btn-sm" disabled>Import Selected</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Thumbnail Picker Modal -->
   <div id="thumb-picker" class="thumb-picker">
     <div class="thumb-picker-inner">
@@ -282,6 +306,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=15"></script>
+  <script src="/js/admin.js?v=16"></script>
 </body>
 </html>

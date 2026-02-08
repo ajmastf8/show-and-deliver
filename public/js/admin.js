@@ -647,6 +647,109 @@ document.addEventListener('DOMContentLoaded', () => {
     row.appendChild(btn);
   }
 
+  // ============ Import from Server ============
+
+  const importModal = document.getElementById('import-modal');
+  const importFileList = document.getElementById('import-file-list');
+  const importPathEl = document.getElementById('import-path');
+  const importSelectAll = document.getElementById('import-select-all');
+  const importConfirmBtn = document.getElementById('import-confirm-btn');
+
+  document.getElementById('import-server-btn').addEventListener('click', openImportModal);
+  document.getElementById('import-cancel-btn').addEventListener('click', closeImportModal);
+  document.querySelector('.import-modal-backdrop').addEventListener('click', closeImportModal);
+
+  async function openImportModal() {
+    importModal.style.display = 'flex';
+    importFileList.innerHTML = '<p class="import-loading">Scanning...</p>';
+    importSelectAll.checked = false;
+    importConfirmBtn.disabled = true;
+
+    try {
+      const res = await fetch('/api/admin/import/files');
+      if (!res.ok) throw new Error('Failed to scan');
+      const data = await res.json();
+      importPathEl.textContent = data.path;
+
+      if (!data.files.length) {
+        importFileList.innerHTML = '<p class="import-empty">No video files found. Upload .mp4, .webm, .mov, or .m4v files via FTP to the path above.</p>';
+        return;
+      }
+
+      importFileList.innerHTML = '';
+      data.files.forEach(f => {
+        const row = document.createElement('label');
+        row.className = 'import-file-row';
+        const sizeMB = (f.size / (1024 * 1024)).toFixed(1);
+        row.innerHTML = `
+          <input type="checkbox" class="import-file-check" value="${escapeHtml(f.name)}">
+          <span class="import-file-name">${escapeHtml(f.name)}</span>
+          <span class="import-file-size">${sizeMB} MB</span>
+        `;
+        importFileList.appendChild(row);
+      });
+      updateImportBtn();
+    } catch (err) {
+      importFileList.innerHTML = '<p class="import-empty">Error scanning import folder.</p>';
+    }
+  }
+
+  function closeImportModal() {
+    importModal.style.display = 'none';
+  }
+
+  importSelectAll.addEventListener('change', () => {
+    const checks = importFileList.querySelectorAll('.import-file-check');
+    checks.forEach(c => c.checked = importSelectAll.checked);
+    updateImportBtn();
+  });
+
+  importFileList.addEventListener('change', (e) => {
+    if (e.target.classList.contains('import-file-check')) {
+      updateImportBtn();
+    }
+  });
+
+  function updateImportBtn() {
+    const checked = importFileList.querySelectorAll('.import-file-check:checked');
+    importConfirmBtn.disabled = checked.length === 0;
+    importConfirmBtn.textContent = checked.length > 0
+      ? `Import ${checked.length} File${checked.length !== 1 ? 's' : ''}`
+      : 'Import Selected';
+  }
+
+  importConfirmBtn.addEventListener('click', async () => {
+    const checked = importFileList.querySelectorAll('.import-file-check:checked');
+    const filenames = Array.from(checked).map(c => c.value);
+    if (!filenames.length) return;
+
+    importConfirmBtn.disabled = true;
+    importConfirmBtn.textContent = 'Importing...';
+
+    try {
+      const res = await fetch(`/api/admin/galleries/${currentGalleryId}/import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filenames })
+      });
+      const data = await res.json();
+
+      if (data.imported && data.imported.length) {
+        closeImportModal();
+        loadVideos();
+      }
+
+      if (data.errors && data.errors.length) {
+        alert('Some files failed to import:\n' + data.errors.map(e => e.name + ': ' + e.error).join('\n'));
+      }
+    } catch (err) {
+      alert('Import failed: ' + err.message);
+    } finally {
+      importConfirmBtn.disabled = false;
+      importConfirmBtn.textContent = 'Import Selected';
+    }
+  });
+
   // ============ Thumbnail Picker ============
 
   videoList.addEventListener('click', e => {

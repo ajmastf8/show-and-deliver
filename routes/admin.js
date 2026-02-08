@@ -206,6 +206,124 @@ router.delete('/galleries/:gid/videos/:vid', requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+// --- Import from Server ---
+
+const IMPORT_DIR = path.join(__dirname, '..', 'imports');
+if (!fs.existsSync(IMPORT_DIR)) fs.mkdirSync(IMPORT_DIR, { recursive: true });
+
+const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v'];
+
+// List files available for import
+router.get('/import/files', requireAuth, (req, res) => {
+  try {
+    const files = fs.readdirSync(IMPORT_DIR)
+      .filter(f => {
+        const ext = path.extname(f).toLowerCase();
+        return VIDEO_EXTENSIONS.includes(ext);
+      })
+      .map(f => {
+        const stat = fs.statSync(path.join(IMPORT_DIR, f));
+        return {
+          name: f,
+          size: stat.size,
+          modified: stat.mtime.toISOString()
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+    res.json({ path: IMPORT_DIR, files });
+  } catch (err) {
+    console.error('Import scan error:', err);
+    res.status(500).json({ error: 'Failed to scan import folder' });
+  }
+});
+
+// Import selected files into a gallery
+router.post('/galleries/:gid/import', requireAuth, async (req, res) => {
+  const { filenames } = req.body;
+  if (!filenames || !filenames.length) {
+    return res.status(400).json({ error: 'No files selected' });
+  }
+
+  const videos = readGalleryVideos(req.params.gid);
+  const imported = [];
+  const errors = [];
+
+  for (const originalName of filenames) {
+    // Safety: prevent path traversal
+    const safeName = path.basename(originalName);
+    const srcPath = path.join(IMPORT_DIR, safeName);
+
+    if (!fs.existsSync(srcPath)) {
+      errors.push({ name: safeName, error: 'File not found' });
+      continue;
+    }
+
+    const ext = path.extname(safeName).toLowerCase();
+    if (!VIDEO_EXTENSIONS.includes(ext)) {
+      errors.push({ name: safeName, error: 'Not a supported video format' });
+      continue;
+    }
+
+    try {
+      // Create unique filename and move to uploads
+      const destName = Date.now() + '-' + safeName.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const destPath = path.join(UPLOADS_DIR, destName);
+      fs.renameSync(srcPath, destPath);
+
+      // Create title from filename
+      const title = safeName
+        .replace(/\.[^.]+$/, '')
+        .replace(/[_-]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim() || 'Untitled';
+
+      const videoId = generateId('v_');
+      const video = {
+        id: videoId,
+        type: 'video',
+        title,
+        filename: destName,
+        visible: true,
+        createdAt: new Date().toISOString()
+      };
+      videos.push(video);
+      imported.push(video);
+
+      // Generate thumbnail in background
+      const thumbFilename = videoId + '.jpg';
+      const thumbPath = path.join(THUMBS_DIR, thumbFilename);
+      const args = [
+        '-ss', '1',
+        '-i', destPath,
+        '-frames:v', '1',
+        '-vf', 'scale=320:180',
+        '-pix_fmt', 'yuvj420p',
+        '-threads', '1',
+        '-strict', 'unofficial',
+        '-q:v', '2',
+        '-y',
+        thumbPath
+      ];
+      execFile(FFMPEG_PATH, args, { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }, (err) => {
+        if (!err && fs.existsSync(thumbPath) && fs.statSync(thumbPath).size >= 100) {
+          const vids = readGalleryVideos(req.params.gid);
+          const v = vids.find(v => v.id === videoId);
+          if (v) {
+            v.thumbnail = thumbFilename;
+            writeGalleryVideos(req.params.gid, vids);
+          }
+        }
+      });
+    } catch (err) {
+      console.error('Import error for', safeName, ':', err.message);
+      errors.push({ name: safeName, error: err.message });
+    }
+  }
+
+  writeGalleryVideos(req.params.gid, videos);
+  res.json({ imported, errors });
+});
+
 // --- Headers ---
 
 router.post('/galleries/:gid/headers', requireAuth, (req, res) => {

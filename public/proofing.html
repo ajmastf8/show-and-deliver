@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gallery — AJ Mast</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/proofing.css">
+</head>
+<body>
+  <!-- Expired / Not Found -->
+  <div id="error-view" class="error-view" style="display:none;">
+    <div class="error-inner">
+      <h1 id="error-title">Gallery Not Found</h1>
+      <p id="error-message">This gallery may have been removed or the link is incorrect.</p>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div id="loading-view" class="loading-view">
+    <p>Loading gallery...</p>
+  </div>
+
+  <!-- Password Prompt -->
+  <div id="password-view" class="password-view" style="display:none;">
+    <div class="password-inner">
+      <h1 id="password-gallery-name"></h1>
+      <p>This gallery is password protected.</p>
+      <form id="password-form" class="password-form">
+        <input type="password" id="gallery-password" placeholder="Enter password" required>
+        <button type="submit" class="btn btn-primary">Enter</button>
+      </form>
+      <p id="password-error" class="error-text"></p>
+    </div>
+  </div>
+
+  <!-- Gallery View -->
+  <div id="gallery-view" style="display:none;">
+    <header class="proofing-header">
+      <h1 id="gallery-name"></h1>
+      <div class="proofing-header-actions">
+        <button id="download-all-btn" class="btn btn-primary" style="display:none;">Download All</button>
+      </div>
+    </header>
+
+    <!-- Name prompt -->
+    <div id="name-prompt" class="name-prompt">
+      <label>Your name (for comments):</label>
+      <input type="text" id="viewer-name" placeholder="Enter your name">
+    </div>
+
+    <div id="video-list" class="proofing-video-list"></div>
+  </div>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="proofing-lightbox" style="display:none;">
+    <div class="lightbox-backdrop"></div>
+    <div class="lightbox-container">
+      <button class="lightbox-close-btn">&times;</button>
+      <div class="lightbox-body">
+        <div class="lightbox-video-side">
+          <video id="lightbox-video" controls></video>
+          <div class="lightbox-video-title">
+            <h2 id="lightbox-title"></h2>
+            <button id="lightbox-download-btn" class="btn btn-sm" style="display:none;">Download</button>
+          </div>
+        </div>
+        <div class="lightbox-comments-side">
+          <h3>Comments</h3>
+          <div id="lightbox-comments" class="lightbox-comments-list"></div>
+          <form id="comment-form" class="comment-form">
+            <div class="comment-timestamp-display">
+              Commenting at <span id="comment-time-display">0:00</span>
+            </div>
+            <textarea id="comment-text" placeholder="Leave a comment..." rows="3" required></textarea>
+            <button type="submit" class="btn btn-primary btn-sm">Post Comment</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/proofing.js"></script>
+</body>
+</html>

@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin — Video Reels</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css?v=3">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="https://www.ajmast.com" class="logo">
+        <img src="/images/800-LONG%20AJM%20BADGE%2011202015.png" alt="Photographer AJ Mast" class="logo-img">
+      </a>
+      <nav class="header-nav">
+        <div class="nav-dropdown">
+          <span class="nav-link">Portfolios</span>
+          <div class="nav-dropdown-menu">
+            <a href="https://www.ajmast.com/index/G0000XKNIOVIrTU4">Overview</a>
+            <a href="https://www.ajmast.com/index/G0000sREZSKkwReA">Portraits</a>
+            <a href="https://www.ajmast.com/index/G0000reodLR4CRvY">Corporate Communications</a>
+            <a href="https://www.ajmast.com/index/G0000p52WS_F6XsU">Drone Photography</a>
+            <a href="https://www.ajmast.com/index/G0000PmdPEoex3E0">Editorial</a>
+          </div>
+        </div>
+        <div class="nav-dropdown">
+          <span class="nav-link">Stories</span>
+          <div class="nav-dropdown-menu">
+            <a href="https://www.ajmast.com/index/G0000_cJcHD5D1f4">FedEx Mass Shooting</a>
+            <a href="https://www.ajmast.com/index/G0000UqO_NV5jGxA">Racial Justice Protests</a>
+            <a href="https://www.ajmast.com/index/G000030vvio6QBkA">Abortion Protests</a>
+            <a href="https://www.ajmast.com/index/G0000KnqP3CeUoGc">Dayton Shooting Vigil</a>
+            <a href="https://www.ajmast.com/index/G0000eg1NcGUXGuU">Monon Trail</a>
+          </div>
+        </div>
+        <a href="/" class="nav-link">Video</a>
+        <a href="https://instagram.com/ajmastshop" class="nav-link" target="_blank" rel="noopener">Instagram</a>
+        <a href="https://www.ajmast.com/#!/about" class="nav-link">About</a>
+        <a href="https://www.ajmast.com/#!/contact" class="nav-link">Contact</a>
+        <div class="nav-dropdown">
+          <span class="nav-link">Archive</span>
+          <div class="nav-dropdown-menu">
+            <a href="https://www.ajmast.com/archive">Browse Archive</a>
+          </div>
+        </div>
+        <a href="https://ajmast.com" class="nav-link">Shop Things AJ Makes</a>
+        <a href="https://www.ajmast.com/#!/software" class="nav-link">Software AJ Produces</a>
+      </nav>
+      <div class="header-contact">
+        <a href="mailto:aj@ajmast.com">aj@ajmast.com</a>
+        <span class="contact-sep">//</span>
+        <span>317.727.9251</span>
+        <span class="contact-sep">//</span>
+        <span>Indianapolis Based</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Login -->
+  <section id="login-section" class="container login-section" style="display:none;">
+    <form id="login-form" class="login-form">
+      <h2>Admin Login</h2>
+      <input type="text" name="username" placeholder="Username" required autocomplete="username">
+      <input type="password" name="password" placeholder="Password" required autocomplete="current-password">
+      <button type="submit" class="btn btn-primary">Login</button>
+      <p id="login-error" class="error-text"></p>
+    </form>
+  </section>
+
+  <!-- Dashboard -->
+  <section id="dashboard-section" style="display:none;">
+    <div class="admin-layout">
+      <!-- Sidebar -->
+      <aside class="admin-sidebar">
+        <div class="sidebar-header">
+          <h3>Galleries</h3>
+          <button id="logout-btn" class="btn btn-secondary btn-sm">Logout</button>
+        </div>
+        <div id="gallery-list" class="gallery-list"></div>
+        <div class="sidebar-actions">
+          <button id="new-reels-btn" class="btn btn-secondary btn-sm btn-block">+ Reels Gallery</button>
+          <button id="new-proofing-btn" class="btn btn-primary btn-sm btn-block">+ Proofing Gallery</button>
+        </div>
+        <div class="sidebar-footer">
+          <button id="site-settings-btn" class="btn btn-secondary btn-sm btn-block">Email Settings</button>
+        </div>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="admin-main">
+        <!-- No gallery selected -->
+        <div id="no-gallery" class="empty-state">
+          <p>Select a gallery from the sidebar or create a new one.</p>
+        </div>
+
+        <!-- Email Settings Panel -->
+        <div id="email-settings-panel" style="display:none;">
+          <div class="panel-header">
+            <h2>Email Notification Settings</h2>
+          </div>
+          <div class="settings-panel">
+            <p class="setting-hint" style="margin-bottom:16px;">Configure SMTP to receive email notifications when clients leave comments on proofing galleries.</p>
+            <div class="setting-group">
+              <label>SMTP Host</label>
+              <input type="text" id="smtp-host" class="setting-input" placeholder="e.g. mail.hosting.com">
+            </div>
+            <div class="setting-group">
+              <label>SMTP Port</label>
+              <input type="number" id="smtp-port" class="setting-input" placeholder="587" style="width:120px;">
+            </div>
+            <div class="setting-group">
+              <label>Security</label>
+              <label class="toggle-label">
+                <input type="checkbox" id="smtp-secure">
+                <span>Use SSL/TLS (port 465). Leave unchecked for STARTTLS (port 587).</span>
+              </label>
+            </div>
+            <div class="setting-group">
+              <label>SMTP Username</label>
+              <input type="text" id="smtp-user" class="setting-input" placeholder="e.g. notifications@yourdomain.com">
+            </div>
+            <div class="setting-group">
+              <label>SMTP Password</label>
+              <input type="password" id="smtp-pass" class="setting-input" placeholder="SMTP password">
+            </div>
+            <div class="setting-group">
+              <label>From Address</label>
+              <input type="text" id="smtp-from" class="setting-input" placeholder='"AJ Mast Video" <notifications@ajmast.com>'>
+            </div>
+            <div class="setting-group">
+              <label>Notification Email (To)</label>
+              <input type="email" id="smtp-admin-email" class="setting-input" placeholder="aj@ajmast.com">
+              <p class="setting-hint">Where comment notifications are sent</p>
+            </div>
+            <div class="setting-group">
+              <label>Site Base URL</label>
+              <input type="text" id="smtp-base-url" class="setting-input" placeholder="https://video.ajmast.com">
+              <p class="setting-hint">Used for links in notification emails</p>
+            </div>
+            <div class="settings-actions">
+              <button id="save-email-btn" class="btn btn-primary">Save Email Settings</button>
+              <button id="test-email-btn" class="btn btn-secondary">Send Test Email</button>
+            </div>
+            <div id="email-status" class="email-status"></div>
+          </div>
+        </div>
+
+        <!-- Gallery Videos Panel -->
+        <div id="videos-panel" style="display:none;">
+          <div class="panel-header">
+            <h2 id="gallery-title"></h2>
+            <div class="panel-tabs">
+              <button class="tab-btn active" data-tab="videos">Videos</button>
+              <button class="tab-btn" data-tab="settings">Settings</button>
+              <button class="tab-btn tab-comments" data-tab="comments" style="display:none;">Comments</button>
+            </div>
+          </div>
+
+          <!-- Videos Tab -->
+          <div id="tab-videos" class="tab-content active">
+            <div id="upload-area" class="upload-area">
+              <div class="upload-drop-zone" id="drop-zone">
+                <p>Drag &amp; drop video files here</p>
+                <p class="upload-hint">or</p>
+                <label class="btn btn-primary upload-browse-btn">
+                  Browse Files
+                  <input type="file" id="file-input" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v" multiple hidden>
+                </label>
+              </div>
+              <div id="upload-queue" class="upload-queue"></div>
+              <button type="button" id="add-header-btn" class="btn btn-secondary btn-sm">+ Section Header</button>
+            </div>
+            <div id="admin-video-list" class="admin-video-list"></div>
+          </div>
+
+          <!-- Settings Tab -->
+          <div id="tab-settings" class="tab-content">
+            <div class="settings-panel">
+              <div class="setting-group">
+                <label>Gallery Name</label>
+                <input type="text" id="setting-name" class="setting-input">
+              </div>
+              <div class="setting-group">
+                <label>Type</label>
+                <span id="setting-type" class="setting-value"></span>
+              </div>
+              <div class="setting-group setting-proofing-only" style="display:none;">
+                <label>Access Link</label>
+                <div class="setting-link-row">
+                  <input type="text" id="setting-link" class="setting-input" readonly>
+                  <button id="copy-link-btn" class="btn btn-icon" title="Copy link">&#128203;</button>
+                  <button id="regen-link-btn" class="btn btn-icon" title="Regenerate link">&#x21bb;</button>
+                </div>
+              </div>
+              <div class="setting-group setting-proofing-only" style="display:none;">
+                <label>Password</label>
+                <input type="text" id="setting-password" class="setting-input" placeholder="No password (anyone with link can access)">
+                <p class="setting-hint">Leave empty for no password protection</p>
+              </div>
+              <div class="setting-group setting-proofing-only" style="display:none;">
+                <label>Downloads</label>
+                <label class="toggle-label">
+                  <input type="checkbox" id="setting-downloads">
+                  <span>Allow clients to download videos</span>
+                </label>
+              </div>
+              <div class="setting-group setting-proofing-only" style="display:none;">
+                <label>Expiration Date</label>
+                <input type="date" id="setting-expires" class="setting-input">
+                <p class="setting-hint">Leave empty for no expiration</p>
+              </div>
+              <div class="setting-group">
+                <label>Active</label>
+                <label class="toggle-label">
+                  <input type="checkbox" id="setting-active">
+                  <span>Gallery is active and accessible</span>
+                </label>
+              </div>
+              <div class="settings-actions">
+                <button id="save-settings-btn" class="btn btn-primary">Save Settings</button>
+                <button id="delete-gallery-btn" class="btn btn-danger">Delete Gallery</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Comments Tab (proofing only) -->
+          <div id="tab-comments" class="tab-content">
+            <div id="comments-list" class="comments-list"></div>
+            <div id="no-comments" class="empty-state">
+              <p>No comments yet.</p>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </section>
+
+  <!-- Thumbnail Picker Modal -->
+  <div id="thumb-picker" class="thumb-picker">
+    <div class="thumb-picker-inner">
+      <h3>Choose Thumbnail Frame</h3>
+      <video id="thumb-video" muted preload="auto"></video>
+      <div class="thumb-picker-controls">
+        <input type="range" id="thumb-scrubber" min="0" max="100" step="0.1" value="0">
+        <span id="thumb-time">0:00</span>
+      </div>
+      <div class="thumb-picker-preview">
+        <canvas id="thumb-canvas" width="320" height="180"></canvas>
+        <div class="thumb-picker-actions">
+          <button id="thumb-capture-btn" class="btn btn-primary">Set Thumbnail</button>
+          <button id="thumb-cancel-btn" class="btn btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden file input for video replacement -->
+  <input type="file" id="replace-file-input" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v" hidden>
+
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
+  <script src="/js/admin.js?v=7"></script>
+</body>
+</html>

@@ -274,6 +274,16 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     document.querySelector('.tab-comments').style.display = isProofing ? '' : 'none';
 
+    // Gallery link bar on videos tab
+    const linkBar = document.getElementById('gallery-link-bar');
+    if (isProofing && gallery.token) {
+      const galleryUrl = window.location.origin + '/gallery/' + gallery.token;
+      document.getElementById('gallery-link-display').value = galleryUrl;
+      linkBar.style.display = 'flex';
+    } else {
+      linkBar.style.display = 'none';
+    }
+
     // Activate tab
     switchTab(tab || 'videos');
 
@@ -498,6 +508,23 @@ document.addEventListener('DOMContentLoaded', () => {
     const input = document.getElementById('setting-link');
     navigator.clipboard.writeText(input.value);
     alert('Link copied!');
+  });
+
+  document.getElementById('open-link-btn').addEventListener('click', () => {
+    const url = document.getElementById('setting-link').value;
+    if (url) window.open(url, '_blank');
+  });
+
+  // Gallery link bar (videos tab)
+  document.getElementById('gallery-link-copy').addEventListener('click', () => {
+    const input = document.getElementById('gallery-link-display');
+    navigator.clipboard.writeText(input.value);
+    alert('Link copied!');
+  });
+
+  document.getElementById('gallery-link-open').addEventListener('click', () => {
+    const url = document.getElementById('gallery-link-display').value;
+    if (url) window.open(url, '_blank');
   });
 
   document.getElementById('regen-link-btn').addEventListener('click', async () => {

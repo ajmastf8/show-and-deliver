@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=9">
+  <link rel="stylesheet" href="/css/style.css?v=10">
 </head>
 <body>
   <header class="site-header">
@@ -200,6 +200,11 @@
 
           <!-- Videos Tab -->
           <div id="tab-videos" class="tab-content active">
+            <div id="gallery-link-bar" class="gallery-link-bar" style="display:none;">
+              <input type="text" id="gallery-link-display" class="setting-input" readonly>
+              <button id="gallery-link-copy" class="btn btn-icon" title="Copy link">&#128203;</button>
+              <button id="gallery-link-open" class="btn btn-icon" title="Open in new tab">&#8599;</button>
+            </div>
             <div id="upload-area" class="upload-area">
               <div class="upload-drop-zone" id="drop-zone">
                 <p>Drag &amp; drop video files here</p>
@@ -235,6 +240,7 @@
                 <div class="setting-link-row">
                   <input type="text" id="setting-link" class="setting-input" readonly>
                   <button id="copy-link-btn" class="btn btn-icon" title="Copy link">&#128203;</button>
+                  <button id="open-link-btn" class="btn btn-icon" title="Open in new tab">&#8599;</button>
                   <button id="regen-link-btn" class="btn btn-icon" title="Regenerate link">&#x21bb;</button>
                 </div>
               </div>
@@ -338,6 +344,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=19"></script>
+  <script src="/js/admin.js?v=20"></script>
 </body>
 </html>

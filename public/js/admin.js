@@ -534,12 +534,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const subject = `${name} — Videos for Review`;
 
+    const passwordLine = currentGallery.password
+      ? `\nPassword: ${currentGallery.password}\n`
+      : '';
+
     const body = `Hello,
 
 I'd like to share some videos with you for review.
 
 ${galleryUrl}
-
+${passwordLine}
 HOW TO LEAVE COMMENTS
 1. Open the link above and enter your name when prompted.
 2. Click on any video to open it.

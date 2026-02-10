@@ -527,6 +527,45 @@ document.addEventListener('DOMContentLoaded', () => {
     if (url) window.open(url, '_blank');
   });
 
+  function buildGalleryMailto() {
+    if (!currentGallery || !currentGallery.token) return null;
+    const galleryUrl = window.location.origin + '/gallery/' + currentGallery.token;
+    const name = currentGallery.name;
+
+    const subject = `${name} — Videos for Review`;
+
+    const body = `Hi,
+
+I'd like to share some videos with you for review.
+
+Gallery: ${name}
+Link: ${galleryUrl}
+
+HOW TO LEAVE COMMENTS
+1. Open the link above and enter your name when prompted.
+2. Click on any video to open it.
+3. Play the video to the moment you'd like to comment on, then pause it.
+4. Type your comment in the box on the right — the timestamp is captured automatically when you start typing.
+5. Press Enter to post your comment (Shift+Enter for a new line).
+6. When you're finished with a video, click "Finish & Send Comments" to send your feedback.
+
+Your comments are time-stamped to the exact moment in the video, so I can find exactly what you're referring to.
+
+Thanks!`;
+
+    return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
+
+  document.getElementById('email-link-btn').addEventListener('click', () => {
+    const mailto = buildGalleryMailto();
+    if (mailto) window.location.href = mailto;
+  });
+
+  document.getElementById('gallery-link-email').addEventListener('click', () => {
+    const mailto = buildGalleryMailto();
+    if (mailto) window.location.href = mailto;
+  });
+
   document.getElementById('regen-link-btn').addEventListener('click', async () => {
     if (!confirm('Regenerate access link? The old link will stop working.')) return;
     const res = await fetch(`/api/galleries/${currentGalleryId}`, {

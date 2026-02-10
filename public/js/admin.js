@@ -534,12 +534,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const subject = `${name} — Videos for Review`;
 
-    const body = `Hi,
+    const body = `Hello,
 
 I'd like to share some videos with you for review.
 
-Gallery: ${name}
-Link: ${galleryUrl}
+${galleryUrl}
 
 HOW TO LEAVE COMMENTS
 1. Open the link above and enter your name when prompted.
@@ -551,7 +550,8 @@ HOW TO LEAVE COMMENTS
 
 Your comments are time-stamped to the exact moment in the video, so I can find exactly what you're referring to.
 
-Thanks!`;
+Thanks,
+AJ Mast`;
 
     return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   }

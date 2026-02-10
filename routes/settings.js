@@ -66,10 +66,15 @@ router.post('/deploy', requireAuth, (req, res) => {
   // After pull + install, touch tmp/restart.txt to trigger Passenger restart (cPanel/LiteSpeed)
   const cmd = 'git pull origin main && npm install --production && mkdir -p tmp && touch tmp/restart.txt';
   exec(cmd, { cwd: appDir, timeout: 120000 }, (err, stdout, stderr) => {
+    // Log detailed output server-side only
+    if (stdout) console.log('Deploy stdout:', stdout.trim());
+    if (stderr) console.log('Deploy stderr:', stderr.trim());
+
     if (err) {
-      return res.status(500).json({ error: err.message, stderr });
+      console.error('Deploy failed:', err.message);
+      return res.status(500).json({ error: 'Deploy failed. Check server logs for details.' });
     }
-    res.json({ ok: true, output: stdout.trim() + '\n\nNode.js app restart triggered.', stderr: stderr.trim() });
+    res.json({ ok: true, message: 'Deploy successful. App restart triggered.' });
   });
 });
 

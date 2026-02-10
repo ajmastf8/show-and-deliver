@@ -72,7 +72,8 @@ const upload = multer({
     const allowed = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v', 'video/x-quicktime', 'video/mov'];
     const ext = path.extname(file.originalname).toLowerCase();
     const allowedExts = ['.mp4', '.webm', '.mov', '.m4v'];
-    cb(null, allowed.includes(file.mimetype) || allowedExts.includes(ext));
+    // Require BOTH valid MIME type AND valid extension
+    cb(null, allowed.includes(file.mimetype) && allowedExts.includes(ext));
   },
   limits: { fileSize: 500 * 1024 * 1024 }
 });

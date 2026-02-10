@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=10">
+  <link rel="stylesheet" href="/css/style.css?v=11">
 </head>
 <body>
   <header class="site-header">
@@ -248,8 +248,11 @@
               </div>
               <div class="setting-group setting-proofing-only" style="display:none;">
                 <label>Password</label>
-                <input type="text" id="setting-password" class="setting-input" placeholder="No password (anyone with link can access)">
-                <p class="setting-hint">Leave empty for no password protection</p>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <input type="text" id="setting-password" class="setting-input" style="flex:1;" placeholder="No password">
+                  <button type="button" id="remove-password-btn" class="btn btn-sm" style="background:#e0e0e0;color:#333;white-space:nowrap;">Remove</button>
+                </div>
+                <p class="setting-hint">Enter a new password to set/change. Use "Remove" to clear.</p>
               </div>
               <div class="setting-group setting-proofing-only" style="display:none;">
                 <label>Downloads</label>
@@ -346,6 +349,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=21"></script>
+  <script src="/js/admin.js?v=22"></script>
 </body>
 </html>

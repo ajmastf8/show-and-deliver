@@ -1,10 +1,29 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const rateLimit = require('express-rate-limit');
 const router = express.Router();
 const { findGalleryByToken, readGalleryVideos, readGalleryComments, writeGalleryComments, UPLOADS_DIR } = require('../lib/dataHelpers');
 const { sendReviewSummary } = require('../lib/email');
 const { generateId } = require('../lib/tokens');
+
+// Rate limit gallery password unlock: 5 per minute per IP
+const unlockLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  message: { error: 'Too many unlock attempts. Please try again in a minute.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Rate limit comment posting: 10 per minute per IP
+const commentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { error: 'Too many comments. Please slow down.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
 // Middleware: check gallery access + expiration
 function checkAccess(req, res, next) {
@@ -46,14 +65,28 @@ router.get('/:token', checkAccess, (req, res) => {
 });
 
 // POST unlock password-protected gallery
-router.post('/:token/unlock', checkAccess, (req, res) => {
+router.post('/:token/unlock', unlockLimiter, checkAccess, async (req, res) => {
   const gallery = req.gallery;
   if (!gallery.password) {
     return res.json(galleryPayload(gallery));
   }
 
   const { password } = req.body;
-  if (!password || password !== gallery.password) {
+  if (!password) {
+    return res.status(401).json({ error: 'Incorrect password' });
+  }
+
+  // Support both bcrypt hashes and legacy plaintext passwords
+  let match = false;
+  if (gallery.password.startsWith('$2b$') || gallery.password.startsWith('$2a$')) {
+    const bcrypt = require('bcrypt');
+    match = await bcrypt.compare(password, gallery.password);
+  } else {
+    // Legacy plaintext comparison (will be replaced once password is re-saved)
+    match = password === gallery.password;
+  }
+
+  if (!match) {
     return res.status(401).json({ error: 'Incorrect password' });
   }
 
@@ -61,10 +94,16 @@ router.post('/:token/unlock', checkAccess, (req, res) => {
 });
 
 // POST comment
-router.post('/:token/comments', checkAccess, (req, res) => {
+router.post('/:token/comments', commentLimiter, checkAccess, (req, res) => {
   const { videoId, name, text, timestamp } = req.body;
   if (!videoId || !name || !text) {
     return res.status(400).json({ error: 'Missing required fields' });
+  }
+  if (name.length > 100) {
+    return res.status(400).json({ error: 'Name is too long (max 100 characters)' });
+  }
+  if (text.length > 5000) {
+    return res.status(400).json({ error: 'Comment is too long (max 5000 characters)' });
   }
 
   const gallery = req.gallery;

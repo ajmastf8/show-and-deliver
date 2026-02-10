@@ -206,8 +206,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await res.json();
 
       if (res.ok) {
-        const msg = data.output || 'Up to date';
-        alert('Deploy successful:\n\n' + msg + '\n\nPage will reload.');
+        const msg = data.message || 'Deploy successful';
+        alert(msg + '\n\nPage will reload.');
         window.location.reload();
       } else {
         alert('Deploy failed:\n\n' + (data.error || 'Unknown error'));
@@ -468,7 +468,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (currentGallery.type === 'proofing') {
       const baseUrl = window.location.origin;
       document.getElementById('setting-link').value = baseUrl + '/gallery/' + currentGallery.token;
-      document.getElementById('setting-password').value = currentGallery.password || '';
+      // Password field: show placeholder if password is set, empty if not
+      const pwInput = document.getElementById('setting-password');
+      pwInput.value = '';
+      pwInput.placeholder = currentGallery.hasPassword ? '(password set — enter new to change)' : 'No password';
       document.getElementById('setting-downloads').checked = currentGallery.downloadsEnabled;
       document.getElementById('setting-expires').value = currentGallery.expiresAt ? currentGallery.expiresAt.split('T')[0] : '';
     }
@@ -481,7 +484,9 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     if (currentGallery.type === 'proofing') {
-      body.password = document.getElementById('setting-password').value.trim();
+      // Only send password if user typed something new
+      const pwVal = document.getElementById('setting-password').value.trim();
+      if (pwVal) body.password = pwVal;
       body.downloadsEnabled = document.getElementById('setting-downloads').checked;
       const expiresVal = document.getElementById('setting-expires').value;
       body.expiresAt = expiresVal ? new Date(expiresVal + 'T23:59:59').toISOString() : null;
@@ -501,6 +506,30 @@ document.addEventListener('DOMContentLoaded', () => {
       galleryTitle.textContent = updated.name;
       renderGalleryList();
       alert('Settings saved.');
+    }
+  });
+
+  document.getElementById('remove-password-btn').addEventListener('click', async () => {
+    if (!currentGalleryId) return;
+    if (!currentGallery.hasPassword) {
+      alert('No password is currently set.');
+      return;
+    }
+    if (!confirm('Remove the gallery password? Anyone with the link will be able to access it.')) return;
+
+    const res = await fetch(`/api/galleries/${currentGalleryId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: '' })
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      Object.assign(currentGallery, updated);
+      const pwInput = document.getElementById('setting-password');
+      pwInput.value = '';
+      pwInput.placeholder = 'No password';
+      renderGalleryList();
+      alert('Password removed.');
     }
   });
 
@@ -534,8 +563,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const subject = `${name} — Videos for Review`;
 
-    const passwordLine = currentGallery.password
-      ? `\nPassword: ${currentGallery.password}\n`
+    const passwordLine = currentGallery.hasPassword
+      ? `\nPassword: [enter the gallery password here]\n`
       : '';
 
     const body = `Hello,

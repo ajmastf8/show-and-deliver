@@ -79,7 +79,7 @@ router.post('/:token/unlock', unlockLimiter, checkAccess, async (req, res) => {
   // Support both bcrypt hashes and legacy plaintext passwords
   let match = false;
   if (gallery.password.startsWith('$2b$') || gallery.password.startsWith('$2a$')) {
-    const bcrypt = require('bcrypt');
+    const bcrypt = require('bcryptjs');
     match = await bcrypt.compare(password, gallery.password);
   } else {
     // Legacy plaintext comparison (will be replaced once password is re-saved)

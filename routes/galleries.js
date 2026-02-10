@@ -1,7 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 const router = express.Router();
 const requireAuth = require('../middleware/auth');
 const { readGalleries, writeGalleries, readGalleryVideos, ensureGalleryDir, galleryDir, readCollections, writeCollections } = require('../lib/dataHelpers');

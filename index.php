@@ -111,7 +111,9 @@ function generateId($prefix = '') {
 }
 
 function generateToken($length = 12) {
-    return substr(rtrim(base64_encode(random_bytes((int)ceil($length * 0.75))), '='), 0, $length);
+    $raw = base64_encode(random_bytes((int)ceil($length * 0.75)));
+    $safe = strtr($raw, '+/', '-_');
+    return substr(rtrim($safe, '='), 0, $length);
 }
 
 function requireAuth() {
@@ -418,6 +420,7 @@ function migrateIfNeeded() {
         'token' => null,
         'password' => null,
         'downloadsEnabled' => false,
+        'commentingEnabled' => false,
         'expiresAt' => null,
         'active' => true,
         'createdAt' => date('c'),
@@ -531,6 +534,7 @@ if ($method === 'POST' && $uri === '/api/galleries') {
         'token' => $type === 'proofing' ? generateToken() : null,
         'password' => $hashedPassword,
         'downloadsEnabled' => !empty($input['downloadsEnabled']),
+        'commentingEnabled' => !empty($input['commentingEnabled']),
         'expiresAt' => $input['expiresAt'] ?? null,
         'active' => true,
         'createdAt' => date('c'),
@@ -561,6 +565,7 @@ if ($method === 'PUT' && matchRoute('/api/galleries/{id}', $uri, $params)) {
         $gallery['password'] = $input['password'] ? password_hash($input['password'], PASSWORD_BCRYPT) : null;
     }
     if (isset($input['downloadsEnabled'])) $gallery['downloadsEnabled'] = $input['downloadsEnabled'];
+    if (isset($input['commentingEnabled'])) $gallery['commentingEnabled'] = $input['commentingEnabled'];
     if (isset($input['expiresAt'])) $gallery['expiresAt'] = $input['expiresAt'];
     if (isset($input['active'])) $gallery['active'] = $input['active'];
     if (!empty($input['regenerateToken']) && $gallery['type'] === 'proofing') {
@@ -1012,6 +1017,7 @@ function galleryPayload($gallery) {
         'gallery' => [
             'name' => $gallery['name'],
             'downloadsEnabled' => $gallery['downloadsEnabled'],
+            'commentingEnabled' => $gallery['commentingEnabled'] ?? false,
         ],
         'videos' => $videos,
         'comments' => $comments,

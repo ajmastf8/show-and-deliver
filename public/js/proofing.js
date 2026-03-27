@@ -151,6 +151,12 @@ document.addEventListener('DOMContentLoaded', () => {
       downloadAllBtn.style.display = '';
     }
 
+    // Hide commenting UI if disabled
+    if (!galleryData.gallery.commentingEnabled) {
+      commentForm.style.display = 'none';
+      document.querySelector('.lightbox-comments-side h3').style.display = 'none';
+    }
+
     renderVideoList();
 
     // Deep link: open specific video if hash is #video-{id}

@@ -236,8 +236,8 @@ a { color: inherit; text-decoration: none; }
 
 .proofing-thumb-wrapper {
   position: relative;
-  padding-top: 56.25%; /* 16:9 */
-  background: var(--color-black);
+  padding-top: 100%; /* square container */
+  background: var(--color-gray-light);
 }
 
 .proofing-thumb-wrapper img,
@@ -247,7 +247,7 @@ a { color: inherit; text-decoration: none; }
   left: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .proofing-thumb-duration {

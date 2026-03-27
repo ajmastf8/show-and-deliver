@@ -258,8 +258,8 @@ a { color: inherit; text-decoration: none; }
 
 .video-wrapper {
   position: relative;
-  padding-top: 56.25%; /* 16:9 */
-  background: var(--color-black);
+  padding-top: 100%; /* square container */
+  background: var(--color-gray-light);
 }
 
 .video-wrapper video,
@@ -269,7 +269,7 @@ a { color: inherit; text-decoration: none; }
   left: 0;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .video-title {
@@ -803,6 +803,37 @@ a { color: inherit; text-decoration: none; }
 
 .tab-content.active {
   display: block;
+}
+
+/* Settings tabs */
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 24px;
+  margin-bottom: 0;
+}
+
+.settings-tab {
+  font-family: var(--font-family);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 20px;
+  border: 1px solid var(--color-gray-mid);
+  background: var(--color-white);
+  color: var(--color-gray-text);
+  cursor: pointer;
+  transition: all 0.15s;
+  border-bottom: none;
+  border-radius: 4px 4px 0 0;
+}
+
+.settings-tab.active {
+  background: var(--color-white);
+  color: var(--color-primary);
+  border-color: var(--color-gray-mid);
+  border-bottom: 2px solid var(--color-white);
+  margin-bottom: -1px;
+  z-index: 1;
 }
 
 /* ---- Gallery Link Bar ---- */

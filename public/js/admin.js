@@ -166,8 +166,8 @@ document.addEventListener('DOMContentLoaded', () => {
     item.dataset.id = g.id;
 
     const badge = g.type === 'proofing'
-      ? `<span class="gallery-badge proofing">Proofing</span>`
-      : `<span class="gallery-badge reels">Reels</span>`;
+      ? `<span class="gallery-badge proofing">Client</span>`
+      : `<span class="gallery-badge reels">Portfolio</span>`;
 
     const count = g.type === 'proofing'
       ? `${g.videoCount} video${g.videoCount !== 1 ? 's' : ''} &middot; ${g.commentCount} comment${g.commentCount !== 1 ? 's' : ''}`
@@ -189,7 +189,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const emailSettingsPanel = document.getElementById('email-settings-panel');
 
   document.getElementById('site-settings-btn').addEventListener('click', () => {
-    window.location.hash = 'email-settings';
+    window.location.hash = 'settings';
+  });
+
+  // ============ Settings Tabs ============
+
+  document.querySelectorAll('.settings-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.settings-tab-content').forEach(c => c.style.display = 'none');
+      tab.classList.add('active');
+      document.getElementById('settings-tab-' + tab.dataset.settingsTab).style.display = '';
+    });
   });
 
   // ============ Deploy from GitHub ============
@@ -243,7 +254,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const galleryShort = hash.match(/^gallery\/([^/]+)$/);
     const collectionMatch = hash.match(/^collection\/([^/]+)\/settings$/);
 
-    if (hash === 'email-settings') {
+    if (hash === 'settings' || hash === 'email-settings') {
       showEmailSettings();
     } else if (collectionMatch) {
       selectCollection(collectionMatch[1]);
@@ -349,7 +360,7 @@ document.addEventListener('DOMContentLoaded', () => {
       row.className = 'col-gallery-picker-row';
       const checked = (col.galleryIds || []).includes(g.id) ? 'checked' : '';
       const badgeClass = g.type === 'proofing' ? 'proofing' : 'reels';
-      const badgeText = g.type === 'proofing' ? 'Proofing' : 'Reels';
+      const badgeText = g.type === 'proofing' ? 'Client' : 'Portfolio';
       row.innerHTML = `
         <input type="checkbox" value="${g.id}" ${checked}>
         <span class="col-gallery-picker-name">${escapeHtml(g.name)}</span>
@@ -430,7 +441,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============ Create Gallery ============
 
   document.getElementById('new-reels-btn').addEventListener('click', async () => {
-    const name = prompt('Reels gallery name:', 'Video Reels');
+    const name = prompt('Portfolio gallery name:', 'Portfolio');
     if (!name) return;
     await fetch('/api/galleries', {
       method: 'POST',
@@ -441,7 +452,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('new-proofing-btn').addEventListener('click', async () => {
-    const name = prompt('Proofing gallery name:', 'Client Proofing');
+    const name = prompt('Client gallery name:', 'Client Gallery');
     if (!name) return;
     const res = await fetch('/api/galleries', {
       method: 'POST',
@@ -477,7 +488,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function loadSettings() {
     if (!currentGallery) return;
     document.getElementById('setting-name').value = currentGallery.name;
-    document.getElementById('setting-type').textContent = currentGallery.type === 'proofing' ? 'Client Proofing' : 'Video Reels';
+    document.getElementById('setting-type').textContent = currentGallery.type === 'proofing' ? 'Client Gallery' : 'Portfolio Gallery';
     document.getElementById('setting-active').checked = currentGallery.active;
 
     if (currentGallery.type === 'proofing') {
@@ -488,6 +499,7 @@ document.addEventListener('DOMContentLoaded', () => {
       pwInput.value = '';
       pwInput.placeholder = currentGallery.hasPassword ? '(password set — enter new to change)' : 'No password';
       document.getElementById('setting-downloads').checked = currentGallery.downloadsEnabled;
+      document.getElementById('setting-commenting').checked = currentGallery.commentingEnabled || false;
       document.getElementById('setting-expires').value = currentGallery.expiresAt ? currentGallery.expiresAt.split('T')[0] : '';
     }
   }
@@ -503,6 +515,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const pwVal = document.getElementById('setting-password').value.trim();
       if (pwVal) body.password = pwVal;
       body.downloadsEnabled = document.getElementById('setting-downloads').checked;
+      body.commentingEnabled = document.getElementById('setting-commenting').checked;
       const expiresVal = document.getElementById('setting-expires').value;
       body.expiresAt = expiresVal ? new Date(expiresVal + 'T23:59:59').toISOString() : null;
     }

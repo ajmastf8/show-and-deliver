@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin — Video Reels</title>
+  <title>Admin — AJ Mast Video</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
@@ -81,13 +81,12 @@
         </div>
         <div id="gallery-list" class="gallery-list"></div>
         <div class="sidebar-actions">
-          <button id="new-reels-btn" class="btn btn-secondary btn-sm btn-block">+ Reels Gallery</button>
-          <button id="new-proofing-btn" class="btn btn-primary btn-sm btn-block">+ Proofing Gallery</button>
+          <button id="new-reels-btn" class="btn btn-secondary btn-sm btn-block">+ Portfolio Gallery</button>
+          <button id="new-proofing-btn" class="btn btn-primary btn-sm btn-block">+ Client Gallery</button>
           <button id="new-collection-btn" class="btn btn-secondary btn-sm btn-block">+ Collection</button>
         </div>
         <div class="sidebar-footer">
-          <button id="deploy-btn" class="btn btn-secondary btn-sm btn-block" style="margin-bottom:6px;">Deploy from GitHub</button>
-          <button id="site-settings-btn" class="btn btn-secondary btn-sm btn-block">Email Settings</button>
+          <button id="site-settings-btn" class="btn btn-secondary btn-sm btn-block">Settings</button>
         </div>
       </aside>
 
@@ -98,13 +97,20 @@
           <p>Select a gallery from the sidebar or create a new one.</p>
         </div>
 
-        <!-- Email Settings Panel -->
+        <!-- Site Settings Panel (tabbed) -->
         <div id="email-settings-panel" style="display:none;">
           <div class="panel-header">
-            <h2>Email Notification Settings</h2>
+            <h2>Settings</h2>
           </div>
-          <div class="settings-panel">
-            <p class="setting-hint" style="margin-bottom:16px;">Configure email notifications when clients leave comments on proofing galleries. Use Resend (recommended) or SMTP.</p>
+          <div class="settings-tabs">
+            <button class="settings-tab active" data-settings-tab="email">Email</button>
+            <button class="settings-tab" data-settings-tab="deploy">Deploy</button>
+            <button class="settings-tab" data-settings-tab="header">Header</button>
+          </div>
+
+          <!-- Email Tab -->
+          <div id="settings-tab-email" class="settings-tab-content settings-panel">
+            <p class="setting-hint" style="margin-bottom:16px;">Configure email notifications when clients leave comments. Use Resend (recommended) or SMTP.</p>
             <div class="setting-group">
               <label>Resend API Key</label>
               <input type="password" id="resend-api-key" class="setting-input" placeholder="re_xxxxxxxxx">
@@ -154,6 +160,20 @@
               <button id="test-email-btn" class="btn btn-secondary">Send Test Email</button>
             </div>
             <div id="email-status" class="email-status"></div>
+          </div>
+
+          <!-- Deploy Tab -->
+          <div id="settings-tab-deploy" class="settings-tab-content settings-panel" style="display:none;">
+            <p class="setting-hint" style="margin-bottom:16px;">Pull the latest code from GitHub. Branch and credentials are configured in .env on the server.</p>
+            <div class="settings-actions">
+              <button id="deploy-btn" class="btn btn-primary">Deploy from GitHub</button>
+            </div>
+            <div id="deploy-status" class="email-status"></div>
+          </div>
+
+          <!-- Header Tab -->
+          <div id="settings-tab-header" class="settings-tab-content settings-panel" style="display:none;">
+            <p class="setting-hint" style="margin-bottom:16px;">Header configuration coming soon.</p>
           </div>
         </div>
 
@@ -258,7 +278,14 @@
                 <label>Downloads</label>
                 <label class="toggle-label">
                   <input type="checkbox" id="setting-downloads">
-                  <span>Allow clients to download videos</span>
+                  <span>Allow clients to download files</span>
+                </label>
+              </div>
+              <div class="setting-group setting-proofing-only" style="display:none;">
+                <label>Commenting</label>
+                <label class="toggle-label">
+                  <input type="checkbox" id="setting-commenting">
+                  <span>Allow clients to leave comments</span>
                 </label>
               </div>
               <div class="setting-group setting-proofing-only" style="display:none;">

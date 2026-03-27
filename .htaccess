@@ -1,24 +1,28 @@
 RewriteEngine On
+RewriteBase /
 
-# Serve static files from public/
-RewriteRule ^$ public/index.html [L]
+# Route pages to HTML files
 RewriteRule ^admin/?$ public/admin.html [L]
 RewriteRule ^gallery/.+$ public/proofing.html [L]
 RewriteRule ^collection/.+$ public/collection.html [L]
-
-# Serve static assets from public/
-RewriteCond %{REQUEST_URI} ^/(css|js|images)/
-RewriteRule ^(.*)$ public/$1 [L]
 
 # Serve uploads and thumbnails from site-data/
 RewriteRule ^uploads/(.*)$ site-data/uploads/$1 [L]
 RewriteRule ^thumbnails/(.*)$ site-data/thumbnails/$1 [L]
 
-# Route all /api/* requests to api.php
+# Route /api/* to index.php
 RewriteCond %{REQUEST_FILENAME} !-f
-RewriteRule ^api/ api.php [L,QSA]
+RewriteRule ^api/ index.php [L,QSA]
 
-# Increase upload limit
+# Everything else not a real file — serve from public/
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ public/$1 [L]
+
+# Default document
+DirectoryIndex public/index.html
+
+# Upload limits
 php_value upload_max_filesize 500M
 php_value post_max_size 500M
 php_value max_execution_time 300

@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 
-const DATA_DIR = path.join(__dirname, '..', 'site-data', 'data');
-const UPLOADS_DIR = path.join(__dirname, '..', 'site-data', 'uploads');
-const THUMBS_DIR = path.join(__dirname, '..', 'site-data', 'thumbnails');
+const PROJECT_ROOT = path.join(__dirname, '..', '..');
+const DATA_DIR = path.join(PROJECT_ROOT, 'site-data', 'data');
+const UPLOADS_DIR = path.join(PROJECT_ROOT, 'site-data', 'uploads');
+const THUMBS_DIR = path.join(PROJECT_ROOT, 'site-data', 'thumbnails');
 
 // Ensure base directories exist
 [DATA_DIR, UPLOADS_DIR, THUMBS_DIR].forEach(dir => {

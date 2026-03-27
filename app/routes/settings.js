@@ -75,7 +75,7 @@ router.post('/deploy', requireAuth, (req, res) => {
     return res.status(403).json({ error: 'Deploy is disabled. Set DEPLOY_ENABLED=true in .env to enable.' });
   }
 
-  const appDir = path.join(__dirname, '..');
+  const appDir = path.join(__dirname, '..', '..');
   const branch = (process.env.DEPLOY_BRANCH || 'main').replace(/[^a-zA-Z0-9\/_-]/g, '');
   const pat = process.env.GIT_PAT || '';
   const username = process.env.GIT_USERNAME || '';

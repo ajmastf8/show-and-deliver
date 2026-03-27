@@ -553,8 +553,9 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify(config),
       });
       if (res.ok) {
-        statusEl.textContent = 'Header saved.';
+        statusEl.textContent = 'Header saved. Reloading...';
         statusEl.style.color = '#4caf50';
+        setTimeout(() => window.location.reload(), 500);
       } else {
         const data = await res.json();
         statusEl.textContent = data.error || 'Save failed.';

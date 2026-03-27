@@ -1356,11 +1356,26 @@ if ($method === 'POST' && $uri === '/api/settings/deploy') {
         $setRemote = "git remote set-url origin https://$username:$pat@github.com/$repo.git && ";
     }
 
+    $logFile = dirname(__DIR__) . '/deploy.log';
+    $timestamp = date('Y-m-d H:i:s');
+
     $cmd = "{$setRemote}git fetch origin && git checkout $branch && git pull origin $branch 2>&1";
     $output = shell_exec($cmd);
+    $exitCode = ($output === null) ? -1 : 0;
 
-    if ($output === null) {
-        respondError('Deploy failed. Check server logs.', 500);
+    // Check for failure indicators in output
+    $failed = ($output === null) || preg_match('/fatal:|error:|CONFLICT/i', $output);
+
+    // Write log
+    $logEntry = "[$timestamp] Branch: $branch\n"
+        . "Command: git fetch origin && git checkout $branch && git pull origin $branch\n"
+        . "Output:\n$output\n"
+        . "Status: " . ($failed ? 'FAILED' : 'SUCCESS') . "\n"
+        . str_repeat('-', 60) . "\n\n";
+    file_put_contents($logFile, $logEntry, FILE_APPEND);
+
+    if ($failed) {
+        respondError("Deploy failed. See deploy.log in parent directory.\n\n$output", 500);
     }
 
     respond(['ok' => true, 'message' => "Deploy successful (branch: $branch)."]);

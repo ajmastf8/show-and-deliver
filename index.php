@@ -44,14 +44,31 @@ function env($key, $default = '') {
     return $_ENV[$key] ?? getenv($key) ?: $default;
 }
 
-// Validate required env vars
-$missing = [];
-foreach (['SESSION_SECRET', 'ADMIN_USERNAME', 'ADMIN_PASSWORD'] as $v) {
-    if (!env($v)) $missing[] = $v;
-}
-if ($missing) {
+// Validate required env vars (SESSION_SECRET still required)
+if (!env('SESSION_SECRET')) {
     http_response_code(500);
-    die(json_encode(['error' => 'Missing env vars: ' . implode(', ', $missing)]));
+    die(json_encode(['error' => 'Missing SESSION_SECRET in .env']));
+}
+
+// Admin credentials: check admin.json first, then .env fallback
+define('ADMIN_CONFIG_PATH', DATA_DIR . '/admin.json');
+
+function getAdminCredentials() {
+    $config = jsonRead(ADMIN_CONFIG_PATH);
+    if ($config && !empty($config['email']) && !empty($config['passwordHash'])) {
+        return $config;
+    }
+    // Fallback to .env (legacy)
+    $user = env('ADMIN_USERNAME');
+    $pass = env('ADMIN_PASSWORD');
+    if ($user && $pass && $user !== 'your-admin-username' && $pass !== 'your-strong-password') {
+        return ['email' => $user, 'passwordHash' => null, 'plainPassword' => $pass];
+    }
+    return null; // No credentials set — needs first-run setup
+}
+
+function isSetupComplete() {
+    return getAdminCredentials() !== null;
 }
 
 // Session
@@ -462,15 +479,59 @@ $params = [];
 // AUTH ROUTES
 // ============================================================
 
+// Setup check — tells the admin UI if first-run setup is needed
+if ($method === 'GET' && $uri === '/api/auth/check') {
+    respond([
+        'authenticated' => !empty($_SESSION['authenticated']),
+        'setupRequired' => !isSetupComplete(),
+    ]);
+}
+
+// First-run setup — create admin credentials
+if ($method === 'POST' && $uri === '/api/auth/setup') {
+    if (isSetupComplete()) respondError('Setup already completed', 400);
+
+    $input = getInput();
+    $email = trim($input['email'] ?? '');
+    $password = $input['password'] ?? '';
+
+    if (!$email || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        respondError('Please enter a valid email address', 400);
+    }
+    if (strlen($password) < 8) {
+        respondError('Password must be at least 8 characters', 400);
+    }
+
+    $config = [
+        'email' => $email,
+        'passwordHash' => password_hash($password, PASSWORD_BCRYPT),
+        'createdAt' => date('c'),
+    ];
+    jsonWrite(ADMIN_CONFIG_PATH, $config);
+
+    $_SESSION['authenticated'] = true;
+    respond(['ok' => true]);
+}
+
 if ($method === 'POST' && $uri === '/api/auth/login') {
     rateLimitCheck('login:' . ($_SERVER['REMOTE_ADDR'] ?? ''), 5, 60);
-    $input = getInput();
-    $username = $input['username'] ?? '';
-    $password = $input['password'] ?? '';
-    $validUser = env('ADMIN_USERNAME');
-    $validPass = env('ADMIN_PASSWORD');
+    if (!isSetupComplete()) respondError('Setup required', 400);
 
-    if (hash_equals($validUser, $username) && hash_equals($validPass, $password)) {
+    $input = getInput();
+    $email = $input['username'] ?? $input['email'] ?? '';
+    $password = $input['password'] ?? '';
+    $creds = getAdminCredentials();
+
+    $match = false;
+    if (!empty($creds['passwordHash'])) {
+        // admin.json credentials (bcrypt)
+        $match = hash_equals($creds['email'], $email) && password_verify($password, $creds['passwordHash']);
+    } elseif (!empty($creds['plainPassword'])) {
+        // .env legacy credentials (plaintext)
+        $match = hash_equals($creds['email'], $email) && hash_equals($creds['plainPassword'], $password);
+    }
+
+    if ($match) {
         $_SESSION['authenticated'] = true;
         respond(['ok' => true]);
     } else {
@@ -481,10 +542,6 @@ if ($method === 'POST' && $uri === '/api/auth/login') {
 if ($method === 'POST' && $uri === '/api/auth/logout') {
     session_destroy();
     respond(['ok' => true]);
-}
-
-if ($method === 'GET' && $uri === '/api/auth/check') {
-    respond(['authenticated' => !empty($_SESSION['authenticated'])]);
 }
 
 // ============================================================
@@ -1459,41 +1516,19 @@ function readHeaderConfig() {
     $config = jsonRead(HEADER_CONFIG_PATH);
     if ($config) return $config;
 
-    // Default config (pre-populated with AJ Mast setup)
+    // Default config for fresh installs
     return [
         'logo' => [
-            'src' => '/images/800-LONG%20AJM%20BADGE%2011202015.png',
-            'alt' => 'Photographer AJ Mast',
-            'link' => 'https://www.ajmast.com',
+            'src' => '',
+            'alt' => '',
+            'link' => '/',
             'height' => 74,
         ],
-        'email' => 'aj@ajmast.com',
-        'phone' => '317.727.9251',
-        'tagline' => 'Indianapolis Based',
+        'email' => '',
+        'phone' => '',
+        'tagline' => '',
         'nav' => [
-            ['type' => 'dropdown', 'label' => 'Portfolios', 'children' => [
-                ['label' => 'Overview', 'url' => 'https://www.ajmast.com/index/G0000XKNIOVIrTU4'],
-                ['label' => 'Portraits', 'url' => 'https://www.ajmast.com/index/G0000sREZSKkwReA'],
-                ['label' => 'Corporate Communications', 'url' => 'https://www.ajmast.com/index/G0000reodLR4CRvY'],
-                ['label' => 'Drone Photography', 'url' => 'https://www.ajmast.com/index/G0000p52WS_F6XsU'],
-                ['label' => 'Editorial', 'url' => 'https://www.ajmast.com/index/G0000PmdPEoex3E0'],
-            ]],
-            ['type' => 'dropdown', 'label' => 'Stories', 'children' => [
-                ['label' => 'FedEx Mass Shooting', 'url' => 'https://www.ajmast.com/index/G0000_cJcHD5D1f4'],
-                ['label' => 'Racial Justice Protests', 'url' => 'https://www.ajmast.com/index/G0000UqO_NV5jGxA'],
-                ['label' => 'Abortion Protests', 'url' => 'https://www.ajmast.com/index/G000030vvio6QBkA'],
-                ['label' => 'Dayton Shooting Vigil', 'url' => 'https://www.ajmast.com/index/G0000KnqP3CeUoGc'],
-                ['label' => 'Monon Trail', 'url' => 'https://www.ajmast.com/index/G0000eg1NcGUXGuU'],
-            ]],
-            ['type' => 'link', 'label' => 'Video', 'url' => '/'],
-            ['type' => 'link', 'label' => 'Instagram', 'url' => 'https://www.instagram.com/ajmast/', 'external' => true],
-            ['type' => 'link', 'label' => 'About', 'url' => 'https://www.ajmast.com/about'],
-            ['type' => 'link', 'label' => 'Contact', 'url' => 'https://www.ajmast.com/contact'],
-            ['type' => 'dropdown', 'label' => 'Archive', 'children' => [
-                ['label' => 'Browse Archive', 'url' => 'https://www.ajmast.com/archive'],
-            ]],
-            ['type' => 'link', 'label' => 'Shop Things AJ Makes', 'url' => 'https://ajmast.square.site', 'external' => true],
-            ['type' => 'link', 'label' => 'Software AJ Produces', 'url' => 'https://roningroupinc.com/software.html'],
+            ['type' => 'link', 'label' => 'Home', 'url' => '/'],
         ],
     ];
 }

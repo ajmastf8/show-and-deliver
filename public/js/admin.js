@@ -1,6 +1,9 @@
 document.addEventListener('DOMContentLoaded', () => {
+  const setupSection = document.getElementById('setup-section');
   const loginSection = document.getElementById('login-section');
   const dashboardSection = document.getElementById('dashboard-section');
+  const setupForm = document.getElementById('setup-form');
+  const setupError = document.getElementById('setup-error');
   const loginForm = document.getElementById('login-form');
   const loginError = document.getElementById('login-error');
   const logoutBtn = document.getElementById('logout-btn');
@@ -46,14 +49,51 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function checkAuth() {
     const res = await fetch('/api/auth/check');
-    const { authenticated } = await res.json();
-    loginSection.style.display = authenticated ? 'none' : 'flex';
-    dashboardSection.style.display = authenticated ? '' : 'none';
-    if (authenticated) {
+    const data = await res.json();
+
+    // First-run setup needed
+    if (data.setupRequired) {
+      setupSection.style.display = 'flex';
+      loginSection.style.display = 'none';
+      dashboardSection.style.display = 'none';
+      return;
+    }
+
+    setupSection.style.display = 'none';
+    loginSection.style.display = data.authenticated ? 'none' : 'flex';
+    dashboardSection.style.display = data.authenticated ? '' : 'none';
+    if (data.authenticated) {
       await loadGalleries();
       handleHash();
     }
   }
+
+  // First-run setup form
+  setupForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    setupError.textContent = '';
+    const email = setupForm.email.value.trim();
+    const password = setupForm.password.value;
+    const confirm = setupForm.confirmPassword.value;
+
+    if (password !== confirm) {
+      setupError.textContent = 'Passwords do not match';
+      return;
+    }
+
+    const res = await fetch('/api/auth/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+
+    if (res.ok) {
+      checkAuth();
+    } else {
+      const data = await res.json().catch(() => ({}));
+      setupError.textContent = data.error || 'Setup failed';
+    }
+  });
 
   loginForm.addEventListener('submit', async e => {
     e.preventDefault();

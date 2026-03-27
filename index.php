@@ -1619,9 +1619,7 @@ function readHeaderConfig() {
         'email' => '',
         'phone' => '',
         'tagline' => '',
-        'nav' => [
-            ['type' => 'link', 'label' => 'Home', 'url' => '/'],
-        ],
+        'nav' => [],
     ];
 }
 

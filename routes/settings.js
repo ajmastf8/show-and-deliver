@@ -60,11 +60,35 @@ router.post('/email/test', requireAuth, async (req, res) => {
   }
 });
 
+// Deploy config endpoint — tells admin UI whether deploy is enabled and which branch
+router.get('/deploy', requireAuth, (req, res) => {
+  res.json({
+    enabled: process.env.DEPLOY_ENABLED !== 'false',
+    branch: process.env.DEPLOY_BRANCH || 'main'
+  });
+});
+
 // Deploy: git pull + npm install + restart from GitHub
+// Controlled by .env: DEPLOY_ENABLED, DEPLOY_BRANCH, GIT_PAT, GIT_USERNAME, GIT_REPO
 router.post('/deploy', requireAuth, (req, res) => {
+  if (process.env.DEPLOY_ENABLED === 'false') {
+    return res.status(403).json({ error: 'Deploy is disabled. Set DEPLOY_ENABLED=true in .env to enable.' });
+  }
+
   const appDir = path.join(__dirname, '..');
+  const branch = (process.env.DEPLOY_BRANCH || 'main').replace(/[^a-zA-Z0-9\/_-]/g, '');
+  const pat = process.env.GIT_PAT || '';
+  const username = process.env.GIT_USERNAME || '';
+  const repo = process.env.GIT_REPO || '';
+
+  // If PAT is configured, set the remote URL with auth so git can pull without cPanel's git
+  let setRemote = '';
+  if (pat && username && repo) {
+    setRemote = `git remote set-url origin https://${username}:${pat}@github.com/${repo}.git && `;
+  }
+
   // After pull + install, touch tmp/restart.txt to trigger Passenger restart (cPanel/LiteSpeed)
-  const cmd = 'git pull origin main && npm install --production && mkdir -p tmp && touch tmp/restart.txt';
+  const cmd = `${setRemote}git fetch origin && git checkout ${branch} && git pull origin ${branch} && npm install --production && mkdir -p tmp && touch tmp/restart.txt`;
   exec(cmd, { cwd: appDir, timeout: 120000 }, (err, stdout, stderr) => {
     // Log detailed output server-side only
     if (stdout) console.log('Deploy stdout:', stdout.trim());
@@ -74,7 +98,7 @@ router.post('/deploy', requireAuth, (req, res) => {
       console.error('Deploy failed:', err.message);
       return res.status(500).json({ error: 'Deploy failed. Check server logs for details.' });
     }
-    res.json({ ok: true, message: 'Deploy successful. App restart triggered.' });
+    res.json({ ok: true, message: `Deploy successful (branch: ${branch}). App restart triggered.` });
   });
 });
 

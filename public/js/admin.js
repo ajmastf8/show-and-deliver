@@ -194,12 +194,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ============ Deploy from GitHub ============
 
-  document.getElementById('deploy-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('deploy-btn');
+  const deployBtn = document.getElementById('deploy-btn');
+
+  // Check deploy config and configure button
+  (async () => {
+    try {
+      const res = await fetch('/api/settings/deploy');
+      const config = await res.json();
+      if (!config.enabled) {
+        deployBtn.style.display = 'none';
+      } else {
+        deployBtn.textContent = `Deploy from GitHub (${config.branch})`;
+      }
+    } catch (e) {}
+  })();
+
+  deployBtn.addEventListener('click', async () => {
     if (!confirm('Pull latest code from GitHub and deploy?')) return;
 
-    btn.disabled = true;
-    btn.textContent = 'Deploying...';
+    deployBtn.disabled = true;
+    const originalText = deployBtn.textContent;
+    deployBtn.textContent = 'Deploying...';
 
     try {
       const res = await fetch('/api/settings/deploy', { method: 'POST' });
@@ -215,8 +230,8 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err) {
       alert('Deploy error: ' + err.message);
     } finally {
-      btn.disabled = false;
-      btn.textContent = 'Deploy from GitHub';
+      deployBtn.disabled = false;
+      deployBtn.textContent = originalText;
     }
   });
 

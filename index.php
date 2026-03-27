@@ -509,8 +509,27 @@ if ($method === 'POST' && $uri === '/api/auth/setup') {
     ];
     jsonWrite(ADMIN_CONFIG_PATH, $config);
 
+    // Initialize git repo on first setup if PAT is configured
+    $gitPat = env('GIT_PAT');
+    $gitUser = env('GIT_USERNAME', 'ajmastf8');
+    $gitRepo = env('GIT_REPO', 'ajmastf8/VideoReelSite');
+    $gitBranch = env('DEPLOY_BRANCH', 'main');
+    $gitLog = [];
+    if ($gitPat && !is_dir(__DIR__ . '/.git')) {
+        $dir = __DIR__;
+        $commands = [
+            "cd $dir && git init 2>&1",
+            "cd $dir && git remote add origin https://$gitUser:$gitPat@github.com/$gitRepo.git 2>&1",
+            "cd $dir && git fetch origin $gitBranch 2>&1",
+            "cd $dir && git checkout -f $gitBranch 2>&1",
+        ];
+        foreach ($commands as $cmd) {
+            $gitLog[] = shell_exec($cmd);
+        }
+    }
+
     $_SESSION['authenticated'] = true;
-    respond(['ok' => true]);
+    respond(['ok' => true, 'gitInitialized' => !empty($gitLog)]);
 }
 
 if ($method === 'POST' && $uri === '/api/auth/login') {

@@ -204,6 +204,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (tab.dataset.settingsTab === 'update' && !updateChecked) {
         checkForUpdates();
       }
+      // Load header config when Header tab is first opened
+      if (tab.dataset.settingsTab === 'header' && !headerLoaded) {
+        loadHeaderConfig();
+      }
     });
   });
 
@@ -288,6 +292,220 @@ document.addEventListener('DOMContentLoaded', () => {
       statusEl.style.color = '#e00';
       btn.disabled = false;
       btn.textContent = 'Update to Latest Version';
+    }
+  });
+
+  // ============ Header Settings ============
+
+  let headerConfig = null;
+  let headerLoaded = false;
+
+  async function loadHeaderConfig() {
+    try {
+      const res = await fetch('/api/header');
+      headerConfig = await res.json();
+      populateHeaderForm();
+    } catch (e) {
+      document.getElementById('header-status').textContent = 'Failed to load header config.';
+    }
+    headerLoaded = true;
+  }
+
+  function populateHeaderForm() {
+    if (!headerConfig) return;
+    const logo = headerConfig.logo || {};
+    if (logo.src) {
+      const preview = document.getElementById('header-logo-preview');
+      preview.src = logo.src;
+      preview.style.display = '';
+      document.getElementById('header-logo-none').style.display = 'none';
+    }
+    document.getElementById('header-logo-alt').value = logo.alt || '';
+    document.getElementById('header-logo-link').value = logo.link || '';
+    document.getElementById('header-email').value = headerConfig.email || '';
+    document.getElementById('header-phone').value = headerConfig.phone || '';
+    document.getElementById('header-tagline').value = headerConfig.tagline || '';
+    renderNavItems(headerConfig.nav || []);
+  }
+
+  function renderNavItems(nav) {
+    const list = document.getElementById('header-nav-list');
+    list.innerHTML = '';
+    nav.forEach((item, i) => {
+      const el = document.createElement('div');
+      el.className = 'header-nav-item';
+      el.dataset.index = i;
+
+      if (item.type === 'link') {
+        el.innerHTML = `
+          <div class="header-nav-item-row">
+            <span class="drag-handle" style="cursor:grab;">&#9776;</span>
+            <input type="text" class="setting-input nav-label" value="${escapeHtml(item.label || '')}" placeholder="Label" style="width:150px;">
+            <input type="text" class="setting-input nav-url" value="${escapeHtml(item.url || '')}" placeholder="URL" style="flex:1;">
+            <label class="toggle-label" style="font-size:12px;white-space:nowrap;"><input type="checkbox" class="nav-external" ${item.external ? 'checked' : ''}> New tab</label>
+            <button class="btn btn-icon nav-delete" title="Remove">&times;</button>
+          </div>
+        `;
+      } else if (item.type === 'dropdown') {
+        let childrenHtml = (item.children || []).map((child, ci) => `
+          <div class="header-nav-child-row" data-child-index="${ci}">
+            <span style="width:24px;display:inline-block;"></span>
+            <input type="text" class="setting-input child-label" value="${escapeHtml(child.label || '')}" placeholder="Label" style="width:150px;">
+            <input type="text" class="setting-input child-url" value="${escapeHtml(child.url || '')}" placeholder="URL" style="flex:1;">
+            <button class="btn btn-icon child-delete" title="Remove">&times;</button>
+          </div>
+        `).join('');
+
+        el.innerHTML = `
+          <div class="header-nav-item-row">
+            <span class="drag-handle" style="cursor:grab;">&#9776;</span>
+            <input type="text" class="setting-input nav-label" value="${escapeHtml(item.label || '')}" placeholder="Dropdown label" style="width:150px;">
+            <span class="setting-hint" style="flex:1;">Dropdown menu</span>
+            <button class="btn btn-icon btn-sm nav-add-child" title="Add link">+</button>
+            <button class="btn btn-icon nav-delete" title="Remove">&times;</button>
+          </div>
+          <div class="header-nav-children">${childrenHtml}</div>
+        `;
+      }
+      list.appendChild(el);
+    });
+  }
+
+  function collectNavFromForm() {
+    const items = [];
+    document.querySelectorAll('.header-nav-item').forEach(el => {
+      const labelInput = el.querySelector('.nav-label');
+      const urlInput = el.querySelector('.nav-url');
+      const externalInput = el.querySelector('.nav-external');
+      const childRows = el.querySelectorAll('.header-nav-child-row');
+
+      if (urlInput) {
+        // It's a link
+        items.push({
+          type: 'link',
+          label: labelInput.value.trim(),
+          url: urlInput.value.trim(),
+          external: externalInput ? externalInput.checked : false,
+        });
+      } else {
+        // It's a dropdown
+        const children = [];
+        childRows.forEach(row => {
+          const cl = row.querySelector('.child-label');
+          const cu = row.querySelector('.child-url');
+          if (cl && cu && (cl.value.trim() || cu.value.trim())) {
+            children.push({ label: cl.value.trim(), url: cu.value.trim() });
+          }
+        });
+        items.push({
+          type: 'dropdown',
+          label: labelInput.value.trim(),
+          children,
+        });
+      }
+    });
+    return items;
+  }
+
+  // Add link
+  document.getElementById('header-add-link').addEventListener('click', () => {
+    const nav = collectNavFromForm();
+    nav.push({ type: 'link', label: '', url: '', external: false });
+    renderNavItems(nav);
+  });
+
+  // Add dropdown
+  document.getElementById('header-add-dropdown').addEventListener('click', () => {
+    const nav = collectNavFromForm();
+    nav.push({ type: 'dropdown', label: '', children: [{ label: '', url: '' }] });
+    renderNavItems(nav);
+  });
+
+  // Delete nav item or child, add child to dropdown
+  document.getElementById('header-nav-list').addEventListener('click', e => {
+    if (e.target.closest('.nav-delete')) {
+      const item = e.target.closest('.header-nav-item');
+      item.remove();
+    } else if (e.target.closest('.child-delete')) {
+      const row = e.target.closest('.header-nav-child-row');
+      row.remove();
+    } else if (e.target.closest('.nav-add-child')) {
+      const childContainer = e.target.closest('.header-nav-item').querySelector('.header-nav-children');
+      const ci = childContainer.children.length;
+      const row = document.createElement('div');
+      row.className = 'header-nav-child-row';
+      row.dataset.childIndex = ci;
+      row.innerHTML = `
+        <span style="width:24px;display:inline-block;"></span>
+        <input type="text" class="setting-input child-label" value="" placeholder="Label" style="width:150px;">
+        <input type="text" class="setting-input child-url" value="" placeholder="URL" style="flex:1;">
+        <button class="btn btn-icon child-delete" title="Remove">&times;</button>
+      `;
+      childContainer.appendChild(row);
+    }
+  });
+
+  // Logo upload
+  document.getElementById('header-logo-file').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const formData = new FormData();
+    formData.append('logo', file);
+    const statusEl = document.getElementById('header-status');
+    statusEl.textContent = 'Uploading logo...';
+
+    try {
+      const res = await fetch('/api/settings/header/logo', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        const preview = document.getElementById('header-logo-preview');
+        preview.src = data.src + '?t=' + Date.now();
+        preview.style.display = '';
+        document.getElementById('header-logo-none').style.display = 'none';
+        statusEl.textContent = 'Logo uploaded.';
+      } else {
+        statusEl.textContent = data.error || 'Upload failed.';
+      }
+    } catch (err) {
+      statusEl.textContent = 'Upload error: ' + err.message;
+    }
+  });
+
+  // Save header
+  document.getElementById('save-header-btn').addEventListener('click', async () => {
+    const config = {
+      logo: {
+        src: document.getElementById('header-logo-preview').src ? document.getElementById('header-logo-preview').getAttribute('src') : '',
+        alt: document.getElementById('header-logo-alt').value.trim(),
+        link: document.getElementById('header-logo-link').value.trim(),
+        height: 74,
+      },
+      email: document.getElementById('header-email').value.trim(),
+      phone: document.getElementById('header-phone').value.trim(),
+      tagline: document.getElementById('header-tagline').value.trim(),
+      nav: collectNavFromForm(),
+    };
+
+    const statusEl = document.getElementById('header-status');
+    statusEl.textContent = 'Saving...';
+
+    try {
+      const res = await fetch('/api/settings/header', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config),
+      });
+      if (res.ok) {
+        statusEl.textContent = 'Header saved.';
+        statusEl.style.color = '#4caf50';
+      } else {
+        const data = await res.json();
+        statusEl.textContent = data.error || 'Save failed.';
+        statusEl.style.color = '#e00';
+      }
+    } catch (err) {
+      statusEl.textContent = 'Error: ' + err.message;
+      statusEl.style.color = '#e00';
     }
   });
 

@@ -1448,6 +1448,95 @@ if ($method === 'POST' && $uri === '/api/settings/deploy') {
 }
 
 // ============================================================
+// HEADER CONFIG
+// ============================================================
+
+define('HEADER_CONFIG_PATH', DATA_DIR . '/header.json');
+define('LOGO_DIR', SITE_DATA . '/logo');
+if (!is_dir(LOGO_DIR)) mkdir(LOGO_DIR, 0755, true);
+
+function readHeaderConfig() {
+    $config = jsonRead(HEADER_CONFIG_PATH);
+    if ($config) return $config;
+
+    // Default config (pre-populated with AJ Mast setup)
+    return [
+        'logo' => [
+            'src' => '/images/800-LONG%20AJM%20BADGE%2011202015.png',
+            'alt' => 'Photographer AJ Mast',
+            'link' => 'https://www.ajmast.com',
+            'height' => 74,
+        ],
+        'email' => 'aj@ajmast.com',
+        'phone' => '317.727.9251',
+        'tagline' => 'Indianapolis Based',
+        'nav' => [
+            ['type' => 'dropdown', 'label' => 'Portfolios', 'children' => [
+                ['label' => 'Overview', 'url' => 'https://www.ajmast.com/index/G0000XKNIOVIrTU4'],
+                ['label' => 'Portraits', 'url' => 'https://www.ajmast.com/index/G0000sREZSKkwReA'],
+                ['label' => 'Corporate Communications', 'url' => 'https://www.ajmast.com/index/G0000reodLR4CRvY'],
+                ['label' => 'Drone Photography', 'url' => 'https://www.ajmast.com/index/G0000p52WS_F6XsU'],
+                ['label' => 'Editorial', 'url' => 'https://www.ajmast.com/index/G0000PmdPEoex3E0'],
+            ]],
+            ['type' => 'dropdown', 'label' => 'Stories', 'children' => [
+                ['label' => 'FedEx Mass Shooting', 'url' => 'https://www.ajmast.com/index/G0000_cJcHD5D1f4'],
+                ['label' => 'Racial Justice Protests', 'url' => 'https://www.ajmast.com/index/G0000UqO_NV5jGxA'],
+                ['label' => 'Abortion Protests', 'url' => 'https://www.ajmast.com/index/G000030vvio6QBkA'],
+                ['label' => 'Dayton Shooting Vigil', 'url' => 'https://www.ajmast.com/index/G0000KnqP3CeUoGc'],
+                ['label' => 'Monon Trail', 'url' => 'https://www.ajmast.com/index/G0000eg1NcGUXGuU'],
+            ]],
+            ['type' => 'link', 'label' => 'Video', 'url' => '/'],
+            ['type' => 'link', 'label' => 'Instagram', 'url' => 'https://www.instagram.com/ajmast/', 'external' => true],
+            ['type' => 'link', 'label' => 'About', 'url' => 'https://www.ajmast.com/about'],
+            ['type' => 'link', 'label' => 'Contact', 'url' => 'https://www.ajmast.com/contact'],
+            ['type' => 'dropdown', 'label' => 'Archive', 'children' => [
+                ['label' => 'Browse Archive', 'url' => 'https://www.ajmast.com/archive'],
+            ]],
+            ['type' => 'link', 'label' => 'Shop Things AJ Makes', 'url' => 'https://ajmast.square.site', 'external' => true],
+            ['type' => 'link', 'label' => 'Software AJ Produces', 'url' => 'https://roningroupinc.com/software.html'],
+        ],
+    ];
+}
+
+// GET header config (public — used by all pages)
+if ($method === 'GET' && $uri === '/api/header') {
+    respond(readHeaderConfig());
+}
+
+// PUT header config (admin)
+if ($method === 'PUT' && $uri === '/api/settings/header') {
+    requireAuth();
+    $input = getInput();
+    jsonWrite(HEADER_CONFIG_PATH, $input);
+    respond(['ok' => true]);
+}
+
+// POST upload logo (admin)
+if ($method === 'POST' && $uri === '/api/settings/header/logo') {
+    requireAuth();
+    if (empty($_FILES['logo'])) respondError('No file uploaded', 400);
+
+    $file = $_FILES['logo'];
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    if (!in_array($ext, ['png', 'jpg', 'jpeg', 'svg', 'webp', 'gif'])) {
+        respondError('Unsupported image type. Use PNG, JPG, SVG, WebP, or GIF.', 400);
+    }
+
+    // Remove old logos
+    foreach (glob(LOGO_DIR . '/logo.*') as $old) unlink($old);
+
+    $filename = 'logo.' . $ext;
+    move_uploaded_file($file['tmp_name'], LOGO_DIR . '/' . $filename);
+
+    // Update header config with new logo path
+    $config = readHeaderConfig();
+    $config['logo']['src'] = '/logo/' . $filename;
+    jsonWrite(HEADER_CONFIG_PATH, $config);
+
+    respond(['ok' => true, 'src' => '/logo/' . $filename]);
+}
+
+// ============================================================
 // 404 — No route matched
 // ============================================================
 

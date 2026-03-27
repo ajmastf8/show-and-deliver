@@ -11,86 +11,17 @@
 </head>
 <body>
   <header class="site-header">
-    <div class="header-inner">
-      <a href="https://www.ajmast.com" class="logo">
-        <img src="/images/800-LONG%20AJM%20BADGE%2011202015.png" alt="Photographer AJ Mast" class="logo-img">
-      </a>
-      <nav class="header-nav">
-        <div class="nav-dropdown">
-          <span class="nav-link">Portfolios</span>
-          <div class="nav-dropdown-menu">
-            <a href="https://www.ajmast.com/index/G0000XKNIOVIrTU4">Overview</a>
-            <a href="https://www.ajmast.com/index/G0000sREZSKkwReA">Portraits</a>
-            <a href="https://www.ajmast.com/index/G0000reodLR4CRvY">Corporate Communications</a>
-            <a href="https://www.ajmast.com/index/G0000p52WS_F6XsU">Drone Photography</a>
-            <a href="https://www.ajmast.com/index/G0000PmdPEoex3E0">Editorial</a>
-          </div>
-        </div>
-        <div class="nav-dropdown">
-          <span class="nav-link">Stories</span>
-          <div class="nav-dropdown-menu">
-            <a href="https://www.ajmast.com/index/G0000_cJcHD5D1f4">FedEx Mass Shooting</a>
-            <a href="https://www.ajmast.com/index/G0000UqO_NV5jGxA">Racial Justice Protests</a>
-            <a href="https://www.ajmast.com/index/G000030vvio6QBkA">Abortion Protests</a>
-            <a href="https://www.ajmast.com/index/G0000KnqP3CeUoGc">Dayton Shooting Vigil</a>
-            <a href="https://www.ajmast.com/index/G0000eg1NcGUXGuU">Monon Trail</a>
-          </div>
-        </div>
-        <a href="/" class="nav-link active">Video</a>
-        <a href="https://www.instagram.com/ajmast/" class="nav-link" target="_blank" rel="noopener">Instagram</a>
-        <a href="https://www.ajmast.com/about" class="nav-link">About</a>
-        <a href="https://www.ajmast.com/contact" class="nav-link">Contact</a>
-        <div class="nav-dropdown">
-          <span class="nav-link">Archive</span>
-          <div class="nav-dropdown-menu">
-            <a href="https://www.ajmast.com/archive">Browse Archive</a>
-          </div>
-        </div>
-        <a href="https://ajmast.square.site" class="nav-link" target="_blank" rel="noopener">Shop Things AJ Makes</a>
-        <a href="https://roningroupinc.com/software.html" class="nav-link">Software AJ Produces</a>
-      </nav>
-      <div class="header-contact">
-        <a href="mailto:aj@ajmast.com">aj@ajmast.com</a>
-        <span class="contact-sep">//</span>
-        <span>317.727.9251</span>
-        <span class="contact-sep">//</span>
-        <span>Indianapolis Based</span>
-      </div>
-      <button class="mobile-menu-btn" aria-label="Menu">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-      </button>
-    </div>
+    <div class="header-inner"></div>
   </header>
-
-  <!-- Mobile nav overlay -->
   <div id="mobile-nav" class="mobile-nav">
-    <div class="mobile-nav-links">
-      <a href="https://www.ajmast.com/index/G0000XKNIOVIrTU4" class="mobile-nav-link">Portfolios</a>
-      <a href="https://www.ajmast.com/index/G0000_cJcHD5D1f4" class="mobile-nav-link">Stories</a>
-      <a href="/" class="mobile-nav-link active">Video</a>
-      <a href="https://www.instagram.com/ajmast/" class="mobile-nav-link" target="_blank" rel="noopener">Instagram</a>
-      <a href="https://www.ajmast.com/about" class="mobile-nav-link">About</a>
-      <a href="https://www.ajmast.com/contact" class="mobile-nav-link">Contact</a>
-      <a href="https://www.ajmast.com/archive" class="mobile-nav-link">Archive</a>
-      <a href="https://ajmast.square.site" class="mobile-nav-link" target="_blank" rel="noopener">Shop Things AJ Makes</a>
-      <a href="https://roningroupinc.com/software.html" class="mobile-nav-link">Software AJ Produces</a>
-      <div class="mobile-nav-contact">
-        <a href="mailto:aj@ajmast.com">aj@ajmast.com</a>
-        <span>317.727.9251</span>
-        <span>Indianapolis Based</span>
-      </div>
-    </div>
+    <div class="mobile-nav-links"></div>
   </div>
 
   <main class="container">
     <div id="video-grid" class="video-grid"></div>
   </main>
 
+  <script src="/js/header.js?v=1"></script>
   <script src="/js/public.js"></script>
-  <script>
-    document.querySelector('.mobile-menu-btn').addEventListener('click', () => {
-      document.getElementById('mobile-nav').classList.toggle('open');
-    });
-  </script>
 </body>
 </html>

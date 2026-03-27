@@ -87,6 +87,7 @@
         </div>
         <div class="sidebar-footer">
           <button id="site-settings-btn" class="btn btn-secondary btn-sm btn-block">Settings</button>
+          <button id="logout-btn" class="btn btn-secondary btn-sm btn-block" style="margin-top:6px;color:var(--color-gray-text);">Logout</button>
         </div>
       </aside>
 
@@ -196,7 +197,55 @@
 
           <!-- Header Tab -->
           <div id="settings-tab-header" class="settings-tab-content settings-panel" style="display:none;">
-            <p class="setting-hint" style="margin-bottom:16px;">Header configuration coming soon.</p>
+            <p class="setting-hint" style="margin-bottom:16px;">Configure the site header that appears on all public pages.</p>
+
+            <h4 style="margin:16px 0 8px;color:var(--color-black);">Logo</h4>
+            <div class="setting-group">
+              <label>Logo Image</label>
+              <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px;">
+                <img id="header-logo-preview" src="" alt="Logo preview" style="max-height:60px;max-width:200px;display:none;">
+                <span id="header-logo-none" class="setting-hint">No logo set</span>
+              </div>
+              <input type="file" id="header-logo-file" accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif,.png,.jpg,.jpeg,.svg,.webp,.gif">
+              <p class="setting-hint">Recommended: PNG or SVG, max height 74px. Will be displayed in the header bar.</p>
+            </div>
+            <div class="setting-group">
+              <label>Logo Alt Text</label>
+              <input type="text" id="header-logo-alt" class="setting-input" placeholder="e.g. My Photography">
+            </div>
+            <div class="setting-group">
+              <label>Logo Link URL</label>
+              <input type="text" id="header-logo-link" class="setting-input" placeholder="e.g. https://www.yoursite.com">
+            </div>
+
+            <hr style="border:none;border-top:1px solid var(--color-gray-mid);margin:20px 0;">
+            <h4 style="margin:0 0 8px;color:var(--color-black);">Contact Info</h4>
+            <div class="setting-group">
+              <label>Email</label>
+              <input type="email" id="header-email" class="setting-input" placeholder="you@example.com">
+            </div>
+            <div class="setting-group">
+              <label>Phone</label>
+              <input type="text" id="header-phone" class="setting-input" placeholder="555.123.4567">
+            </div>
+            <div class="setting-group">
+              <label>Tagline</label>
+              <input type="text" id="header-tagline" class="setting-input" placeholder="e.g. Based in Indianapolis">
+            </div>
+
+            <hr style="border:none;border-top:1px solid var(--color-gray-mid);margin:20px 0;">
+            <h4 style="margin:0 0 8px;color:var(--color-black);">Navigation Links</h4>
+            <p class="setting-hint" style="margin-bottom:12px;">Add links or dropdown menus. Drag to reorder.</p>
+            <div id="header-nav-list"></div>
+            <div style="display:flex;gap:8px;margin-top:12px;">
+              <button id="header-add-link" class="btn btn-secondary btn-sm">+ Link</button>
+              <button id="header-add-dropdown" class="btn btn-secondary btn-sm">+ Dropdown</button>
+            </div>
+
+            <div class="settings-actions" style="margin-top:24px;">
+              <button id="save-header-btn" class="btn btn-primary">Save Header</button>
+            </div>
+            <div id="header-status" class="email-status"></div>
           </div>
         </div>
 
@@ -235,7 +284,7 @@
           <div class="panel-header">
             <h2 id="gallery-title"></h2>
             <div class="panel-tabs">
-              <button class="tab-btn active" data-tab="videos">Videos</button>
+              <button class="tab-btn active" data-tab="videos">Content</button>
               <button class="tab-btn" data-tab="settings">Settings</button>
               <button class="tab-btn tab-comments" data-tab="comments" style="display:none;">Comments</button>
             </div>
@@ -399,6 +448,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=23"></script>
+  <script src="/js/admin.js?v=24"></script>
 </body>
 </html>

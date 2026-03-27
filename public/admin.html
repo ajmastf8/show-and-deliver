@@ -104,7 +104,7 @@
           </div>
           <div class="settings-tabs">
             <button class="settings-tab active" data-settings-tab="email">Email</button>
-            <button class="settings-tab" data-settings-tab="deploy">Deploy</button>
+            <button class="settings-tab" data-settings-tab="update">Update</button>
             <button class="settings-tab" data-settings-tab="header">Header</button>
           </div>
 
@@ -162,13 +162,36 @@
             <div id="email-status" class="email-status"></div>
           </div>
 
-          <!-- Deploy Tab -->
-          <div id="settings-tab-deploy" class="settings-tab-content settings-panel" style="display:none;">
-            <p class="setting-hint" style="margin-bottom:16px;">Pull the latest code from GitHub. Branch and credentials are configured in .env on the server.</p>
-            <div class="settings-actions">
-              <button id="deploy-btn" class="btn btn-primary">Deploy from GitHub</button>
+          <!-- Update Tab -->
+          <div id="settings-tab-update" class="settings-tab-content settings-panel" style="display:none;">
+            <div id="update-loading" class="setting-hint">Checking for updates...</div>
+            <div id="update-info" style="display:none;">
+              <div class="setting-group">
+                <label>Current Version</label>
+                <p><span id="update-local-version" style="font-weight:600;"></span> <span id="update-local-commit" style="color:var(--color-gray-text);font-size:12px;"></span></p>
+              </div>
+              <div id="update-available-section" style="display:none;">
+                <div class="setting-group">
+                  <label>Available Version</label>
+                  <p><span id="update-remote-version" style="font-weight:600;color:var(--color-primary);"></span> <span id="update-remote-commit" style="color:var(--color-gray-text);font-size:12px;"></span></p>
+                </div>
+                <div id="update-commit-log" class="setting-group" style="display:none;">
+                  <label>Changes</label>
+                  <pre id="update-commits" style="font-size:12px;background:var(--color-gray-light);padding:12px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;"></pre>
+                </div>
+                <div id="update-changelog-section" class="setting-group" style="display:none;">
+                  <label>Changelog</label>
+                  <pre id="update-changelog" style="font-size:12px;background:var(--color-gray-light);padding:12px;border-radius:4px;overflow-x:auto;white-space:pre-wrap;max-height:300px;overflow-y:auto;"></pre>
+                </div>
+                <div class="settings-actions">
+                  <button id="deploy-btn" class="btn btn-primary">Update to Latest Version</button>
+                </div>
+              </div>
+              <div id="update-current-section" style="display:none;">
+                <p class="setting-hint" style="color:#4caf50;font-weight:600;">You are running the latest version.</p>
+              </div>
+              <div id="deploy-status" class="email-status"></div>
             </div>
-            <div id="deploy-status" class="email-status"></div>
           </div>
 
           <!-- Header Tab -->

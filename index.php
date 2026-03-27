@@ -1333,6 +1333,72 @@ if ($method === 'POST' && $uri === '/api/settings/email/test') {
     }
 }
 
+// Update check — compare local vs remote version
+if ($method === 'GET' && $uri === '/api/settings/update') {
+    requireAuth();
+    $dir = __DIR__;
+    $branch = preg_replace('/[^a-zA-Z0-9\/_-]/', '', env('DEPLOY_BRANCH', 'main'));
+    $enabled = env('DEPLOY_ENABLED') !== 'false';
+
+    // Current local version
+    $versionFile = $dir . '/VERSION';
+    $localVersion = file_exists($versionFile) ? trim(file_get_contents($versionFile)) : 'unknown';
+
+    // Current local commit
+    $localCommit = trim(shell_exec("cd $dir && git rev-parse --short HEAD 2>&1") ?? '');
+    if (strpos($localCommit, 'fatal') !== false) $localCommit = '';
+
+    $remoteVersion = $localVersion;
+    $remoteCommit = $localCommit;
+    $changelog = '';
+    $updateAvailable = false;
+    $commitLog = '';
+
+    if ($enabled && $localCommit) {
+        // Set remote URL with PAT if configured
+        $pat = env('GIT_PAT');
+        $username = env('GIT_USERNAME');
+        $repo = env('GIT_REPO');
+        if ($pat && $username && $repo) {
+            shell_exec("cd $dir && git remote set-url origin https://$username:$pat@github.com/$repo.git 2>&1");
+        }
+
+        // Fetch latest from remote
+        shell_exec("cd $dir && git fetch origin $branch 2>&1");
+
+        // Remote commit
+        $remoteCommit = trim(shell_exec("cd $dir && git rev-parse --short origin/$branch 2>&1") ?? '');
+        if (strpos($remoteCommit, 'fatal') !== false) $remoteCommit = '';
+
+        // Check if there are new commits
+        if ($remoteCommit && $localCommit !== $remoteCommit) {
+            $updateAvailable = true;
+
+            // Get remote VERSION file
+            $remoteVersionContent = trim(shell_exec("cd $dir && git show origin/$branch:VERSION 2>/dev/null") ?? '');
+            if ($remoteVersionContent) $remoteVersion = $remoteVersionContent;
+
+            // Get commit log between local and remote
+            $commitLog = trim(shell_exec("cd $dir && git log --oneline HEAD..origin/$branch 2>&1") ?? '');
+
+            // Get remote CHANGELOG.md
+            $changelog = trim(shell_exec("cd $dir && git show origin/$branch:CHANGELOG.md 2>/dev/null") ?? '');
+        }
+    }
+
+    respond([
+        'enabled' => $enabled,
+        'branch' => $branch,
+        'localVersion' => $localVersion,
+        'localCommit' => $localCommit,
+        'remoteVersion' => $remoteVersion,
+        'remoteCommit' => $remoteCommit,
+        'updateAvailable' => $updateAvailable,
+        'commitLog' => $commitLog,
+        'changelog' => $changelog,
+    ]);
+}
+
 // Deploy
 if ($method === 'GET' && $uri === '/api/settings/deploy') {
     requireAuth();

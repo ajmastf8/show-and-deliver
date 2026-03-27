@@ -200,49 +200,94 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('.settings-tab-content').forEach(c => c.style.display = 'none');
       tab.classList.add('active');
       document.getElementById('settings-tab-' + tab.dataset.settingsTab).style.display = '';
+      // Check for updates when Update tab is first opened
+      if (tab.dataset.settingsTab === 'update' && !updateChecked) {
+        checkForUpdates();
+      }
     });
   });
 
   // ============ Deploy from GitHub ============
 
-  const deployBtn = document.getElementById('deploy-btn');
+  // ============ Update Check ============
 
-  // Check deploy config and configure button
-  (async () => {
+  let updateChecked = false;
+
+  async function checkForUpdates() {
+    const loading = document.getElementById('update-loading');
+    const info = document.getElementById('update-info');
+    loading.style.display = '';
+    info.style.display = 'none';
+
     try {
-      const res = await fetch('/api/settings/deploy');
-      const config = await res.json();
-      if (!config.enabled) {
-        deployBtn.style.display = 'none';
+      const res = await fetch('/api/settings/update');
+      const data = await res.json();
+
+      document.getElementById('update-local-version').textContent = data.localVersion || 'unknown';
+      document.getElementById('update-local-commit').textContent = data.localCommit ? `(${data.localCommit})` : '';
+
+      if (data.updateAvailable) {
+        document.getElementById('update-available-section').style.display = '';
+        document.getElementById('update-current-section').style.display = 'none';
+        document.getElementById('update-remote-version').textContent = data.remoteVersion || '';
+        document.getElementById('update-remote-commit').textContent = data.remoteCommit ? `(${data.remoteCommit})` : '';
+
+        if (data.commitLog) {
+          document.getElementById('update-commit-log').style.display = '';
+          document.getElementById('update-commits').textContent = data.commitLog;
+        }
+        if (data.changelog) {
+          document.getElementById('update-changelog-section').style.display = '';
+          document.getElementById('update-changelog').textContent = data.changelog;
+        }
       } else {
-        deployBtn.textContent = `Deploy from GitHub (${config.branch})`;
+        document.getElementById('update-available-section').style.display = 'none';
+        document.getElementById('update-current-section').style.display = '';
       }
-    } catch (e) {}
-  })();
 
-  deployBtn.addEventListener('click', async () => {
-    if (!confirm('Pull latest code from GitHub and deploy?')) return;
+      if (!data.enabled) {
+        const deployBtn = document.getElementById('deploy-btn');
+        if (deployBtn) deployBtn.style.display = 'none';
+      }
+    } catch (e) {
+      loading.textContent = 'Failed to check for updates.';
+      return;
+    }
 
-    deployBtn.disabled = true;
-    const originalText = deployBtn.textContent;
-    deployBtn.textContent = 'Deploying...';
+    loading.style.display = 'none';
+    info.style.display = '';
+    updateChecked = true;
+  }
+
+  // Deploy / Update button
+  document.getElementById('deploy-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('deploy-btn');
+    if (!confirm('Update to the latest version?')) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Updating...';
+    const statusEl = document.getElementById('deploy-status');
+    statusEl.textContent = '';
 
     try {
       const res = await fetch('/api/settings/deploy', { method: 'POST' });
       const data = await res.json();
 
       if (res.ok) {
-        const msg = data.message || 'Deploy successful';
-        alert(msg + '\n\nPage will reload.');
-        window.location.reload();
+        statusEl.textContent = data.message || 'Update successful!';
+        statusEl.style.color = '#4caf50';
+        setTimeout(() => window.location.reload(), 1500);
       } else {
-        alert('Deploy failed:\n\n' + (data.error || 'Unknown error'));
+        statusEl.textContent = data.error || 'Update failed.';
+        statusEl.style.color = '#e00';
+        btn.disabled = false;
+        btn.textContent = 'Update to Latest Version';
       }
     } catch (err) {
-      alert('Deploy error: ' + err.message);
-    } finally {
-      deployBtn.disabled = false;
-      deployBtn.textContent = originalText;
+      statusEl.textContent = 'Network error: ' + err.message;
+      statusEl.style.color = '#e00';
+      btn.disabled = false;
+      btn.textContent = 'Update to Latest Version';
     }
   });
 

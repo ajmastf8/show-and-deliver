@@ -26,7 +26,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const data = await res.json();
 
-    document.title = data.name + ' — AJ Mast';
+    document.title = data.name + ' — ' + (window.__siteConfig?.siteName || 'Gallery');
     collectionName.textContent = data.name;
 
     if (!data.galleries.length) {

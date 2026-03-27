@@ -92,7 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadingView.style.display = 'none';
         passwordView.style.display = 'flex';
         passwordGalleryName.textContent = data.galleryName;
-        document.title = data.galleryName + ' — AJ Mast';
+        document.title = data.galleryName + ' — ' + (window.__siteConfig?.siteName || 'Gallery');
         return;
       }
 
@@ -145,7 +145,7 @@ document.addEventListener('DOMContentLoaded', () => {
     galleryView.style.display = '';
 
     galleryName.textContent = galleryData.gallery.name;
-    document.title = galleryData.gallery.name + ' — AJ Mast';
+    document.title = galleryData.gallery.name + ' — ' + (window.__siteConfig?.siteName || 'Gallery');
 
     if (galleryData.gallery.downloadsEnabled) {
       downloadAllBtn.style.display = '';
@@ -166,8 +166,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (vid) openLightbox(vid.id);
     }
 
-    // Show name modal if no saved name
-    if (!viewerName) {
+    // Show name modal if commenting is enabled and no saved name
+    if (galleryData.gallery.commentingEnabled && !viewerName) {
       showNameModal();
     }
   }

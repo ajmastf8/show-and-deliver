@@ -1,4 +1,7 @@
 (function() {
+  // Expose site name globally for page titles
+  window.__siteConfig = { siteName: '' };
+
   async function loadHeader() {
     let config;
     try {
@@ -11,6 +14,10 @@
     const email = config.email || '';
     const phone = config.phone || '';
     const tagline = config.tagline || '';
+    const siteName = config.siteName || logo.alt || '';
+
+    // Store site name globally for page titles
+    window.__siteConfig.siteName = siteName;
 
     function esc(str) {
       const d = document.createElement('div');
@@ -32,7 +39,6 @@
           `<a href="${esc(c.url)}">${esc(c.label)}</a>`
         ).join('');
         navHtml += `<div class="nav-dropdown"><span class="nav-link">${esc(item.label)}</span><div class="nav-dropdown-menu">${children}</div></div>`;
-        // Mobile: just link to first child or use label
         const mobileUrl = (item.children && item.children.length) ? item.children[0].url : '#';
         mobileNavHtml += `<a href="${esc(mobileUrl)}" class="mobile-nav-link">${esc(item.label)}</a>`;
       }
@@ -46,28 +52,36 @@
     const contactHtml = contactParts.join('<span class="contact-sep">//</span>');
     const mobileContactHtml = contactParts.map(p => p.replace('contact-sep', '')).join('');
 
-    // Logo
+    // Logo or text header
     const logoLink = logo.link || '/';
     const logoHeight = logo.height || 74;
-    const logoHtml = logo.src
-      ? `<a href="${esc(logoLink)}" class="logo"><img src="${esc(logo.src)}" alt="${esc(logo.alt || '')}" class="logo-img" style="height:${logoHeight}px;"></a>`
-      : '';
+    let brandHtml = '';
+    if (logo.src) {
+      brandHtml = `<a href="${esc(logoLink)}" class="logo"><img src="${esc(logo.src)}" alt="${esc(logo.alt || '')}" class="logo-img" style="height:${logoHeight}px;"></a>`;
+    } else if (logo.text) {
+      brandHtml = `<a href="${esc(logoLink)}" class="logo logo-text">${esc(logo.text)}</a>`;
+    } else if (logo.alt) {
+      // Use alt text as text header if no image and no explicit text
+      brandHtml = `<a href="${esc(logoLink)}" class="logo logo-text">${esc(logo.alt)}</a>`;
+    }
 
     // Inject header
     const header = document.querySelector('.site-header .header-inner');
     if (header) {
       header.innerHTML = `
-        ${logoHtml}
+        ${brandHtml}
         <nav class="header-nav">${navHtml}</nav>
-        <div class="header-contact">${contactHtml}</div>
+        ${contactHtml ? `<div class="header-contact">${contactHtml}</div>` : ''}
         <button class="mobile-menu-btn" aria-label="Menu">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
       `;
-      // Re-attach mobile menu toggle
-      header.querySelector('.mobile-menu-btn').addEventListener('click', () => {
-        document.getElementById('mobile-nav').classList.toggle('open');
-      });
+      const menuBtn = header.querySelector('.mobile-menu-btn');
+      if (menuBtn) {
+        menuBtn.addEventListener('click', () => {
+          document.getElementById('mobile-nav').classList.toggle('open');
+        });
+      }
     }
 
     // Inject mobile nav

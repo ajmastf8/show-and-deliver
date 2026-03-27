@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin — AJ Mast Video</title>
+  <title>Admin — Gallery</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
@@ -11,53 +11,11 @@
 </head>
 <body>
   <header class="site-header">
-    <div class="header-inner">
-      <a href="https://www.ajmast.com" class="logo">
-        <img src="/images/800-LONG%20AJM%20BADGE%2011202015.png" alt="Photographer AJ Mast" class="logo-img">
-      </a>
-      <nav class="header-nav">
-        <div class="nav-dropdown">
-          <span class="nav-link">Portfolios</span>
-          <div class="nav-dropdown-menu">
-            <a href="https://www.ajmast.com/index/G0000XKNIOVIrTU4">Overview</a>
-            <a href="https://www.ajmast.com/index/G0000sREZSKkwReA">Portraits</a>
-            <a href="https://www.ajmast.com/index/G0000reodLR4CRvY">Corporate Communications</a>
-            <a href="https://www.ajmast.com/index/G0000p52WS_F6XsU">Drone Photography</a>
-            <a href="https://www.ajmast.com/index/G0000PmdPEoex3E0">Editorial</a>
-          </div>
-        </div>
-        <div class="nav-dropdown">
-          <span class="nav-link">Stories</span>
-          <div class="nav-dropdown-menu">
-            <a href="https://www.ajmast.com/index/G0000_cJcHD5D1f4">FedEx Mass Shooting</a>
-            <a href="https://www.ajmast.com/index/G0000UqO_NV5jGxA">Racial Justice Protests</a>
-            <a href="https://www.ajmast.com/index/G000030vvio6QBkA">Abortion Protests</a>
-            <a href="https://www.ajmast.com/index/G0000KnqP3CeUoGc">Dayton Shooting Vigil</a>
-            <a href="https://www.ajmast.com/index/G0000eg1NcGUXGuU">Monon Trail</a>
-          </div>
-        </div>
-        <a href="/" class="nav-link">Video</a>
-        <a href="https://www.instagram.com/ajmast/" class="nav-link" target="_blank" rel="noopener">Instagram</a>
-        <a href="https://www.ajmast.com/about" class="nav-link">About</a>
-        <a href="https://www.ajmast.com/contact" class="nav-link">Contact</a>
-        <div class="nav-dropdown">
-          <span class="nav-link">Archive</span>
-          <div class="nav-dropdown-menu">
-            <a href="https://www.ajmast.com/archive">Browse Archive</a>
-          </div>
-        </div>
-        <a href="https://ajmast.square.site" class="nav-link" target="_blank" rel="noopener">Shop Things AJ Makes</a>
-        <a href="https://roningroupinc.com/software.html" class="nav-link">Software AJ Produces</a>
-      </nav>
-      <div class="header-contact">
-        <a href="mailto:aj@ajmast.com">aj@ajmast.com</a>
-        <span class="contact-sep">//</span>
-        <span>317.727.9251</span>
-        <span class="contact-sep">//</span>
-        <span>Indianapolis Based</span>
-      </div>
-    </div>
+    <div class="header-inner"></div>
   </header>
+  <div id="mobile-nav" class="mobile-nav">
+    <div class="mobile-nav-links"></div>
+  </div>
 
   <!-- First-Run Setup -->
   <section id="setup-section" class="container login-section" style="display:none;">
@@ -157,16 +115,16 @@
             </div>
             <div class="setting-group">
               <label>From Address</label>
-              <input type="text" id="smtp-from" class="setting-input" placeholder='"AJ Mast Video" <notifications@ajmast.com>'>
+              <input type="text" id="smtp-from" class="setting-input" placeholder='"My Gallery" <notifications@example.com>'>
             </div>
             <div class="setting-group">
               <label>Notification Email (To)</label>
-              <input type="email" id="smtp-admin-email" class="setting-input" placeholder="aj@ajmast.com">
+              <input type="email" id="smtp-admin-email" class="setting-input" placeholder="you@example.com">
               <p class="setting-hint">Where comment notifications are sent</p>
             </div>
             <div class="setting-group">
               <label>Site Base URL</label>
-              <input type="text" id="smtp-base-url" class="setting-input" placeholder="https://video.ajmast.com">
+              <input type="text" id="smtp-base-url" class="setting-input" placeholder="https://gallery.example.com">
               <p class="setting-hint">Used for links in notification emails</p>
             </div>
             <div class="settings-actions">
@@ -212,15 +170,30 @@
           <div id="settings-tab-header" class="settings-tab-content settings-panel" style="display:none;">
             <p class="setting-hint" style="margin-bottom:16px;">Configure the site header that appears on all public pages.</p>
 
-            <h4 style="margin:16px 0 8px;color:var(--color-black);">Logo</h4>
+            <div class="setting-group">
+              <label>Site Name</label>
+              <input type="text" id="header-site-name" class="setting-input" placeholder="e.g. Smith Photography">
+              <p class="setting-hint">Used in browser tab titles</p>
+            </div>
+
+            <hr style="border:none;border-top:1px solid var(--color-gray-mid);margin:20px 0;">
+            <h4 style="margin:0 0 8px;color:var(--color-black);">Header Branding</h4>
+            <p class="setting-hint" style="margin-bottom:12px;">Use a logo image, text, or both. If no image is uploaded, the header text will display instead.</p>
+
+            <div class="setting-group">
+              <label>Header Text</label>
+              <input type="text" id="header-logo-text" class="setting-input" placeholder="e.g. SMITH PHOTOGRAPHY">
+              <p class="setting-hint">Displayed as styled text in the header if no logo image is set</p>
+            </div>
             <div class="setting-group">
               <label>Logo Image</label>
               <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px;">
                 <img id="header-logo-preview" src="" alt="Logo preview" style="max-height:60px;max-width:200px;display:none;">
-                <span id="header-logo-none" class="setting-hint">No logo set</span>
+                <span id="header-logo-none" class="setting-hint">No logo set — header text will be used</span>
               </div>
               <input type="file" id="header-logo-file" accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif,.png,.jpg,.jpeg,.svg,.webp,.gif">
-              <p class="setting-hint">Recommended: PNG or SVG, max height 74px. Will be displayed in the header bar.</p>
+              <p class="setting-hint">Recommended: PNG or SVG. Will display at max 74px height. Overrides header text if set.</p>
+              <button type="button" id="header-logo-remove" class="btn btn-sm" style="margin-top:6px;background:#e0e0e0;color:#333;display:none;">Remove Logo Image</button>
             </div>
             <div class="setting-group">
               <label>Logo Alt Text</label>
@@ -460,7 +433,8 @@
     </div>
   </div>
 
+  <script src="/js/header.js?v=2"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=25"></script>
+  <script src="/js/admin.js?v=26"></script>
 </body>
 </html>

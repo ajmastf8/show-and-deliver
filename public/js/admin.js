@@ -354,11 +354,15 @@ document.addEventListener('DOMContentLoaded', () => {
   function populateHeaderForm() {
     if (!headerConfig) return;
     const logo = headerConfig.logo || {};
+    document.getElementById('header-site-name').value = headerConfig.siteName || '';
+    document.getElementById('header-logo-text').value = logo.text || '';
     if (logo.src) {
       const preview = document.getElementById('header-logo-preview');
       preview.src = logo.src;
       preview.style.display = '';
       document.getElementById('header-logo-none').style.display = 'none';
+      const removeBtn = document.getElementById('header-logo-remove');
+      if (removeBtn) removeBtn.style.display = '';
     }
     document.getElementById('header-logo-alt').value = logo.alt || '';
     document.getElementById('header-logo-link').value = logo.link || '';
@@ -512,10 +516,23 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Save header
+  // Remove logo image button
+  document.getElementById('header-logo-remove')?.addEventListener('click', () => {
+    document.getElementById('header-logo-preview').src = '';
+    document.getElementById('header-logo-preview').style.display = 'none';
+    document.getElementById('header-logo-none').style.display = '';
+    document.getElementById('header-logo-remove').style.display = 'none';
+    document.getElementById('header-logo-file').value = '';
+  });
+
   document.getElementById('save-header-btn').addEventListener('click', async () => {
+    const previewEl = document.getElementById('header-logo-preview');
+    const logoSrc = (previewEl.style.display !== 'none' && previewEl.getAttribute('src')) ? previewEl.getAttribute('src') : '';
     const config = {
+      siteName: document.getElementById('header-site-name').value.trim(),
       logo: {
-        src: document.getElementById('header-logo-preview').src ? document.getElementById('header-logo-preview').getAttribute('src') : '',
+        src: logoSrc,
+        text: document.getElementById('header-logo-text').value.trim(),
         alt: document.getElementById('header-logo-alt').value.trim(),
         link: document.getElementById('header-logo-link').value.trim(),
         height: 74,

@@ -316,7 +316,7 @@ function getEmailConfig() {
         'secure' => $smtp['secure'] ?? (env('SMTP_SECURE') === 'true'),
         'user' => $smtp['user'] ?? env('SMTP_USER'),
         'pass' => $smtp['pass'] ?? env('SMTP_PASS'),
-        'from' => $smtp['from'] ?? env('SMTP_FROM', '"Video Proofing" <noreply@ajmast.com>'),
+        'from' => $smtp['from'] ?? env('SMTP_FROM', ''),
         'adminEmail' => $smtp['adminEmail'] ?? env('ADMIN_EMAIL'),
         'baseUrl' => $smtp['baseUrl'] ?? env('BASE_URL', 'http://localhost'),
         'resendApiKey' => $smtp['resendApiKey'] ?? env('RESEND_API_KEY'),
@@ -593,7 +593,7 @@ if ($method === 'POST' && $uri === '/api/galleries') {
         'downloadsEnabled' => !empty($input['downloadsEnabled']),
         'commentingEnabled' => !empty($input['commentingEnabled']),
         'expiresAt' => $input['expiresAt'] ?? null,
-        'active' => true,
+        'active' => false,
         'createdAt' => date('c'),
     ];
 
@@ -1589,8 +1589,10 @@ function readHeaderConfig() {
 
     // Default config for fresh installs
     return [
+        'siteName' => '',
         'logo' => [
             'src' => '',
+            'text' => '',
             'alt' => '',
             'link' => '/',
             'height' => 74,

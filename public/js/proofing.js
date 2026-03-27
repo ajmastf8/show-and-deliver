@@ -534,7 +534,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ============ Download All ============
 
-  downloadAllBtn.addEventListener('click', () => {
+  downloadAllBtn.addEventListener('click', async () => {
+    // Check if chunked download is needed
+    try {
+      const res = await fetch(`/api/proofing/${token}/download-info`);
+      const info = await res.json();
+
+      if (info.chunks && info.chunks.length > 1) {
+        // Multiple chunks needed — show download options
+        const parts = info.chunks.map(c => {
+          const sizeMB = (c.size / 1024 / 1024).toFixed(0);
+          return `Part ${c.part}: ${c.fileCount} files (~${sizeMB} MB)`;
+        }).join('\n');
+
+        const msg = `This gallery is too large for a single download.\n\n${parts}\n\nDownload all parts?`;
+        if (!confirm(msg)) return;
+
+        // Download each part
+        for (const chunk of info.chunks) {
+          window.open(`/api/proofing/${token}/download-all?part=${chunk.part}`, '_blank');
+        }
+        return;
+      }
+    } catch (e) {
+      // If info check fails, fall through to direct download
+    }
+
     window.location.href = `/api/proofing/${token}/download-all`;
   });
 

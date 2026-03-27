@@ -1165,18 +1165,89 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download/{videoId}', 
 }
 
 // Download all as ZIP
+// Download info — returns file count, total size, and chunk breakdown
+define('CHUNK_MAX_BYTES', 2 * 1024 * 1024 * 1024); // 2GB per chunk
+
+if ($method === 'GET' && matchRoute('/api/proofing/{token}/download-info', $uri, $params)) {
+    $gallery = getProofingGallery($params['token']);
+    if (!$gallery['downloadsEnabled']) respondError('Downloads disabled', 403);
+
+    $items = array_values(array_filter(readGalleryVideos($gallery['id']), fn($v) => in_array($v['type'] ?? '', ['video', 'photo'])));
+    $totalSize = 0;
+    $files = [];
+    foreach ($items as $v) {
+        $filePath = UPLOADS_DIR . '/' . $v['filename'];
+        $size = file_exists($filePath) ? filesize($filePath) : 0;
+        $files[] = ['title' => $v['title'], 'size' => $size];
+        $totalSize += $size;
+    }
+
+    // Calculate chunks
+    $chunks = [];
+    $chunkSize = 0;
+    $chunkFiles = 0;
+    $chunkNum = 1;
+    foreach ($files as $f) {
+        if ($chunkSize + $f['size'] > CHUNK_MAX_BYTES && $chunkFiles > 0) {
+            $chunks[] = ['part' => $chunkNum, 'size' => $chunkSize, 'fileCount' => $chunkFiles];
+            $chunkNum++;
+            $chunkSize = 0;
+            $chunkFiles = 0;
+        }
+        $chunkSize += $f['size'];
+        $chunkFiles++;
+    }
+    if ($chunkFiles > 0) {
+        $chunks[] = ['part' => $chunkNum, 'size' => $chunkSize, 'fileCount' => $chunkFiles];
+    }
+
+    respond([
+        'fileCount' => count($files),
+        'totalSize' => $totalSize,
+        'chunks' => $chunks,
+    ]);
+}
+
+// Download all as ZIP (supports ?part=N for chunked downloads)
 if ($method === 'GET' && matchRoute('/api/proofing/{token}/download-all', $uri, $params)) {
     $gallery = getProofingGallery($params['token']);
     if (!$gallery['downloadsEnabled']) respondError('Downloads disabled', 403);
 
-    $videos = array_filter(readGalleryVideos($gallery['id']), fn($v) => in_array($v['type'] ?? '', ['video', 'photo']));
+    $items = array_values(array_filter(readGalleryVideos($gallery['id']), fn($v) => in_array($v['type'] ?? '', ['video', 'photo'])));
+    $requestedPart = isset($_GET['part']) ? (int)$_GET['part'] : 0;
+
+    // If part requested, calculate which files belong to this chunk
+    if ($requestedPart > 0) {
+        $chunkFiles = [];
+        $chunkSize = 0;
+        $chunkNum = 1;
+        $currentChunk = [];
+        foreach ($items as $v) {
+            $filePath = UPLOADS_DIR . '/' . $v['filename'];
+            $size = file_exists($filePath) ? filesize($filePath) : 0;
+            if ($chunkSize + $size > CHUNK_MAX_BYTES && count($currentChunk) > 0) {
+                if ($chunkNum === $requestedPart) { $chunkFiles = $currentChunk; break; }
+                $chunkNum++;
+                $chunkSize = 0;
+                $currentChunk = [];
+            }
+            $chunkSize += $size;
+            $currentChunk[] = $v;
+        }
+        if (empty($chunkFiles) && $chunkNum === $requestedPart) {
+            $chunkFiles = $currentChunk;
+        }
+        if (empty($chunkFiles)) respondError('Invalid part number', 400);
+        $items = $chunkFiles;
+    }
 
     $safeName = preg_replace('/[^a-zA-Z0-9 .\-]/', '', $gallery['name']);
+    $zipName = $requestedPart > 0 ? "$safeName - Part $requestedPart.zip" : "$safeName.zip";
     $tmpFile = tempnam(sys_get_temp_dir(), 'zip');
 
     $zip = new ZipArchive();
     $zip->open($tmpFile, ZipArchive::OVERWRITE);
-    foreach ($videos as $v) {
+    foreach ($items as $v) {
         $filePath = UPLOADS_DIR . '/' . $v['filename'];
         if (file_exists($filePath)) {
             $ext = pathinfo($v['filename'], PATHINFO_EXTENSION);
@@ -1187,7 +1258,7 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download-all', $uri, 
     $zip->close();
 
     header('Content-Type: application/zip');
-    header('Content-Disposition: attachment; filename="' . $safeName . '.zip"');
+    header('Content-Disposition: attachment; filename="' . $zipName . '"');
     header('Content-Length: ' . filesize($tmpFile));
     readfile($tmpFile);
     unlink($tmpFile);

@@ -314,7 +314,7 @@ function writeGalleryComments($gid, $data) { ensureGalleryDir($gid); jsonWrite(g
 
 function findReelsGallery() {
     foreach (readGalleries() as $g) {
-        if ($g['type'] === 'reels' && $g['active']) return $g;
+        if ($g['type'] === 'reels' && ($g['active'] ?? true) !== false) return $g;
     }
     return null;
 }
@@ -1136,7 +1136,7 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/probe', $uri, $
 
 function getProofingGallery($token) {
     $gallery = findGalleryByToken($token);
-    if (!$gallery || !$gallery['active']) respondError('Not found', 404);
+    if (!$gallery || ($gallery['active'] ?? true) === false) respondError('Not found', 404);
     if (!empty($gallery['expiresAt']) && strtotime($gallery['expiresAt']) < time()) {
         respondError('Gallery expired', 410);
     }
@@ -1390,7 +1390,7 @@ if ($method === 'GET' && $uri === '/api/collections') {
         foreach ($col['galleryIds'] as $gid) {
             if (isset($galMap[$gid])) {
                 $g = $galMap[$gid];
-                $colGalleries[] = ['id' => $g['id'], 'name' => $g['name'], 'type' => $g['type'], 'active' => $g['active'], 'token' => $g['token']];
+                $colGalleries[] = ['id' => $g['id'], 'name' => $g['name'], 'type' => $g['type'], 'active' => $g['active'] ?? true, 'token' => $g['token']];
             }
         }
         $col['galleries'] = $colGalleries;
@@ -1459,7 +1459,7 @@ if ($method === 'GET' && matchRoute('/api/collections/public/{token}', $uri, $pa
     foreach ($col['galleryIds'] as $gid) {
         if (!isset($galMap[$gid])) continue;
         $g = $galMap[$gid];
-        if (!$g['active'] || $g['type'] !== 'proofing') continue;
+        if (($g['active'] ?? true) === false || $g['type'] !== 'proofing') continue;
         $videos = array_filter(readGalleryVideos($g['id']), fn($v) => ($v['type'] ?? '') !== 'header');
         $thumb = !empty($videos) ? (reset($videos)['thumbnail'] ?? null) : null;
         $publicGalleries[] = [

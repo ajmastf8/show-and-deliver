@@ -32,7 +32,7 @@ app.use('/uploads', express.static(UPLOADS_DIR));
 app.use('/thumbnails', express.static(THUMBS_DIR));
 app.use(session({
   store: new FileStore({
-    path: path.join(__dirname, 'data', 'sessions'),
+    path: path.join(__dirname, 'site-data', 'data', 'sessions'),
     ttl: 7 * 24 * 60 * 60, // 7 days (seconds)
     retries: 0,
     logFn: () => {}  // suppress noisy logs

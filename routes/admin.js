@@ -312,7 +312,7 @@ router.delete('/galleries/:gid/videos/:vid', requireAuth, (req, res) => {
 
 // --- Import from Server ---
 
-const IMPORT_DIR = path.join(__dirname, '..', 'imports');
+const IMPORT_DIR = path.join(__dirname, '..', 'site-data', 'imports');
 if (!fs.existsSync(IMPORT_DIR)) fs.mkdirSync(IMPORT_DIR, { recursive: true });
 
 const MEDIA_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v', '.jpg', '.jpeg', '.png', '.webp', '.gif'];

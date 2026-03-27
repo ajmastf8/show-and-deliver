@@ -1356,7 +1356,7 @@ if ($method === 'POST' && $uri === '/api/settings/deploy') {
         $setRemote = "git remote set-url origin https://$username:$pat@github.com/$repo.git && ";
     }
 
-    $logFile = dirname(__DIR__) . '/deploy.log';
+    $logFile = __DIR__ . '/deploy.log';
     $timestamp = date('Y-m-d H:i:s');
 
     $cmd = "{$setRemote}git fetch origin && git checkout $branch && git pull origin $branch 2>&1";

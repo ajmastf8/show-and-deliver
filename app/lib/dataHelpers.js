@@ -5,9 +5,10 @@ const PROJECT_ROOT = path.join(__dirname, '..', '..');
 const DATA_DIR = path.join(PROJECT_ROOT, 'site-data', 'data');
 const UPLOADS_DIR = path.join(PROJECT_ROOT, 'site-data', 'uploads');
 const THUMBS_DIR = path.join(PROJECT_ROOT, 'site-data', 'thumbnails');
+const PROXY_DIR = path.join(PROJECT_ROOT, 'site-data', 'proxies');
 
 // Ensure base directories exist
-[DATA_DIR, UPLOADS_DIR, THUMBS_DIR].forEach(dir => {
+[DATA_DIR, UPLOADS_DIR, THUMBS_DIR, PROXY_DIR].forEach(dir => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
@@ -98,6 +99,7 @@ module.exports = {
   DATA_DIR,
   UPLOADS_DIR,
   THUMBS_DIR,
+  PROXY_DIR,
   readJSON,
   writeJSON,
   readGalleries,

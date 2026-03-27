@@ -6,7 +6,7 @@ const { execFile, execSync } = require('child_process');
 const sharp = require('sharp');
 const router = express.Router();
 const requireAuth = require('../middleware/auth');
-const { readGalleryVideos, writeGalleryVideos, readGalleryComments, UPLOADS_DIR, THUMBS_DIR } = require('../lib/dataHelpers');
+const { readGalleryVideos, writeGalleryVideos, readGalleryComments, UPLOADS_DIR, THUMBS_DIR, PROXY_DIR } = require('../lib/dataHelpers');
 const { generateId } = require('../lib/tokens');
 
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
@@ -83,6 +83,18 @@ async function generatePhotoThumbnail(filePath, thumbPath) {
   }
 }
 
+// Generate a web-optimized proxy for lightbox viewing (2048px max)
+async function generatePhotoProxy(filePath, proxyPath) {
+  try {
+    await sharp(filePath)
+      .resize(2048, 2048, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 82 })
+      .toFile(proxyPath);
+  } catch (e) {
+    console.error('sharp proxy error:', e.message);
+  }
+}
+
 function isImageFile(filename) {
   return IMAGE_EXTENSIONS.includes(path.extname(filename).toLowerCase());
 }
@@ -149,8 +161,13 @@ router.post('/galleries/:gid/videos', requireAuth, (req, res) => {
       const meta = await probeImage(path.join(UPLOADS_DIR, req.file.filename));
       if (meta) { item.width = meta.width; item.height = meta.height; }
       const thumbFilename = item.id + '.jpg';
-      await generatePhotoThumbnail(path.join(UPLOADS_DIR, req.file.filename), path.join(THUMBS_DIR, thumbFilename));
+      const proxyFilename = item.id + '_proxy.jpg';
+      await Promise.all([
+        generatePhotoThumbnail(path.join(UPLOADS_DIR, req.file.filename), path.join(THUMBS_DIR, thumbFilename)),
+        generatePhotoProxy(path.join(UPLOADS_DIR, req.file.filename), path.join(PROXY_DIR, proxyFilename))
+      ]);
       item.thumbnail = thumbFilename;
+      item.proxy = proxyFilename;
     } else {
       const meta = await probeVideo(path.join(UPLOADS_DIR, req.file.filename));
       if (meta) {
@@ -265,6 +282,13 @@ router.put('/galleries/:gid/videos/:vid/replace', requireAuth, (req, res) => {
       video.thumbnail = null;
     }
 
+    // Delete old proxy
+    if (video.proxy) {
+      const proxyPath = path.join(PROXY_DIR, video.proxy);
+      if (fs.existsSync(proxyPath)) fs.unlinkSync(proxyPath);
+      video.proxy = null;
+    }
+
     // Update to new file and detect type
     const isPhoto = isImageFile(req.file.filename);
     video.filename = req.file.filename;
@@ -280,8 +304,13 @@ router.put('/galleries/:gid/videos/:vid/replace', requireAuth, (req, res) => {
       const meta = await probeImage(path.join(UPLOADS_DIR, req.file.filename));
       if (meta) { video.width = meta.width; video.height = meta.height; }
       const thumbFilename = video.id + '.jpg';
-      await generatePhotoThumbnail(path.join(UPLOADS_DIR, req.file.filename), path.join(THUMBS_DIR, thumbFilename));
+      const proxyFilename = video.id + '_proxy.jpg';
+      await Promise.all([
+        generatePhotoThumbnail(path.join(UPLOADS_DIR, req.file.filename), path.join(THUMBS_DIR, thumbFilename)),
+        generatePhotoProxy(path.join(UPLOADS_DIR, req.file.filename), path.join(PROXY_DIR, proxyFilename))
+      ]);
       video.thumbnail = thumbFilename;
+      video.proxy = proxyFilename;
     }
 
     writeGalleryVideos(req.params.gid, videos);
@@ -304,6 +333,12 @@ router.delete('/galleries/:gid/videos/:vid', requireAuth, (req, res) => {
   if (removed.thumbnail) {
     const thumbPath = path.join(THUMBS_DIR, removed.thumbnail);
     if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
+  }
+
+  // Delete proxy
+  if (removed.proxy) {
+    const proxyPath = path.join(PROXY_DIR, removed.proxy);
+    if (fs.existsSync(proxyPath)) fs.unlinkSync(proxyPath);
   }
 
   writeGalleryVideos(req.params.gid, videos);
@@ -396,8 +431,13 @@ router.post('/galleries/:gid/import', requireAuth, async (req, res) => {
         const meta = await probeImage(destPath);
         if (meta) { item.width = meta.width; item.height = meta.height; }
         const thumbFilename = itemId + '.jpg';
-        await generatePhotoThumbnail(destPath, path.join(THUMBS_DIR, thumbFilename));
+        const proxyFilename = itemId + '_proxy.jpg';
+        await Promise.all([
+          generatePhotoThumbnail(destPath, path.join(THUMBS_DIR, thumbFilename)),
+          generatePhotoProxy(destPath, path.join(PROXY_DIR, proxyFilename))
+        ]);
         item.thumbnail = thumbFilename;
+        item.proxy = proxyFilename;
       } else {
         const meta = await probeVideo(destPath);
         if (meta) {

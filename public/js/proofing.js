@@ -306,7 +306,9 @@ document.addEventListener('DOMContentLoaded', () => {
       lightboxVideo.pause();
       lightboxVideo.src = '';
       lightboxVideo.style.display = 'none';
-      lightboxPhoto.src = '/uploads/' + encodeURIComponent(item.filename);
+      lightboxPhoto.src = item.proxy
+        ? '/proxies/' + encodeURIComponent(item.proxy)
+        : '/uploads/' + encodeURIComponent(item.filename);
       lightboxPhoto.style.display = '';
       hideSpinner();
       // Hide timestamp UI

@@ -210,8 +210,8 @@ document.addEventListener('DOMContentLoaded', () => {
       : `<span class="gallery-badge reels">Portfolio</span>`;
 
     const count = g.type === 'proofing'
-      ? `${g.videoCount} video${g.videoCount !== 1 ? 's' : ''} &middot; ${g.commentCount} comment${g.commentCount !== 1 ? 's' : ''}`
-      : `${g.videoCount} video${g.videoCount !== 1 ? 's' : ''}`;
+      ? `${g.videoCount} item${g.videoCount !== 1 ? 's' : ''} &middot; ${g.commentCount} comment${g.commentCount !== 1 ? 's' : ''}`
+      : `${g.videoCount} item${g.videoCount !== 1 ? 's' : ''}`;
 
     item.innerHTML = `
       <div class="gallery-item-name">${escapeHtml(g.name)}</div>
@@ -761,42 +761,86 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ============ Create Gallery ============
 
+  // --- New Gallery Modal logic ---
+  function openNewGalleryModal(type) {
+    const modal = document.getElementById('new-gallery-modal');
+    const titleEl = document.getElementById('new-gallery-modal-title');
+    const nameInput = document.getElementById('new-gallery-name');
+    const colLabel = document.getElementById('new-gallery-collection-label');
+    const colSelect = document.getElementById('new-gallery-collection');
+
+    titleEl.textContent = type === 'reels' ? 'New Portfolio Gallery' : 'New Client Gallery';
+    nameInput.value = type === 'reels' ? 'Portfolio' : 'Client Gallery';
+
+    // Show collection dropdown only for proofing galleries when collections exist
+    if (type === 'proofing' && collections.length > 0) {
+      colSelect.innerHTML = '<option value="">— None —</option>' +
+        collections.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+      colLabel.style.display = '';
+    } else {
+      colLabel.style.display = 'none';
+    }
+
+    modal.style.display = '';
+    nameInput.focus();
+    nameInput.select();
+
+    return new Promise((resolve) => {
+      function cleanup() {
+        modal.style.display = 'none';
+        document.getElementById('new-gallery-create-btn').removeEventListener('click', onCreate);
+        document.getElementById('new-gallery-cancel-btn').removeEventListener('click', onCancel);
+        modal.querySelector('.import-modal-backdrop').removeEventListener('click', onCancel);
+        nameInput.removeEventListener('keydown', onKeydown);
+      }
+      function onCreate() {
+        const name = nameInput.value.trim();
+        if (!name) { nameInput.focus(); return; }
+        const collectionId = colLabel.style.display === 'none' ? '' : colSelect.value;
+        cleanup();
+        resolve({ name, collectionId });
+      }
+      function onCancel() { cleanup(); resolve(null); }
+      function onKeydown(e) { if (e.key === 'Enter') onCreate(); if (e.key === 'Escape') onCancel(); }
+
+      document.getElementById('new-gallery-create-btn').addEventListener('click', onCreate);
+      document.getElementById('new-gallery-cancel-btn').addEventListener('click', onCancel);
+      modal.querySelector('.import-modal-backdrop').addEventListener('click', onCancel);
+      nameInput.addEventListener('keydown', onKeydown);
+    });
+  }
+
   document.getElementById('new-reels-btn').addEventListener('click', async () => {
-    const name = prompt('Portfolio gallery name:', 'Portfolio');
-    if (!name) return;
+    const result = await openNewGalleryModal('reels');
+    if (!result) return;
     await fetch('/api/galleries', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, type: 'reels' })
+      body: JSON.stringify({ name: result.name, type: 'reels' })
     });
     await loadGalleries();
   });
 
   document.getElementById('new-proofing-btn').addEventListener('click', async () => {
-    const name = prompt('Client gallery name:', 'Client Gallery');
-    if (!name) return;
+    const result = await openNewGalleryModal('proofing');
+    if (!result) return;
     const res = await fetch('/api/galleries', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, type: 'proofing' })
+      body: JSON.stringify({ name: result.name, type: 'proofing' })
     });
     const gallery = await res.json();
 
-    // If collections exist, prompt to add to one
-    if (collections.length > 0) {
-      const options = collections.map((c, i) => `${i + 1}. ${c.name}`).join('\n');
-      const choice = prompt(`Add to a collection?\n\n${options}\n\nEnter number (or leave empty to skip):`);
-      if (choice) {
-        const idx = parseInt(choice) - 1;
-        if (idx >= 0 && idx < collections.length) {
-          const col = collections[idx];
-          const updatedIds = [...(col.galleryIds || []), gallery.id];
-          await fetch(`/api/collections/${col.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ galleryIds: updatedIds })
-          });
-        }
+    // Add to selected collection if one was chosen
+    if (result.collectionId) {
+      const col = collections.find(c => c.id === result.collectionId);
+      if (col) {
+        const updatedIds = [...(col.galleryIds || []), gallery.id];
+        await fetch(`/api/collections/${col.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ galleryIds: updatedIds })
+        });
       }
     }
 

@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           </div>
           <div class="collection-card-info">
             <span class="collection-card-name">${escapeHtml(g.name)}</span>
-            <span class="collection-card-count">${g.videoCount} video${g.videoCount !== 1 ? 's' : ''}</span>
+            <span class="collection-card-count">${g.videoCount} item${g.videoCount !== 1 ? 's' : ''}</span>
           </div>
         `;
 

@@ -6,7 +6,7 @@ const helmet = require('helmet');
 const path = require('path');
 
 const { migrateIfNeeded } = require('./lib/migrate');
-const { UPLOADS_DIR, THUMBS_DIR } = require('./lib/dataHelpers');
+const { UPLOADS_DIR, THUMBS_DIR, PROXY_DIR } = require('./lib/dataHelpers');
 
 // --- Startup validation: require critical env vars ---
 const requiredEnvVars = ['SESSION_SECRET', 'ADMIN_USERNAME', 'ADMIN_PASSWORD'];
@@ -30,6 +30,7 @@ app.use(express.json({ limit: '100kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(UPLOADS_DIR));
 app.use('/thumbnails', express.static(THUMBS_DIR));
+app.use('/proxies', express.static(PROXY_DIR));
 app.use(session({
   store: new FileStore({
     path: path.join(__dirname, '..', 'site-data', 'data', 'sessions'),
@@ -74,6 +75,50 @@ app.get('/gallery/:token', (req, res) => {
 
 // Migration + Start
 migrateIfNeeded();
+
+// Backfill proxy images for existing photos (runs in background)
+(async () => {
+  try {
+    const sharp = require('sharp');
+    const fs = require('fs');
+    const { readGalleries, readGalleryVideos, writeGalleryVideos, UPLOADS_DIR, PROXY_DIR } = require('./lib/dataHelpers');
+    const galleries = readGalleries();
+    let generated = 0;
+
+    for (const gallery of galleries) {
+      const videos = readGalleryVideos(gallery.id);
+      let changed = false;
+
+      for (const item of videos) {
+        if (item.type !== 'photo' || item.proxy) continue;
+        const proxyFilename = item.id + '_proxy.jpg';
+        const proxyPath = path.join(PROXY_DIR, proxyFilename);
+        if (fs.existsSync(proxyPath)) { item.proxy = proxyFilename; changed = true; continue; }
+
+        const srcPath = path.join(UPLOADS_DIR, item.filename);
+        if (!fs.existsSync(srcPath)) continue;
+
+        try {
+          await sharp(srcPath)
+            .resize(2048, 2048, { fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 82 })
+            .toFile(proxyPath);
+          item.proxy = proxyFilename;
+          changed = true;
+          generated++;
+        } catch (e) {
+          console.error(`Proxy backfill error for ${item.filename}:`, e.message);
+        }
+      }
+
+      if (changed) writeGalleryVideos(gallery.id, videos);
+    }
+
+    if (generated > 0) console.log(`Proxy backfill: generated ${generated} proxy image(s)`);
+  } catch (e) {
+    console.error('Proxy backfill failed:', e.message);
+  }
+})();
 
 if (require.main === module) {
   app.listen(PORT, () => {

@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       card.className = 'video-card';
       card.dataset.filename = item.filename;
       card.dataset.type = item.type || 'video';
+      if (item.proxy) card.dataset.proxy = item.proxy;
 
       let thumbContent;
       if (item.thumbnail) {
@@ -48,9 +49,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       const card = e.target.closest('.video-card');
       if (!card) return;
       const filename = card.dataset.filename;
+      const proxy = card.dataset.proxy;
       const src = '/uploads/' + encodeURIComponent(filename);
       if (card.dataset.type === 'photo') {
-        openPhotoLightbox(src);
+        const photoSrc = proxy
+          ? '/proxies/' + encodeURIComponent(proxy)
+          : src;
+        openPhotoLightbox(photoSrc);
       } else {
         openLightbox(src);
       }

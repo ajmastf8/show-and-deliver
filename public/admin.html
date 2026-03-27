@@ -433,8 +433,35 @@
     </div>
   </div>
 
+  <!-- New Gallery Modal -->
+  <div id="new-gallery-modal" class="import-modal" style="display:none;">
+    <div class="import-modal-backdrop"></div>
+    <div class="import-modal-inner" style="max-width:400px;">
+      <h3 id="new-gallery-modal-title">New Gallery</h3>
+      <div style="display:flex;flex-direction:column;gap:12px;margin-top:12px;">
+        <label style="font-size:13px;font-weight:600;color:var(--color-text);">
+          Gallery Name
+          <input type="text" id="new-gallery-name" class="setting-input" placeholder="Gallery name" style="margin-top:4px;">
+        </label>
+        <label id="new-gallery-collection-label" style="font-size:13px;font-weight:600;color:var(--color-text);display:none;">
+          Add to Collection
+          <select id="new-gallery-collection" class="setting-input" style="margin-top:4px;">
+            <option value="">— None —</option>
+          </select>
+        </label>
+      </div>
+      <div class="import-modal-actions" style="margin-top:16px;">
+        <div></div>
+        <div class="import-btns">
+          <button id="new-gallery-cancel-btn" class="btn btn-secondary btn-sm">Cancel</button>
+          <button id="new-gallery-create-btn" class="btn btn-primary btn-sm">Create</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/header.js?v=2"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=26"></script>
+  <script src="/js/admin.js?v=27"></script>
 </body>
 </html>

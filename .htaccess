@@ -6,9 +6,10 @@ RewriteRule ^admin/?$ public/admin.html [L]
 RewriteRule ^gallery/.+$ public/proofing.html [L]
 RewriteRule ^collection/.+$ public/collection.html [L]
 
-# Serve uploads, thumbnails, and logo from site-data/
+# Serve uploads, thumbnails, proxies, and logo from site-data/
 RewriteRule ^uploads/(.*)$ site-data/uploads/$1 [L]
 RewriteRule ^thumbnails/(.*)$ site-data/thumbnails/$1 [L]
+RewriteRule ^proxies/(.*)$ site-data/proxies/$1 [L]
 RewriteRule ^logo/(.*)$ site-data/logo/$1 [L]
 
 # Route /api/* to index.php

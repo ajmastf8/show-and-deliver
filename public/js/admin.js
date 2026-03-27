@@ -735,6 +735,11 @@ document.addEventListener('DOMContentLoaded', () => {
     alert('Link copied!');
   });
 
+  document.getElementById('col-open-link-btn').addEventListener('click', () => {
+    const url = document.getElementById('col-setting-link').value;
+    if (url) window.open(url, '_blank');
+  });
+
   document.getElementById('col-regen-link-btn').addEventListener('click', async () => {
     if (!confirm('Regenerate link? The old link will stop working.')) return;
     const res = await fetch(`/api/collections/${currentCollectionId}`, {

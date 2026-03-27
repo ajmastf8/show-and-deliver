@@ -12,10 +12,11 @@ define('SITE_DATA', __DIR__ . '/site-data');
 define('DATA_DIR', SITE_DATA . '/data');
 define('UPLOADS_DIR', SITE_DATA . '/uploads');
 define('THUMBS_DIR', SITE_DATA . '/thumbnails');
+define('PROXY_DIR', SITE_DATA . '/proxies');
 define('IMPORT_DIR', SITE_DATA . '/imports');
 
 // Ensure directories exist
-foreach ([DATA_DIR, UPLOADS_DIR, THUMBS_DIR, IMPORT_DIR, DATA_DIR . '/sessions', DATA_DIR . '/ratelimit'] as $dir) {
+foreach ([DATA_DIR, UPLOADS_DIR, THUMBS_DIR, PROXY_DIR, IMPORT_DIR, DATA_DIR . '/sessions', DATA_DIR . '/ratelimit'] as $dir) {
     if (!is_dir($dir)) mkdir($dir, 0755, true);
 }
 
@@ -44,10 +45,17 @@ function env($key, $default = '') {
     return $_ENV[$key] ?? getenv($key) ?: $default;
 }
 
-// Validate required env vars (SESSION_SECRET still required)
+// Auto-generate SESSION_SECRET if not set
 if (!env('SESSION_SECRET')) {
-    http_response_code(500);
-    die(json_encode(['error' => 'Missing SESSION_SECRET in .env']));
+    $secretPath = DATA_DIR . '/.session-secret';
+    if (file_exists($secretPath)) {
+        $_ENV['SESSION_SECRET'] = trim(file_get_contents($secretPath));
+    } else {
+        $generated = base64_encode(random_bytes(48));
+        file_put_contents($secretPath, $generated);
+        chmod($secretPath, 0600);
+        $_ENV['SESSION_SECRET'] = $generated;
+    }
 }
 
 // Admin credentials: check admin.json first, then .env fallback
@@ -232,6 +240,33 @@ function generatePhotoThumbnail($srcPath, $thumbPath) {
     $dst = imagecreatetruecolor($newW, $newH);
     imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
     imagejpeg($dst, $thumbPath, 80);
+    imagedestroy($src);
+    imagedestroy($dst);
+    return true;
+}
+
+function generatePhotoProxy($srcPath, $proxyPath) {
+    $info = @getimagesize($srcPath);
+    if (!$info) return false;
+    [$origW, $origH, $type] = $info;
+
+    $maxDim = 2048;
+    $ratio = min($maxDim / max($origW, 1), $maxDim / max($origH, 1), 1);
+    $newW = (int)($origW * $ratio);
+    $newH = (int)($origH * $ratio);
+
+    switch ($type) {
+        case IMAGETYPE_JPEG: $src = imagecreatefromjpeg($srcPath); break;
+        case IMAGETYPE_PNG: $src = imagecreatefrompng($srcPath); break;
+        case IMAGETYPE_WEBP: $src = imagecreatefromwebp($srcPath); break;
+        case IMAGETYPE_GIF: $src = imagecreatefromgif($srcPath); break;
+        default: return false;
+    }
+    if (!$src) return false;
+
+    $dst = imagecreatetruecolor($newW, $newH);
+    imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
+    imagejpeg($dst, $proxyPath, 82);
     imagedestroy($src);
     imagedestroy($dst);
     return true;
@@ -733,8 +768,11 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/videos', $uri, 
         $meta = probeImage($destPath);
         if ($meta) { $item['width'] = $meta['width']; $item['height'] = $meta['height']; }
         $thumbFilename = $item['id'] . '.jpg';
+        $proxyFilename = $item['id'] . '_proxy.jpg';
         generatePhotoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename);
+        generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename);
         $item['thumbnail'] = $thumbFilename;
+        $item['proxy'] = $proxyFilename;
     } else {
         $meta = probeVideo($destPath);
         if ($meta) {
@@ -823,6 +861,10 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/rep
         $oldThumb = THUMBS_DIR . '/' . $video['thumbnail'];
         if (file_exists($oldThumb)) unlink($oldThumb);
     }
+    if (!empty($video['proxy'])) {
+        $oldProxy = PROXY_DIR . '/' . $video['proxy'];
+        if (file_exists($oldProxy)) unlink($oldProxy);
+    }
 
     $safeName = safeFilename($file['name']);
     $destName = time() . '-' . $safeName;
@@ -834,14 +876,18 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/rep
     $video['type'] = $isPhoto ? 'photo' : 'video';
     $video['replacedAt'] = date('c');
     $video['thumbnail'] = null;
+    $video['proxy'] = null;
     unset($video['duration'], $video['width'], $video['height']);
 
     if ($isPhoto) {
         $meta = probeImage($destPath);
         if ($meta) { $video['width'] = $meta['width']; $video['height'] = $meta['height']; }
         $thumbFilename = $video['id'] . '.jpg';
+        $proxyFilename = $video['id'] . '_proxy.jpg';
         generatePhotoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename);
+        generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename);
         $video['thumbnail'] = $thumbFilename;
+        $video['proxy'] = $proxyFilename;
     }
 
     writeGalleryVideos($params['gid'], $videos);
@@ -864,6 +910,10 @@ if ($method === 'DELETE' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}'
     if (!empty($removed['thumbnail'])) {
         $thumbPath = THUMBS_DIR . '/' . $removed['thumbnail'];
         if (file_exists($thumbPath)) unlink($thumbPath);
+    }
+    if (!empty($removed['proxy'])) {
+        $proxyPath = PROXY_DIR . '/' . $removed['proxy'];
+        if (file_exists($proxyPath)) unlink($proxyPath);
     }
 
     array_splice($videos, $idx, 1);
@@ -1009,8 +1059,11 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/import', $uri, 
             $meta = probeImage($destPath);
             if ($meta) { $item['width'] = $meta['width']; $item['height'] = $meta['height']; }
             $thumbFilename = $itemId . '.jpg';
+            $proxyFilename = $itemId . '_proxy.jpg';
             generatePhotoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename);
+            generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename);
             $item['thumbnail'] = $thumbFilename;
+            $item['proxy'] = $proxyFilename;
         } else {
             $meta = probeVideo($destPath);
             if ($meta) {
@@ -1062,6 +1115,12 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/probe', $uri, $
                 $thumbFilename = $item['id'] . '.jpg';
                 generatePhotoThumbnail($filePath, THUMBS_DIR . '/' . $thumbFilename);
                 $item['thumbnail'] = $thumbFilename;
+            }
+            if (empty($item['proxy'])) {
+                $proxyFilename = $item['id'] . '_proxy.jpg';
+                generatePhotoProxy($filePath, PROXY_DIR . '/' . $proxyFilename);
+                $item['proxy'] = $proxyFilename;
+                $updated++;
             }
         }
     }

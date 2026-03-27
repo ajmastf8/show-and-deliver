@@ -22,12 +22,16 @@ document.addEventListener('DOMContentLoaded', () => {
   // Lightbox
   const lightbox = document.getElementById('lightbox');
   const lightboxVideo = document.getElementById('lightbox-video');
+  const lightboxPhoto = document.getElementById('lightbox-photo');
   const lightboxTitle = document.getElementById('lightbox-title');
   const lightboxDownloadBtn = document.getElementById('lightbox-download-btn');
   const lightboxComments = document.getElementById('lightbox-comments');
   const commentForm = document.getElementById('comment-form');
   const commentText = document.getElementById('comment-text');
   const commentTimeDisplay = document.getElementById('comment-time-display');
+  const commentTimestampRow = document.querySelector('.comment-timestamp-display');
+  const lightboxPrev = document.querySelector('.lightbox-prev');
+  const lightboxNext = document.querySelector('.lightbox-next');
 
   // Password
   const passwordView = document.getElementById('password-view');
@@ -181,6 +185,7 @@ document.addEventListener('DOMContentLoaded', () => {
       card.className = 'proofing-video-card';
       card.dataset.id = item.id;
 
+      const isPhoto = item.type === 'photo';
       const thumbSrc = item.thumbnail
         ? '/thumbnails/' + encodeURIComponent(item.thumbnail)
         : '';
@@ -189,9 +194,9 @@ document.addEventListener('DOMContentLoaded', () => {
         ? `<span class="proofing-card-comments">${commentCount} comment${commentCount !== 1 ? 's' : ''}</span>`
         : '';
 
-      // Format duration
+      // Format duration (videos only)
       let durationLabel = '';
-      if (item.duration) {
+      if (!isPhoto && item.duration) {
         const mins = Math.floor(item.duration / 60);
         const secs = Math.floor(item.duration % 60).toString().padStart(2, '0');
         durationLabel = `<span class="proofing-card-duration">${mins}:${secs}</span>`;
@@ -200,24 +205,32 @@ document.addEventListener('DOMContentLoaded', () => {
       // Format resolution
       let resLabel = '';
       if (item.width && item.height) {
-        const h = Math.max(item.width, item.height);
-        const v = Math.min(item.width, item.height);
-        if (h >= 3840) resLabel = '4K';
-        else if (h >= 2560) resLabel = '1440p';
-        else if (v >= 1080 || h >= 1920) resLabel = '1080p';
-        else if (v >= 720 || h >= 1280) resLabel = '720p';
-        else resLabel = v + 'p';
-        resLabel = `<span class="proofing-card-res">${resLabel}</span>`;
+        if (isPhoto) {
+          resLabel = `<span class="proofing-card-res">${item.width}&times;${item.height}</span>`;
+        } else {
+          const h = Math.max(item.width, item.height);
+          const v = Math.min(item.width, item.height);
+          if (h >= 3840) resLabel = '4K';
+          else if (h >= 2560) resLabel = '1440p';
+          else if (v >= 1080 || h >= 1920) resLabel = '1080p';
+          else if (v >= 720 || h >= 1280) resLabel = '720p';
+          else resLabel = v + 'p';
+          resLabel = `<span class="proofing-card-res">${resLabel}</span>`;
+        }
       }
 
-      const metaLabels = [durationLabel, resLabel, commentLabel].filter(Boolean).join('');
+      let thumbContent;
+      if (thumbSrc) {
+        thumbContent = `<img src="${thumbSrc}" alt="${escapeHtml(item.title)}" loading="lazy">`;
+      } else if (isPhoto) {
+        thumbContent = `<img src="/uploads/${encodeURIComponent(item.filename)}" alt="${escapeHtml(item.title)}" loading="lazy">`;
+      } else {
+        thumbContent = `<video src="/uploads/${encodeURIComponent(item.filename)}" muted preload="metadata"></video>`;
+      }
 
       card.innerHTML = `
         <div class="proofing-thumb-wrapper">
-          ${thumbSrc
-            ? `<img src="${thumbSrc}" alt="${escapeHtml(item.title)}" loading="lazy">`
-            : `<video src="/uploads/${encodeURIComponent(item.filename)}" muted preload="metadata"></video>`
-          }
+          ${thumbContent}
           ${durationLabel ? `<span class="proofing-thumb-duration">${Math.floor(item.duration / 60)}:${Math.floor(item.duration % 60).toString().padStart(2, '0')}</span>` : ''}
         </div>
         <div class="proofing-card-info">
@@ -233,15 +246,81 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ============ Lightbox ============
 
+  const lightboxSpinner = document.getElementById('lightbox-spinner');
+
+  function showSpinner() { lightboxSpinner.classList.add('active'); }
+  function hideSpinner() { lightboxSpinner.classList.remove('active'); }
+
+  // Show spinner while browser is buffering mid-playback
+  lightboxVideo.addEventListener('waiting', showSpinner);
+  lightboxVideo.addEventListener('playing', hideSpinner);
+  lightboxVideo.addEventListener('canplay', hideSpinner);
+
+  // Build navigable items list (exclude headers and hidden)
+  function getNavigableItems() {
+    if (!galleryData) return [];
+    return galleryData.videos.filter(v => v.type === 'video' || v.type === 'photo');
+  }
+
+  function getCurrentItemIndex() {
+    return getNavigableItems().findIndex(v => v.id === currentVideoId);
+  }
+
+  function navigateLightbox(direction) {
+    const items = getNavigableItems();
+    const idx = items.findIndex(v => v.id === currentVideoId);
+    if (idx === -1) return;
+    const newIdx = idx + direction;
+    if (newIdx >= 0 && newIdx < items.length) {
+      openLightbox(items[newIdx].id);
+    }
+  }
+
+  function updateNavButtons() {
+    const items = getNavigableItems();
+    const idx = items.findIndex(v => v.id === currentVideoId);
+    lightboxPrev.style.display = idx > 0 ? '' : 'none';
+    lightboxNext.style.display = idx < items.length - 1 ? '' : 'none';
+  }
+
+  let currentItemIsPhoto = false;
+
   function openLightbox(videoId) {
-    const video = galleryData.videos.find(v => v.id === videoId);
-    if (!video) return;
+    const item = galleryData.videos.find(v => v.id === videoId);
+    if (!item) return;
 
     currentVideoId = videoId;
-    lightboxVideo.src = '/uploads/' + encodeURIComponent(video.filename);
-    lightboxTitle.textContent = video.title;
+    currentItemIsPhoto = item.type === 'photo';
+    lightboxTitle.textContent = item.title;
     lightbox.style.display = '';
     document.body.style.overflow = 'hidden';
+
+    if (currentItemIsPhoto) {
+      // Show photo, hide video
+      lightboxVideo.pause();
+      lightboxVideo.src = '';
+      lightboxVideo.style.display = 'none';
+      lightboxPhoto.src = '/uploads/' + encodeURIComponent(item.filename);
+      lightboxPhoto.style.display = '';
+      hideSpinner();
+      // Hide timestamp UI
+      if (commentTimestampRow) commentTimestampRow.style.display = 'none';
+    } else {
+      // Show video, hide photo
+      lightboxPhoto.style.display = 'none';
+      lightboxPhoto.src = '';
+      lightboxVideo.style.display = '';
+      showSpinner();
+      lightboxVideo.src = '/uploads/' + encodeURIComponent(item.filename);
+      lightboxVideo.load();
+      // Show timestamp UI
+      if (commentTimestampRow) commentTimestampRow.style.display = '';
+      // Play once enough data is buffered
+      lightboxVideo.addEventListener('canplay', function onCanPlay() {
+        lightboxVideo.removeEventListener('canplay', onCanPlay);
+        lightboxVideo.play().catch(() => {});
+      });
+    }
 
     if (galleryData.gallery.downloadsEnabled) {
       lightboxDownloadBtn.style.display = '';
@@ -256,6 +335,7 @@ document.addEventListener('DOMContentLoaded', () => {
     lightboxSendStatus.textContent = '';
     lightboxSendStatus.className = 'lightbox-send-status';
 
+    updateNavButtons();
     renderLightboxComments();
   }
 
@@ -263,7 +343,11 @@ document.addEventListener('DOMContentLoaded', () => {
     lightbox.style.display = 'none';
     lightboxVideo.pause();
     lightboxVideo.src = '';
+    lightboxPhoto.src = '';
+    lightboxPhoto.style.display = 'none';
+    lightboxVideo.style.display = '';
     currentVideoId = null;
+    currentItemIsPhoto = false;
     document.body.style.overflow = '';
   }
 
@@ -271,10 +355,39 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelector('.lightbox-backdrop').addEventListener('click', closeLightbox);
 
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && lightbox.style.display !== 'none') {
+    if (lightbox.style.display === 'none') return;
+    if (e.key === 'Escape') {
       closeLightbox();
+    } else if (e.key === 'ArrowLeft') {
+      navigateLightbox(-1);
+    } else if (e.key === 'ArrowRight') {
+      navigateLightbox(1);
     }
   });
+
+  // Nav button clicks
+  lightboxPrev.addEventListener('click', e => { e.stopPropagation(); navigateLightbox(-1); });
+  lightboxNext.addEventListener('click', e => { e.stopPropagation(); navigateLightbox(1); });
+
+  // Touch swipe support
+  let touchStartX = 0;
+  let touchStartY = 0;
+  const lightboxContainer = document.querySelector('.lightbox-container');
+
+  lightboxContainer.addEventListener('touchstart', e => {
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+  }, { passive: true });
+
+  lightboxContainer.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    const dy = e.changedTouches[0].clientY - touchStartY;
+    // Only count horizontal swipes (dx > dy and minimum distance)
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      if (dx > 0) navigateLightbox(-1); // swipe right = prev
+      else navigateLightbox(1); // swipe left = next
+    }
+  }, { passive: true });
 
   function renderLightboxComments() {
     const videoComments = allComments
@@ -287,16 +400,19 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    lightboxComments.innerHTML = videoComments.map(c => `
-      <div class="lb-comment">
-        <div class="lb-comment-header">
-          <span class="lb-comment-name">${escapeHtml(c.name)}</span>
-          <span class="lb-comment-time" data-time="${c.timestamp}">@ ${formatTime(c.timestamp)}</span>
+    lightboxComments.innerHTML = videoComments.map(c => {
+      const showTimestamp = !currentItemIsPhoto && c.timestamp > 0;
+      return `
+        <div class="lb-comment">
+          <div class="lb-comment-header">
+            <span class="lb-comment-name">${escapeHtml(c.name)}</span>
+            ${showTimestamp ? `<span class="lb-comment-time" data-time="${c.timestamp}">@ ${formatTime(c.timestamp)}</span>` : ''}
+          </div>
+          <div class="lb-comment-text">${escapeHtml(c.text)}</div>
+          <div class="lb-comment-date">${new Date(c.createdAt).toLocaleString()}</div>
         </div>
-        <div class="lb-comment-text">${escapeHtml(c.text)}</div>
-        <div class="lb-comment-date">${new Date(c.createdAt).toLocaleString()}</div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
 
     // Scroll to bottom
     lightboxComments.scrollTop = lightboxComments.scrollHeight;
@@ -306,8 +422,9 @@ document.addEventListener('DOMContentLoaded', () => {
     lightboxSendReview.style.display = viewerHasComments ? 'flex' : 'none';
   }
 
-  // Click on timestamp to seek
+  // Click on timestamp to seek (videos only)
   lightboxComments.addEventListener('click', e => {
+    if (currentItemIsPhoto) return;
     const timeEl = e.target.closest('.lb-comment-time');
     if (!timeEl) return;
     const time = parseFloat(timeEl.dataset.time);
@@ -343,7 +460,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const text = commentText.value.trim();
     if (!text) return;
 
-    const timestamp = lightboxVideo.currentTime || 0;
+    const timestamp = currentItemIsPhoto ? 0 : (lightboxVideo.currentTime || 0);
 
     const res = await fetch(`/api/proofing/${token}/comments`, {
       method: 'POST',

@@ -662,19 +662,26 @@ AJ Mast`;
       item.className = 'admin-video-item';
       item.dataset.id = entry.id;
 
+      const isPhoto = entry.type === 'photo';
       const thumbSrc = entry.thumbnail
         ? '/thumbnails/' + encodeURIComponent(entry.thumbnail) + '?t=' + Date.now()
         : '';
 
+      let mediaThumbnail;
+      if (thumbSrc) {
+        mediaThumbnail = `<img src="${thumbSrc}" class="admin-thumb">`;
+      } else if (isPhoto) {
+        mediaThumbnail = `<img src="/uploads/${encodeURIComponent(entry.filename)}" class="admin-thumb">`;
+      } else {
+        mediaThumbnail = `<video src="/uploads/${encodeURIComponent(entry.filename)}" muted preload="metadata" class="admin-thumb"></video>`;
+      }
+
       item.innerHTML = `
         <span class="drag-handle">&#9776;</span>
-        ${thumbSrc
-          ? `<img src="${thumbSrc}" class="admin-thumb">`
-          : `<video src="/uploads/${encodeURIComponent(entry.filename)}" muted preload="metadata" class="admin-thumb"></video>`
-        }
+        ${mediaThumbnail}
         <input type="text" class="title-input" value="${escapeHtml(entry.title)}">
-        <button class="btn btn-icon replace-btn" title="Replace video">&#8635;</button>
-        <button class="btn btn-icon thumb-btn" title="Set thumbnail">&#127910;</button>
+        <button class="btn btn-icon replace-btn" title="Replace file">&#8635;</button>
+        ${isPhoto ? '' : '<button class="btn btn-icon thumb-btn" title="Set thumbnail">&#127910;</button>'}
         <button class="btn btn-icon toggle-vis ${entry.visible ? '' : 'hidden-video'}" title="${entry.visible ? 'Visible' : 'Hidden'}">
           ${entry.visible ? '&#128065;' : '&#128064;'}
         </button>
@@ -740,7 +747,7 @@ AJ Mast`;
     const id = item.dataset.id;
     const isHeader = item.dataset.type === 'header';
 
-    const msg = isHeader ? 'Delete this section header?' : 'Delete this video? This cannot be undone.';
+    const msg = isHeader ? 'Delete this section header?' : 'Delete this item? This cannot be undone.';
     if (!confirm(msg)) return;
 
     const url = isHeader
@@ -824,7 +831,7 @@ AJ Mast`;
 
   // ============ Drag & Drop Upload ============
 
-  const ALLOWED_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v', 'video/x-quicktime', 'video/mov'];
+  const ALLOWED_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v', 'video/x-quicktime', 'video/mov', 'image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
   dropZone.addEventListener('dragover', e => {
     e.preventDefault();
@@ -838,7 +845,7 @@ AJ Mast`;
   dropZone.addEventListener('drop', e => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
-    const ALLOWED_EXTS = ['.mp4', '.webm', '.mov', '.m4v'];
+    const ALLOWED_EXTS = ['.mp4', '.webm', '.mov', '.m4v', '.jpg', '.jpeg', '.png', '.webp', '.gif'];
     const files = Array.from(e.dataTransfer.files).filter(f => {
       if (ALLOWED_TYPES.includes(f.type)) return true;
       const ext = f.name.toLowerCase().match(/\.[^.]+$/);
@@ -990,7 +997,7 @@ AJ Mast`;
       importPathEl.textContent = data.path;
 
       if (!data.files.length) {
-        importFileList.innerHTML = '<p class="import-empty">No video files found. Upload .mp4, .webm, .mov, or .m4v files via FTP to the path above.</p>';
+        importFileList.innerHTML = '<p class="import-empty">No media files found. Upload .mp4, .webm, .mov, .m4v, .jpg, .png, .webp, or .gif files via FTP to the path above.</p>';
         return;
       }
 

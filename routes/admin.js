@@ -3,10 +3,13 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { execFile, execSync } = require('child_process');
+const sharp = require('sharp');
 const router = express.Router();
 const requireAuth = require('../middleware/auth');
 const { readGalleryVideos, writeGalleryVideos, readGalleryComments, UPLOADS_DIR, THUMBS_DIR } = require('../lib/dataHelpers');
 const { generateId } = require('../lib/tokens');
+
+const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
 
 // Find ffmpeg/ffprobe: check system PATH first, then home directory static build
 let FFMPEG_PATH = 'ffmpeg';
@@ -57,6 +60,33 @@ function probeVideo(filePath) {
   });
 }
 
+// Probe image metadata (width, height) using sharp
+async function probeImage(filePath) {
+  try {
+    const meta = await sharp(filePath).metadata();
+    return { width: meta.width || 0, height: meta.height || 0 };
+  } catch (e) {
+    console.error('sharp probe error:', e.message);
+    return null;
+  }
+}
+
+// Generate a resized JPEG thumbnail for a photo
+async function generatePhotoThumbnail(filePath, thumbPath) {
+  try {
+    await sharp(filePath)
+      .resize(640, 640, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 80 })
+      .toFile(thumbPath);
+  } catch (e) {
+    console.error('sharp thumbnail error:', e.message);
+  }
+}
+
+function isImageFile(filename) {
+  return IMAGE_EXTENSIONS.includes(path.extname(filename).toLowerCase());
+}
+
 // Multer config
 const storage = multer.diskStorage({
   destination: UPLOADS_DIR,
@@ -69,9 +99,12 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   fileFilter: (req, file, cb) => {
-    const allowed = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v', 'video/x-quicktime', 'video/mov'];
+    const allowed = [
+      'video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v', 'video/x-quicktime', 'video/mov',
+      'image/jpeg', 'image/png', 'image/webp', 'image/gif'
+    ];
     const ext = path.extname(file.originalname).toLowerCase();
-    const allowedExts = ['.mp4', '.webm', '.mov', '.m4v'];
+    const allowedExts = ['.mp4', '.webm', '.mov', '.m4v', '.jpg', '.jpeg', '.png', '.webp', '.gif'];
     // Require BOTH valid MIME type AND valid extension
     cb(null, allowed.includes(file.mimetype) && allowedExts.includes(ext));
   },
@@ -96,32 +129,40 @@ router.post('/galleries/:gid/videos', requireAuth, (req, res) => {
     }
     if (!req.file) {
       console.error('Upload rejected: no file in request. Content-Type:', req.headers['content-type']);
-      return res.status(400).json({ error: 'No video file — file may have been rejected (allowed: .mp4, .webm, .mov, .m4v)' });
+      return res.status(400).json({ error: 'No file — file may have been rejected (allowed: .mp4, .webm, .mov, .m4v, .jpg, .jpeg, .png, .webp, .gif)' });
     }
 
     console.log('Upload OK:', req.file.originalname, '->', req.file.filename, '(' + req.file.size + ' bytes, ' + req.file.mimetype + ')');
 
+    const isPhoto = isImageFile(req.file.filename);
     const videos = readGalleryVideos(req.params.gid);
-    const video = {
-      id: generateId('v_'),
-      type: 'video',
+    const item = {
+      id: generateId(isPhoto ? 'p_' : 'v_'),
+      type: isPhoto ? 'photo' : 'video',
       title: req.body.title || 'Untitled',
       filename: req.file.filename,
       visible: true,
       createdAt: new Date().toISOString()
     };
 
-    // Probe video metadata (duration, resolution)
-    const meta = await probeVideo(path.join(UPLOADS_DIR, req.file.filename));
-    if (meta) {
-      video.duration = meta.duration;
-      video.width = meta.width;
-      video.height = meta.height;
+    if (isPhoto) {
+      const meta = await probeImage(path.join(UPLOADS_DIR, req.file.filename));
+      if (meta) { item.width = meta.width; item.height = meta.height; }
+      const thumbFilename = item.id + '.jpg';
+      await generatePhotoThumbnail(path.join(UPLOADS_DIR, req.file.filename), path.join(THUMBS_DIR, thumbFilename));
+      item.thumbnail = thumbFilename;
+    } else {
+      const meta = await probeVideo(path.join(UPLOADS_DIR, req.file.filename));
+      if (meta) {
+        item.duration = meta.duration;
+        item.width = meta.width;
+        item.height = meta.height;
+      }
     }
 
-    videos.push(video);
+    videos.push(item);
     writeGalleryVideos(req.params.gid, videos);
-    res.json(video);
+    res.json(item);
   });
 });
 
@@ -141,6 +182,10 @@ router.put('/galleries/:gid/videos/:vid/thumbnail', requireAuth, (req, res) => {
   const videos = readGalleryVideos(req.params.gid);
   const video = videos.find(v => v.id === req.params.vid);
   if (!video) return res.status(404).json({ error: 'Not found' });
+
+  if (video.type === 'photo') {
+    return res.status(400).json({ error: 'Photo thumbnails are generated automatically' });
+  }
 
   const { timestamp } = req.body;
   if (timestamp === undefined || timestamp === null) {
@@ -195,7 +240,7 @@ router.put('/galleries/:gid/videos/:vid/thumbnail', requireAuth, (req, res) => {
 
 // Replace video file (keep metadata, comments, position)
 router.put('/galleries/:gid/videos/:vid/replace', requireAuth, (req, res) => {
-  upload.single('video')(req, res, (err) => {
+  upload.single('video')(req, res, async (err) => {
     if (err) {
       console.error('Replace upload error:', err.message, err.code || '');
       if (err.code === 'LIMIT_FILE_SIZE') {
@@ -203,26 +248,41 @@ router.put('/galleries/:gid/videos/:vid/replace', requireAuth, (req, res) => {
       }
       return res.status(400).json({ error: err.message || 'Upload failed' });
     }
-    if (!req.file) return res.status(400).json({ error: 'No video file' });
+    if (!req.file) return res.status(400).json({ error: 'No file' });
 
     const videos = readGalleryVideos(req.params.gid);
     const video = videos.find(v => v.id === req.params.vid);
     if (!video) return res.status(404).json({ error: 'Not found' });
 
-    // Delete old video file
+    // Delete old file
     const oldPath = path.join(UPLOADS_DIR, video.filename);
     if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
 
-    // Delete old thumbnail (new video needs a fresh one)
+    // Delete old thumbnail
     if (video.thumbnail) {
       const thumbPath = path.join(THUMBS_DIR, video.thumbnail);
       if (fs.existsSync(thumbPath)) fs.unlinkSync(thumbPath);
       video.thumbnail = null;
     }
 
-    // Update to new file
+    // Update to new file and detect type
+    const isPhoto = isImageFile(req.file.filename);
     video.filename = req.file.filename;
+    video.type = isPhoto ? 'photo' : 'video';
     video.replacedAt = new Date().toISOString();
+
+    // Clear old metadata
+    delete video.duration;
+    delete video.width;
+    delete video.height;
+
+    if (isPhoto) {
+      const meta = await probeImage(path.join(UPLOADS_DIR, req.file.filename));
+      if (meta) { video.width = meta.width; video.height = meta.height; }
+      const thumbFilename = video.id + '.jpg';
+      await generatePhotoThumbnail(path.join(UPLOADS_DIR, req.file.filename), path.join(THUMBS_DIR, thumbFilename));
+      video.thumbnail = thumbFilename;
+    }
 
     writeGalleryVideos(req.params.gid, videos);
     res.json(video);
@@ -255,7 +315,7 @@ router.delete('/galleries/:gid/videos/:vid', requireAuth, (req, res) => {
 const IMPORT_DIR = path.join(__dirname, '..', 'imports');
 if (!fs.existsSync(IMPORT_DIR)) fs.mkdirSync(IMPORT_DIR, { recursive: true });
 
-const VIDEO_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v'];
+const MEDIA_EXTENSIONS = ['.mp4', '.webm', '.mov', '.m4v', '.jpg', '.jpeg', '.png', '.webp', '.gif'];
 
 // List files available for import
 router.get('/import/files', requireAuth, (req, res) => {
@@ -263,7 +323,7 @@ router.get('/import/files', requireAuth, (req, res) => {
     const files = fs.readdirSync(IMPORT_DIR)
       .filter(f => {
         const ext = path.extname(f).toLowerCase();
-        return VIDEO_EXTENSIONS.includes(ext);
+        return MEDIA_EXTENSIONS.includes(ext);
       })
       .map(f => {
         const stat = fs.statSync(path.join(IMPORT_DIR, f));
@@ -303,8 +363,8 @@ router.post('/galleries/:gid/import', requireAuth, async (req, res) => {
     }
 
     const ext = path.extname(safeName).toLowerCase();
-    if (!VIDEO_EXTENSIONS.includes(ext)) {
-      errors.push({ name: safeName, error: 'Not a supported video format' });
+    if (!MEDIA_EXTENSIONS.includes(ext)) {
+      errors.push({ name: safeName, error: 'Not a supported media format' });
       continue;
     }
 
@@ -321,52 +381,60 @@ router.post('/galleries/:gid/import', requireAuth, async (req, res) => {
         .replace(/\s+/g, ' ')
         .trim() || 'Untitled';
 
-      const videoId = generateId('v_');
-      const video = {
-        id: videoId,
-        type: 'video',
+      const isPhoto = isImageFile(destName);
+      const itemId = generateId(isPhoto ? 'p_' : 'v_');
+      const item = {
+        id: itemId,
+        type: isPhoto ? 'photo' : 'video',
         title,
         filename: destName,
         visible: true,
         createdAt: new Date().toISOString()
       };
 
-      // Probe video metadata
-      const meta = await probeVideo(destPath);
-      if (meta) {
-        video.duration = meta.duration;
-        video.width = meta.width;
-        video.height = meta.height;
+      if (isPhoto) {
+        const meta = await probeImage(destPath);
+        if (meta) { item.width = meta.width; item.height = meta.height; }
+        const thumbFilename = itemId + '.jpg';
+        await generatePhotoThumbnail(destPath, path.join(THUMBS_DIR, thumbFilename));
+        item.thumbnail = thumbFilename;
+      } else {
+        const meta = await probeVideo(destPath);
+        if (meta) {
+          item.duration = meta.duration;
+          item.width = meta.width;
+          item.height = meta.height;
+        }
+
+        // Generate video thumbnail in background
+        const thumbFilename = itemId + '.jpg';
+        const thumbPath = path.join(THUMBS_DIR, thumbFilename);
+        const args = [
+          '-ss', '1',
+          '-i', destPath,
+          '-frames:v', '1',
+          '-vf', 'scale=320:180',
+          '-pix_fmt', 'yuvj420p',
+          '-threads', '1',
+          '-strict', 'unofficial',
+          '-q:v', '2',
+          '-y',
+          thumbPath
+        ];
+        execFile(FFMPEG_PATH, args, { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }, (err) => {
+          if (!err && fs.existsSync(thumbPath) && fs.statSync(thumbPath).size >= 100) {
+            const vids = readGalleryVideos(req.params.gid);
+            const v = vids.find(v => v.id === itemId);
+            if (v) {
+              v.thumbnail = thumbFilename;
+              writeGalleryVideos(req.params.gid, vids);
+            }
+          }
+        });
       }
 
-      videos.push(video);
-      imported.push(video);
-
-      // Generate thumbnail in background
-      const thumbFilename = videoId + '.jpg';
-      const thumbPath = path.join(THUMBS_DIR, thumbFilename);
-      const args = [
-        '-ss', '1',
-        '-i', destPath,
-        '-frames:v', '1',
-        '-vf', 'scale=320:180',
-        '-pix_fmt', 'yuvj420p',
-        '-threads', '1',
-        '-strict', 'unofficial',
-        '-q:v', '2',
-        '-y',
-        thumbPath
-      ];
-      execFile(FFMPEG_PATH, args, { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }, (err) => {
-        if (!err && fs.existsSync(thumbPath) && fs.statSync(thumbPath).size >= 100) {
-          const vids = readGalleryVideos(req.params.gid);
-          const v = vids.find(v => v.id === videoId);
-          if (v) {
-            v.thumbnail = thumbFilename;
-            writeGalleryVideos(req.params.gid, vids);
-          }
-        }
-      });
+      videos.push(item);
+      imported.push(item);
     } catch (err) {
       console.error('Import error for', safeName, ':', err.message);
       errors.push({ name: safeName, error: err.message });
@@ -382,16 +450,30 @@ router.post('/galleries/:gid/import', requireAuth, async (req, res) => {
 router.post('/galleries/:gid/probe', requireAuth, async (req, res) => {
   const videos = readGalleryVideos(req.params.gid);
   let updated = 0;
-  for (const video of videos) {
-    if (video.type !== 'video' || video.duration) continue;
-    const filePath = path.join(UPLOADS_DIR, video.filename);
+  for (const item of videos) {
+    const filePath = path.join(UPLOADS_DIR, item.filename);
     if (!fs.existsSync(filePath)) continue;
-    const meta = await probeVideo(filePath);
-    if (meta) {
-      video.duration = meta.duration;
-      video.width = meta.width;
-      video.height = meta.height;
-      updated++;
+
+    if (item.type === 'video' && !item.duration) {
+      const meta = await probeVideo(filePath);
+      if (meta) {
+        item.duration = meta.duration;
+        item.width = meta.width;
+        item.height = meta.height;
+        updated++;
+      }
+    } else if (item.type === 'photo' && !item.width) {
+      const meta = await probeImage(filePath);
+      if (meta) {
+        item.width = meta.width;
+        item.height = meta.height;
+        updated++;
+      }
+      if (!item.thumbnail) {
+        const thumbFilename = item.id + '.jpg';
+        await generatePhotoThumbnail(filePath, path.join(THUMBS_DIR, thumbFilename));
+        item.thumbnail = thumbFilename;
+      }
     }
   }
   writeGalleryVideos(req.params.gid, videos);

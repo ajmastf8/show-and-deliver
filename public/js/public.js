@@ -19,29 +19,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
 
+      const isPhoto = item.type === 'photo';
       const card = document.createElement('div');
       card.className = 'video-card';
       card.dataset.filename = item.filename;
+      card.dataset.type = item.type || 'video';
 
-      const thumbSrc = item.thumbnail
-        ? '/thumbnails/' + encodeURIComponent(item.thumbnail)
-        : '/uploads/' + encodeURIComponent(item.filename) + '#t=0.1';
-
+      let thumbContent;
       if (item.thumbnail) {
-        card.innerHTML = `
-          <div class="video-wrapper">
-            <img src="${thumbSrc}" alt="${escapeHtml(item.title)}" loading="lazy">
-          </div>
-          <p class="video-title">${escapeHtml(item.title)}</p>
-        `;
+        thumbContent = `<img src="/thumbnails/${encodeURIComponent(item.thumbnail)}" alt="${escapeHtml(item.title)}" loading="lazy">`;
+      } else if (isPhoto) {
+        thumbContent = `<img src="/uploads/${encodeURIComponent(item.filename)}" alt="${escapeHtml(item.title)}" loading="lazy">`;
       } else {
-        card.innerHTML = `
-          <div class="video-wrapper">
-            <video src="${'/uploads/' + encodeURIComponent(item.filename)}" muted preload="metadata"></video>
-          </div>
-          <p class="video-title">${escapeHtml(item.title)}</p>
-        `;
+        thumbContent = `<video src="/uploads/${encodeURIComponent(item.filename)}" muted preload="metadata"></video>`;
       }
+
+      card.innerHTML = `
+        <div class="video-wrapper">
+          ${thumbContent}
+        </div>
+        <p class="video-title">${escapeHtml(item.title)}</p>
+      `;
       grid.appendChild(card);
     });
 
@@ -50,7 +48,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const card = e.target.closest('.video-card');
       if (!card) return;
       const filename = card.dataset.filename;
-      openLightbox('/uploads/' + encodeURIComponent(filename));
+      const src = '/uploads/' + encodeURIComponent(filename);
+      if (card.dataset.type === 'photo') {
+        openPhotoLightbox(src);
+      } else {
+        openLightbox(src);
+      }
     });
 
   } catch (err) {
@@ -66,11 +69,24 @@ function openLightbox(videoSrc) {
   overlay.innerHTML = `
     <div class="lightbox-content">
       <button class="lightbox-close">&times;</button>
-      <video src="${videoSrc}" controls autoplay playsinline></video>
+      <video src="${videoSrc}" controls playsinline preload="auto"></video>
+      <div class="lightbox-spinner active"></div>
     </div>
   `;
   document.body.appendChild(overlay);
   document.body.style.overflow = 'hidden';
+
+  const video = overlay.querySelector('video');
+  const spinner = overlay.querySelector('.lightbox-spinner');
+
+  video.addEventListener('waiting', () => spinner.classList.add('active'));
+  video.addEventListener('playing', () => spinner.classList.remove('active'));
+  video.addEventListener('canplay', function onCanPlay() {
+    video.removeEventListener('canplay', onCanPlay);
+    spinner.classList.remove('active');
+    video.play().catch(() => {});
+  });
+  video.load();
 
   // Close on overlay click (not video)
   overlay.addEventListener('click', e => {
@@ -80,6 +96,33 @@ function openLightbox(videoSrc) {
   });
 
   // Close on Escape
+  const handleKey = e => {
+    if (e.key === 'Escape') {
+      closeLightbox(overlay);
+      document.removeEventListener('keydown', handleKey);
+    }
+  };
+  document.addEventListener('keydown', handleKey);
+}
+
+function openPhotoLightbox(imgSrc) {
+  const overlay = document.createElement('div');
+  overlay.className = 'lightbox-overlay';
+  overlay.innerHTML = `
+    <div class="lightbox-content lightbox-photo-content">
+      <button class="lightbox-close">&times;</button>
+      <img src="${imgSrc}" alt="" style="max-width:100%; max-height:90vh; object-fit:contain;">
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
+
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay || e.target.classList.contains('lightbox-close')) {
+      closeLightbox(overlay);
+    }
+  });
+
   const handleKey = e => {
     if (e.key === 'Escape') {
       closeLightbox(overlay);

@@ -208,11 +208,11 @@
             </div>
             <div id="upload-area" class="upload-area">
               <div class="upload-drop-zone" id="drop-zone">
-                <p>Drag &amp; drop video files here</p>
+                <p>Drag &amp; drop video or photo files here</p>
                 <p class="upload-hint">or</p>
                 <label class="btn btn-primary upload-browse-btn">
                   Browse Files
-                  <input type="file" id="file-input" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v" multiple hidden>
+                  <input type="file" id="file-input" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v,image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden>
                 </label>
               </div>
               <div id="upload-queue" class="upload-queue"></div>
@@ -333,7 +333,7 @@
   </div>
 
   <!-- Hidden file input for video replacement -->
-  <input type="file" id="replace-file-input" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v" hidden>
+  <input type="file" id="replace-file-input" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v,image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" hidden>
 
   <!-- Email Test Result Modal -->
   <div id="email-result-modal" class="email-result-modal" style="display:none;">

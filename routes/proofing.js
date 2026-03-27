@@ -181,7 +181,7 @@ router.get('/:token/download-all', checkAccess, async (req, res) => {
   if (!req.gallery.downloadsEnabled) return res.status(403).json({ error: 'Downloads disabled' });
 
   const archiver = require('archiver');
-  const videos = readGalleryVideos(req.gallery.id).filter(v => v.type === 'video');
+  const videos = readGalleryVideos(req.gallery.id).filter(v => v.type === 'video' || v.type === 'photo');
 
   const safeName = req.gallery.name.replace(/[^a-zA-Z0-9 .-]/g, '');
   res.setHeader('Content-Type', 'application/zip');

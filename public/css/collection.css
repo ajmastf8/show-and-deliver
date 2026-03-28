@@ -43,6 +43,14 @@ a { color: inherit; text-decoration: none; }
 
 .logo { flex-shrink: 0; }
 .logo-img { height: 74px; display: block; }
+.logo-text {
+  font-size: 42px;
+  font-weight: 800;
+  color: var(--color-black);
+  letter-spacing: -1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
 
 .header-nav {
   display: flex;

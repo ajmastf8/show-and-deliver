@@ -690,6 +690,14 @@ document.addEventListener('DOMContentLoaded', () => {
       picker.appendChild(row);
     });
 
+    // Collection settings
+    document.getElementById('col-setting-password').value = '';
+    document.getElementById('col-setting-password').placeholder = col.hasPassword ? '(password set — enter new to change)' : 'No password';
+    document.getElementById('col-setting-downloads').checked = col.downloadsEnabled || false;
+    document.getElementById('col-setting-commenting').checked = col.commentingEnabled || false;
+    document.getElementById('col-setting-expires').value = col.expiresAt ? col.expiresAt.split('T')[0] : '';
+    document.getElementById('col-setting-active').checked = col.active !== false;
+
     renderGalleryList();
   }
 
@@ -714,13 +722,21 @@ document.addEventListener('DOMContentLoaded', () => {
     const checked = picker.querySelectorAll('input[type="checkbox"]:checked');
     const galleryIds = Array.from(checked).map(c => c.value);
 
+    const colBody = {
+      name: document.getElementById('col-setting-name').value,
+      galleryIds,
+      downloadsEnabled: document.getElementById('col-setting-downloads').checked,
+      commentingEnabled: document.getElementById('col-setting-commenting').checked,
+      expiresAt: document.getElementById('col-setting-expires').value || null,
+      active: document.getElementById('col-setting-active').checked,
+    };
+    const colPw = document.getElementById('col-setting-password').value;
+    if (colPw) colBody.password = colPw;
+
     const res = await fetch(`/api/collections/${currentCollectionId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: document.getElementById('col-setting-name').value,
-        galleryIds
-      })
+      body: JSON.stringify(colBody)
     });
 
     if (res.ok) {
@@ -738,6 +754,20 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('col-open-link-btn').addEventListener('click', () => {
     const url = document.getElementById('col-setting-link').value;
     if (url) window.open(url, '_blank');
+  });
+
+  document.getElementById('col-remove-password-btn').addEventListener('click', async () => {
+    if (!confirm('Remove collection password?')) return;
+    const res = await fetch(`/api/collections/${currentCollectionId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: '' })
+    });
+    if (res.ok) {
+      await loadGalleries();
+      selectCollection(currentCollectionId);
+      alert('Password removed.');
+    }
   });
 
   document.getElementById('col-regen-link-btn').addEventListener('click', async () => {
@@ -861,6 +891,20 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('setting-type').textContent = currentGallery.type === 'proofing' ? 'Client Gallery' : 'Portfolio Gallery';
     document.getElementById('setting-active').checked = currentGallery.active;
 
+    // Collection inheritance info
+    const colInfo = document.getElementById('setting-collection-info');
+    const overrideCheck = document.getElementById('setting-override');
+    const inCollection = currentGallery.collectionId && currentGallery.type === 'proofing';
+
+    if (inCollection) {
+      colInfo.style.display = '';
+      document.getElementById('setting-collection-name').textContent = currentGallery.collectionName || 'Unknown';
+      overrideCheck.checked = currentGallery.overrideCollectionSettings || false;
+      updateOverrideState();
+    } else {
+      colInfo.style.display = 'none';
+    }
+
     if (currentGallery.type === 'proofing') {
       const baseUrl = window.location.origin;
       document.getElementById('setting-link').value = baseUrl + '/gallery/' + currentGallery.token;
@@ -874,6 +918,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function updateOverrideState() {
+    const inCollection = currentGallery && currentGallery.collectionId && currentGallery.type === 'proofing';
+    if (!inCollection) return;
+    const isOverriding = document.getElementById('setting-override').checked;
+    // Disable/enable the proofing-only settings based on override state
+    const fields = ['setting-password', 'setting-downloads', 'setting-commenting', 'setting-expires', 'setting-active'];
+    fields.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = !isOverriding;
+    });
+    const removeBtn = document.getElementById('remove-password-btn');
+    if (removeBtn) removeBtn.disabled = !isOverriding;
+    // Visual dimming
+    document.querySelectorAll('.setting-proofing-only').forEach(el => {
+      el.style.opacity = isOverriding ? '' : '0.5';
+    });
+  }
+
+  document.getElementById('setting-override').addEventListener('change', updateOverrideState);
+
   document.getElementById('save-settings-btn').addEventListener('click', async () => {
     const body = {
       name: document.getElementById('setting-name').value,
@@ -881,6 +945,10 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     if (currentGallery.type === 'proofing') {
+      // Send override flag if gallery is in a collection
+      if (currentGallery.collectionId) {
+        body.overrideCollectionSettings = document.getElementById('setting-override').checked;
+      }
       // Only send password if user typed something new
       const pwVal = document.getElementById('setting-password').value.trim();
       if (pwVal) body.password = pwVal;

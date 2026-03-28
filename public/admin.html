@@ -259,6 +259,29 @@
               <div id="col-gallery-picker" class="col-gallery-picker"></div>
               <p class="setting-hint">Check galleries to include in this collection</p>
             </div>
+            <hr style="margin:16px 0;border:none;border-top:1px solid var(--color-gray-mid);">
+            <h3 style="font-size:15px;margin-bottom:12px;">Collection Settings</h3>
+            <p class="setting-hint" style="margin-bottom:12px;">These settings are inherited by all galleries in this collection unless a gallery overrides them.</p>
+            <div class="setting-group">
+              <label>Password</label>
+              <div class="setting-link-row">
+                <input type="password" id="col-setting-password" class="setting-input" placeholder="No password">
+                <button id="col-remove-password-btn" class="btn btn-secondary btn-sm">Remove Password</button>
+              </div>
+            </div>
+            <div class="setting-group">
+              <label class="toggle-label"><input type="checkbox" id="col-setting-downloads"> Enable Downloads</label>
+            </div>
+            <div class="setting-group">
+              <label class="toggle-label"><input type="checkbox" id="col-setting-commenting"> Enable Commenting</label>
+            </div>
+            <div class="setting-group">
+              <label>Expiration Date</label>
+              <input type="date" id="col-setting-expires" class="setting-input">
+            </div>
+            <div class="setting-group">
+              <label class="toggle-label"><input type="checkbox" id="col-setting-active"> Active</label>
+            </div>
             <div class="settings-actions">
               <button id="col-save-btn" class="btn btn-primary">Save Collection</button>
               <button id="col-delete-btn" class="btn btn-danger">Delete Collection</button>
@@ -314,6 +337,16 @@
               <div class="setting-group">
                 <label>Type</label>
                 <span id="setting-type" class="setting-value"></span>
+              </div>
+              <div id="setting-collection-info" class="setting-group" style="display:none;">
+                <div style="background:var(--color-gray-light);padding:10px 14px;border-radius:4px;margin-bottom:8px;">
+                  <p style="font-size:13px;color:var(--color-body-text);margin-bottom:6px;">This gallery belongs to collection: <strong id="setting-collection-name"></strong></p>
+                  <label class="toggle-label">
+                    <input type="checkbox" id="setting-override">
+                    <span>Override collection settings</span>
+                  </label>
+                  <p class="setting-hint" style="margin-top:4px;">When off, this gallery inherits password, downloads, commenting, expiration, and active settings from the collection.</p>
+                </div>
               </div>
               <div class="setting-group setting-proofing-only" style="display:none;">
                 <label>Access Link</label>

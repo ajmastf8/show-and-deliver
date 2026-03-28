@@ -617,10 +617,22 @@ if ($method === 'GET' && $uri === '/api/videos') {
 
 if ($method === 'GET' && $uri === '/api/galleries') {
     requireAuth();
-    $galleries = array_map(function($g) {
+    $collections = readCollections();
+    // Build gallery-to-collection lookup
+    $galColMap = [];
+    foreach ($collections as $col) {
+        foreach ($col['galleryIds'] ?? [] as $gid) {
+            if (!isset($galColMap[$gid])) {
+                $galColMap[$gid] = ['id' => $col['id'], 'name' => $col['name']];
+            }
+        }
+    }
+    $galleries = array_map(function($g) use ($galColMap) {
         $s = sanitizeGallery($g);
         $s['videoCount'] = count(array_filter(readGalleryVideos($g['id']), fn($v) => ($v['type'] ?? '') !== 'header'));
         $s['commentCount'] = $g['type'] === 'proofing' ? count(readGalleryComments($g['id'])) : 0;
+        $s['collectionId'] = $galColMap[$g['id']]['id'] ?? null;
+        $s['collectionName'] = $galColMap[$g['id']]['name'] ?? null;
         return $s;
     }, readGalleries());
     respond($galleries);
@@ -648,6 +660,7 @@ if ($method === 'POST' && $uri === '/api/galleries') {
         'commentingEnabled' => !empty($input['commentingEnabled']),
         'expiresAt' => $input['expiresAt'] ?? null,
         'active' => false,
+        'overrideCollectionSettings' => false,
         'createdAt' => date('c'),
     ];
 
@@ -681,6 +694,25 @@ if ($method === 'PUT' && matchRoute('/api/galleries/{id}', $uri, $params)) {
     if (isset($input['active'])) $gallery['active'] = $input['active'];
     if (!empty($input['regenerateToken']) && $gallery['type'] === 'proofing') {
         $gallery['token'] = generateToken();
+    }
+
+    // Handle override toggle: when switching to override, copy collection settings as starting values
+    if (isset($input['overrideCollectionSettings'])) {
+        $wasOverriding = $gallery['overrideCollectionSettings'] ?? false;
+        $gallery['overrideCollectionSettings'] = $input['overrideCollectionSettings'];
+        if ($input['overrideCollectionSettings'] && !$wasOverriding) {
+            // Switching to override — copy collection settings into gallery
+            foreach (readCollections() as $col) {
+                if (in_array($gallery['id'], $col['galleryIds'] ?? [])) {
+                    $gallery['password'] = $col['password'] ?? null;
+                    $gallery['downloadsEnabled'] = $col['downloadsEnabled'] ?? false;
+                    $gallery['commentingEnabled'] = $col['commentingEnabled'] ?? false;
+                    $gallery['expiresAt'] = $col['expiresAt'] ?? null;
+                    $gallery['active'] = $col['active'] ?? true;
+                    break;
+                }
+            }
+        }
     }
 
     writeGalleries($galleries);
@@ -1134,9 +1166,26 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/probe', $uri, $
 // PROOFING (public, token-based)
 // ============================================================
 
+function resolveEffectiveSettings($gallery) {
+    if ($gallery['overrideCollectionSettings'] ?? false) return $gallery;
+    foreach (readCollections() as $col) {
+        if (in_array($gallery['id'], $col['galleryIds'] ?? [])) {
+            $gallery['password'] = $col['password'] ?? null;
+            $gallery['downloadsEnabled'] = $col['downloadsEnabled'] ?? false;
+            $gallery['commentingEnabled'] = $col['commentingEnabled'] ?? false;
+            $gallery['expiresAt'] = $col['expiresAt'] ?? null;
+            $gallery['active'] = $col['active'] ?? true;
+            return $gallery;
+        }
+    }
+    return $gallery;
+}
+
 function getProofingGallery($token) {
     $gallery = findGalleryByToken($token);
-    if (!$gallery || ($gallery['active'] ?? true) === false) respondError('Not found', 404);
+    if (!$gallery) respondError('Not found', 404);
+    $gallery = resolveEffectiveSettings($gallery);
+    if (($gallery['active'] ?? true) === false) respondError('Not found', 404);
     if (!empty($gallery['expiresAt']) && strtotime($gallery['expiresAt']) < time()) {
         respondError('Gallery expired', 410);
     }
@@ -1190,6 +1239,7 @@ if ($method === 'POST' && matchRoute('/api/proofing/{token}/unlock', $uri, $para
 if ($method === 'POST' && matchRoute('/api/proofing/{token}/comments', $uri, $params)) {
     rateLimitCheck('comment:' . ($_SERVER['REMOTE_ADDR'] ?? ''), 10, 60);
     $gallery = getProofingGallery($params['token']);
+    if (!($gallery['commentingEnabled'] ?? false)) respondError('Commenting is disabled', 403);
     $input = getInput();
 
     $videoId = $input['videoId'] ?? '';
@@ -1394,6 +1444,8 @@ if ($method === 'GET' && $uri === '/api/collections') {
             }
         }
         $col['galleries'] = $colGalleries;
+        $col['hasPassword'] = !empty($col['password']);
+        unset($col['password']);
         return $col;
     }, $collections);
     respond($enriched);
@@ -1408,6 +1460,11 @@ if ($method === 'POST' && $uri === '/api/collections') {
         'name' => $input['name'] ?? 'New Collection',
         'token' => generateToken(),
         'galleryIds' => $input['galleryIds'] ?? [],
+        'password' => !empty($input['password']) ? password_hash($input['password'], PASSWORD_BCRYPT) : null,
+        'downloadsEnabled' => !empty($input['downloadsEnabled']),
+        'commentingEnabled' => !empty($input['commentingEnabled']),
+        'expiresAt' => $input['expiresAt'] ?? null,
+        'active' => true,
         'createdAt' => date('c'),
     ];
     $collections[] = $collection;
@@ -1427,11 +1484,46 @@ if ($method === 'PUT' && matchRoute('/api/collections/{id}', $uri, $params)) {
     if (!$col) respondError('Not found', 404);
 
     if (isset($input['name'])) $col['name'] = $input['name'];
-    if (isset($input['galleryIds'])) $col['galleryIds'] = $input['galleryIds'];
+
+    // Handle gallery removal: copy collection settings into removed galleries that weren't overriding
+    if (isset($input['galleryIds'])) {
+        $oldIds = $col['galleryIds'] ?? [];
+        $newIds = $input['galleryIds'];
+        $removedIds = array_diff($oldIds, $newIds);
+        if (!empty($removedIds)) {
+            $galleries = readGalleries();
+            $changed = false;
+            foreach ($galleries as &$gal) {
+                if (in_array($gal['id'], $removedIds) && !($gal['overrideCollectionSettings'] ?? false)) {
+                    $gal['password'] = $col['password'] ?? null;
+                    $gal['downloadsEnabled'] = $col['downloadsEnabled'] ?? false;
+                    $gal['commentingEnabled'] = $col['commentingEnabled'] ?? false;
+                    $gal['expiresAt'] = $col['expiresAt'] ?? null;
+                    $gal['active'] = $col['active'] ?? true;
+                    $gal['overrideCollectionSettings'] = true;
+                    $changed = true;
+                }
+            }
+            unset($gal);
+            if ($changed) writeGalleries($galleries);
+        }
+        $col['galleryIds'] = $newIds;
+    }
+
     if (!empty($input['regenerateToken'])) $col['token'] = generateToken();
+    if (array_key_exists('password', $input)) {
+        $col['password'] = $input['password'] ? password_hash($input['password'], PASSWORD_BCRYPT) : null;
+    }
+    if (isset($input['downloadsEnabled'])) $col['downloadsEnabled'] = $input['downloadsEnabled'];
+    if (isset($input['commentingEnabled'])) $col['commentingEnabled'] = $input['commentingEnabled'];
+    if (isset($input['expiresAt'])) $col['expiresAt'] = $input['expiresAt'];
+    if (isset($input['active'])) $col['active'] = $input['active'];
 
     writeCollections($collections);
-    respond($col);
+    $out = $col;
+    $out['hasPassword'] = !empty($out['password']);
+    unset($out['password']);
+    respond($out);
 }
 
 if ($method === 'DELETE' && matchRoute('/api/collections/{id}', $uri, $params)) {
@@ -1447,10 +1539,7 @@ if ($method === 'DELETE' && matchRoute('/api/collections/{id}', $uri, $params)) 
     respond(['ok' => true]);
 }
 
-if ($method === 'GET' && matchRoute('/api/collections/public/{token}', $uri, $params)) {
-    $col = findCollectionByToken($params['token']);
-    if (!$col) respondError('Collection not found', 404);
-
+function collectionPublicPayload($col) {
     $galleries = readGalleries();
     $galMap = [];
     foreach ($galleries as $g) $galMap[$g['id']] = $g;
@@ -1470,7 +1559,45 @@ if ($method === 'GET' && matchRoute('/api/collections/public/{token}', $uri, $pa
         ];
     }
 
-    respond(['name' => $col['name'], 'galleries' => $publicGalleries]);
+    return ['name' => $col['name'], 'galleries' => $publicGalleries];
+}
+
+if ($method === 'GET' && matchRoute('/api/collections/public/{token}', $uri, $params)) {
+    $col = findCollectionByToken($params['token']);
+    if (!$col) respondError('Collection not found', 404);
+    if (($col['active'] ?? true) === false) respondError('Collection not found', 404);
+    if (!empty($col['expiresAt']) && strtotime($col['expiresAt']) < time()) {
+        respondError('Collection expired', 410);
+    }
+    if (!empty($col['password'])) {
+        respond(['passwordRequired' => true, 'collectionName' => $col['name']]);
+    }
+    respond(collectionPublicPayload($col));
+}
+
+if ($method === 'POST' && matchRoute('/api/collections/public/{token}/unlock', $uri, $params)) {
+    rateLimitCheck('col-unlock:' . ($params['token']) . ':' . ($_SERVER['REMOTE_ADDR'] ?? ''), 5, 60);
+    $col = findCollectionByToken($params['token']);
+    if (!$col) respondError('Collection not found', 404);
+    if (($col['active'] ?? true) === false) respondError('Collection not found', 404);
+    if (!empty($col['expiresAt']) && strtotime($col['expiresAt']) < time()) {
+        respondError('Collection expired', 410);
+    }
+    if (empty($col['password'])) respond(collectionPublicPayload($col));
+
+    $input = getInput();
+    $password = $input['password'] ?? '';
+    if (!$password) respondError('Incorrect password', 401);
+
+    $match = false;
+    if (str_starts_with($col['password'], '$2b$') || str_starts_with($col['password'], '$2a$') || str_starts_with($col['password'], '$2y$')) {
+        $match = password_verify($password, $col['password']);
+    } else {
+        $match = ($password === $col['password']);
+    }
+
+    if (!$match) respondError('Incorrect password', 401);
+    respond(collectionPublicPayload($col));
 }
 
 // ============================================================

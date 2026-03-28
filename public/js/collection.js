@@ -1,6 +1,7 @@
 document.addEventListener('DOMContentLoaded', async () => {
   const loadingView = document.getElementById('loading-view');
   const errorView = document.getElementById('error-view');
+  const passwordView = document.getElementById('password-view');
   const collectionView = document.getElementById('collection-view');
   const collectionName = document.getElementById('collection-name');
   const galleryGrid = document.getElementById('gallery-grid');
@@ -10,22 +11,75 @@ document.addEventListener('DOMContentLoaded', async () => {
   const token = pathParts[pathParts.length - 1];
 
   if (!token) {
-    loadingView.style.display = 'none';
-    errorView.style.display = '';
+    showError('Collection Not Found', 'This collection may have been removed or the link is incorrect.');
     return;
   }
 
   try {
     const res = await fetch(`/api/collections/public/${token}`);
 
+    if (res.status === 410) {
+      showError('Collection Expired', 'This collection has expired and is no longer available.');
+      return;
+    }
+
     if (!res.ok) {
-      loadingView.style.display = 'none';
-      errorView.style.display = '';
+      showError('Collection Not Found', 'This collection may have been removed or the link is incorrect.');
       return;
     }
 
     const data = await res.json();
 
+    if (data.passwordRequired) {
+      showPasswordForm(data.collectionName);
+      return;
+    }
+
+    renderCollection(data);
+  } catch (err) {
+    showError('Collection Not Found', 'This collection may have been removed or the link is incorrect.');
+  }
+
+  function showError(title, message) {
+    loadingView.style.display = 'none';
+    document.getElementById('error-title').textContent = title;
+    document.getElementById('error-message').textContent = message;
+    errorView.style.display = '';
+  }
+
+  function showPasswordForm(name) {
+    loadingView.style.display = 'none';
+    document.getElementById('password-collection-name').textContent = name;
+    passwordView.style.display = '';
+
+    document.getElementById('password-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const pw = document.getElementById('password-input').value;
+      const errEl = document.getElementById('password-error');
+      errEl.textContent = '';
+
+      try {
+        const res = await fetch(`/api/collections/public/${token}/unlock`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pw })
+        });
+
+        if (!res.ok) {
+          errEl.textContent = 'Incorrect password';
+          return;
+        }
+
+        const data = await res.json();
+        passwordView.style.display = 'none';
+        renderCollection(data);
+      } catch (err) {
+        errEl.textContent = 'Something went wrong. Please try again.';
+      }
+    });
+  }
+
+  function renderCollection(data) {
     document.title = data.name + ' — ' + (window.__siteConfig?.siteName || 'Gallery');
     collectionName.textContent = data.name;
 
@@ -57,9 +111,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     loadingView.style.display = 'none';
     collectionView.style.display = '';
-  } catch (err) {
-    loadingView.style.display = 'none';
-    errorView.style.display = '';
   }
 
   function escapeHtml(str) {

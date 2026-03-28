@@ -612,7 +612,7 @@ document.addEventListener('DOMContentLoaded', () => {
     videosPanel.style.display = '';
     emailSettingsPanel.style.display = 'none';
     collectionPanel.style.display = 'none';
-    galleryTitle.textContent = gallery.name;
+    galleryTitle.textContent = 'Gallery: ' + gallery.name;
 
     // Show/hide proofing-only elements
     const isProofing = gallery.type === 'proofing';
@@ -669,7 +669,7 @@ document.addEventListener('DOMContentLoaded', () => {
     emailSettingsPanel.style.display = 'none';
     collectionPanel.style.display = '';
 
-    document.getElementById('collection-title').textContent = col.name;
+    document.getElementById('collection-title').textContent = 'Collection: ' + col.name;
     document.getElementById('col-setting-name').value = col.name;
     document.getElementById('col-setting-link').value = window.location.origin + '/collection/' + col.token;
 
@@ -761,6 +761,10 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('col-setting-expires').value = col.expiresAt ? col.expiresAt.split('T')[0] : '';
     document.getElementById('col-setting-active').checked = col.active !== false;
 
+    const sortOrderSelect = document.getElementById('col-setting-sort-order');
+    sortOrderSelect.value = col.sortOrder || 'custom';
+    updateSortOrderUI(sortOrderSelect.value);
+
     renderGalleryList();
   }
 
@@ -779,6 +783,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  function updateSortOrderUI(value) {
+    const isCustom = value === 'custom';
+    document.getElementById('col-drag-hint').style.display = isCustom ? '' : 'none';
+    document.querySelectorAll('#col-gallery-sorted .drag-handle').forEach(h => {
+      h.style.visibility = isCustom ? '' : 'hidden';
+    });
+    if (window._colSortable) window._colSortable.option('disabled', !isCustom);
+  }
+
+  document.getElementById('col-setting-sort-order').addEventListener('change', (e) => {
+    updateSortOrderUI(e.target.value);
+  });
+
   document.getElementById('col-save-btn').addEventListener('click', async () => {
     if (!currentCollectionId) return;
     const sortedRows = document.getElementById('col-gallery-sorted').querySelectorAll('.col-gallery-sorted-row');
@@ -791,6 +808,7 @@ document.addEventListener('DOMContentLoaded', () => {
       commentingEnabled: document.getElementById('col-setting-commenting').checked,
       expiresAt: document.getElementById('col-setting-expires').value || null,
       active: document.getElementById('col-setting-active').checked,
+      sortOrder: document.getElementById('col-setting-sort-order').value,
     };
     const colPw = document.getElementById('col-setting-password').value;
     if (colPw) colBody.password = colPw;
@@ -1031,7 +1049,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const idx = galleries.findIndex(g => g.id === currentGalleryId);
       if (idx !== -1) Object.assign(galleries[idx], updated);
       currentGallery = galleries[idx];
-      galleryTitle.textContent = updated.name;
+      galleryTitle.textContent = 'Gallery: ' + updated.name;
       renderGalleryList();
       alert('Settings saved.');
     }

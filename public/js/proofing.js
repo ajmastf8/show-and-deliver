@@ -558,40 +558,60 @@ document.addEventListener('DOMContentLoaded', () => {
     downloadModal.style.display = 'none';
   }
 
+  function triggerDownload(url) {
+    // Use a hidden iframe so the page stays intact and the modal remains visible
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = url;
+    document.body.appendChild(iframe);
+    // Clean up iframe after download starts, keep modal visible a bit longer
+    iframe.addEventListener('load', () => {
+      setTimeout(() => document.body.removeChild(iframe), 1000);
+    });
+  }
+
   downloadAllBtn.addEventListener('click', async () => {
-    // Check if chunked download is needed
+    // Fetch download info for file count, size, and chunking
+    let info = null;
     try {
       const res = await fetch(`/api/proofing/${token}/download-info`);
-      const info = await res.json();
-
-      if (info.chunks && info.chunks.length > 1) {
-        // Multiple chunks needed — show download options
-        const parts = info.chunks.map(c => {
-          const sizeMB = (c.size / 1024 / 1024).toFixed(0);
-          return `Part ${c.part}: ${c.fileCount} files (~${sizeMB} MB)`;
-        }).join('\n');
-
-        const msg = `This gallery is too large for a single download.\n\n${parts}\n\nDownload all parts?`;
-        if (!confirm(msg)) return;
-
-        showDownloadModal(info.fileCount, info.totalSize);
-        for (const chunk of info.chunks) {
-          window.open(`/api/proofing/${token}/download-all?part=${chunk.part}`, '_blank');
-        }
-        setTimeout(hideDownloadModal, 3000);
-        return;
-      }
-
-      // Single download
-      showDownloadModal(info.fileCount, info.totalSize);
+      info = await res.json();
     } catch (e) {
-      // If info check fails, show generic message
+      // If info check fails, show generic modal and download directly
+    }
+
+    if (info && info.chunks && info.chunks.length > 1) {
+      // Multiple chunks needed — show download options
+      const parts = info.chunks.map(c => {
+        const sizeMB = (c.size / 1024 / 1024).toFixed(0);
+        return `Part ${c.part}: ${c.fileCount} files (~${sizeMB} MB)`;
+      }).join('\n');
+
+      const msg = `This gallery is too large for a single download.\n\n${parts}\n\nDownload all parts?`;
+      if (!confirm(msg)) return;
+
+      showDownloadModal(info.fileCount, info.totalSize);
+      for (const chunk of info.chunks) {
+        window.open(`/api/proofing/${token}/download-all?part=${chunk.part}`, '_blank');
+      }
+      setTimeout(hideDownloadModal, 8000);
+      return;
+    }
+
+    // Show modal first, then trigger download
+    if (info) {
+      showDownloadModal(info.fileCount, info.totalSize);
+    } else {
       downloadModalMsg.textContent = 'Gathering images and creating your zip file\u2026';
       downloadModal.style.display = '';
     }
 
-    window.location.href = `/api/proofing/${token}/download-all`;
-    setTimeout(hideDownloadModal, 5000);
+    // Small delay to ensure the modal paints before the download kicks off
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    triggerDownload(`/api/proofing/${token}/download-all`);
+    // Hide modal after a generous delay — the browser download bar takes over
+    const estimatedMs = info ? Math.max(5000, (info.totalSize / (2 * 1024 * 1024)) * 1000) : 8000;
+    setTimeout(hideDownloadModal, Math.min(estimatedMs, 30000));
   });
 
   // ============ Helpers ============

@@ -256,7 +256,16 @@
             <div class="setting-group">
               <label>Galleries in this Collection</label>
               <div id="col-gallery-sorted" class="col-gallery-sorted"></div>
-              <p class="setting-hint" style="margin-bottom:8px;">Drag to reorder. Order is reflected on the collection page.</p>
+              <p id="col-drag-hint" class="setting-hint" style="margin-bottom:8px;">Drag to reorder. Order is reflected on the collection page.</p>
+              <div style="margin-top:8px;">
+                <label style="font-size:13px;font-weight:600;color:var(--color-text);display:block;margin-bottom:4px;">Sort Order</label>
+                <select id="col-setting-sort-order" class="setting-input">
+                  <option value="custom">Custom (drag to reorder)</option>
+                  <option value="newest">Most Recent First</option>
+                  <option value="oldest">Oldest First</option>
+                  <option value="alpha">Alphabetical</option>
+                </select>
+              </div>
               <label style="font-size:13px;font-weight:600;color:var(--color-text);margin-top:8px;display:block;">Add Galleries</label>
               <div id="col-gallery-picker" class="col-gallery-picker"></div>
             </div>

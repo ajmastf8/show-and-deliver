@@ -1465,6 +1465,7 @@ if ($method === 'POST' && $uri === '/api/collections') {
         'commentingEnabled' => !empty($input['commentingEnabled']),
         'expiresAt' => $input['expiresAt'] ?? null,
         'active' => true,
+        'sortOrder' => 'custom',
         'createdAt' => date('c'),
     ];
     $collections[] = $collection;
@@ -1518,6 +1519,7 @@ if ($method === 'PUT' && matchRoute('/api/collections/{id}', $uri, $params)) {
     if (isset($input['commentingEnabled'])) $col['commentingEnabled'] = $input['commentingEnabled'];
     if (isset($input['expiresAt'])) $col['expiresAt'] = $input['expiresAt'];
     if (isset($input['active'])) $col['active'] = $input['active'];
+    if (isset($input['sortOrder'])) $col['sortOrder'] = $input['sortOrder'];
 
     writeCollections($collections);
     $out = $col;
@@ -1556,8 +1558,22 @@ function collectionPublicPayload($col) {
             'token' => $g['token'],
             'thumbnail' => $thumb,
             'videoCount' => count($videos),
+            'createdAt' => $g['createdAt'] ?? '',
         ];
     }
+
+    $sortOrder = $col['sortOrder'] ?? 'custom';
+    if ($sortOrder === 'newest') {
+        usort($publicGalleries, fn($a, $b) => strcmp($b['createdAt'], $a['createdAt']));
+    } elseif ($sortOrder === 'oldest') {
+        usort($publicGalleries, fn($a, $b) => strcmp($a['createdAt'], $b['createdAt']));
+    } elseif ($sortOrder === 'alpha') {
+        usort($publicGalleries, fn($a, $b) => strcasecmp($a['name'], $b['name']));
+    }
+    // 'custom' keeps galleryIds order as-is
+
+    // Strip createdAt from public response
+    $publicGalleries = array_map(fn($g) => array_diff_key($g, ['createdAt' => 1]), $publicGalleries);
 
     return ['name' => $col['name'], 'galleries' => $publicGalleries];
 }

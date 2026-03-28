@@ -536,6 +536,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // ============ Download All ============
 
+  const downloadModal = document.getElementById('download-modal');
+  const downloadModalMsg = document.getElementById('download-modal-msg');
+
+  function formatEstimate(totalSize, fileCount) {
+    // Rough estimate: ~2MB/s for zip creation + download prep
+    const seconds = Math.max(5, Math.ceil(totalSize / (2 * 1024 * 1024)));
+    if (seconds < 60) return `about ${seconds} seconds`;
+    const mins = Math.ceil(seconds / 60);
+    return mins === 1 ? 'about a minute' : `about ${mins} minutes`;
+  }
+
+  function showDownloadModal(fileCount, totalSize) {
+    const sizeMB = (totalSize / 1024 / 1024).toFixed(0);
+    const estimate = formatEstimate(totalSize, fileCount);
+    downloadModalMsg.textContent = `Gathering ${fileCount} images (~${sizeMB} MB) and creating your zip file. This may take ${estimate}.`;
+    downloadModal.style.display = '';
+  }
+
+  function hideDownloadModal() {
+    downloadModal.style.display = 'none';
+  }
+
   downloadAllBtn.addEventListener('click', async () => {
     // Check if chunked download is needed
     try {
@@ -552,17 +574,24 @@ document.addEventListener('DOMContentLoaded', () => {
         const msg = `This gallery is too large for a single download.\n\n${parts}\n\nDownload all parts?`;
         if (!confirm(msg)) return;
 
-        // Download each part
+        showDownloadModal(info.fileCount, info.totalSize);
         for (const chunk of info.chunks) {
           window.open(`/api/proofing/${token}/download-all?part=${chunk.part}`, '_blank');
         }
+        setTimeout(hideDownloadModal, 3000);
         return;
       }
+
+      // Single download
+      showDownloadModal(info.fileCount, info.totalSize);
     } catch (e) {
-      // If info check fails, fall through to direct download
+      // If info check fails, show generic message
+      downloadModalMsg.textContent = 'Gathering images and creating your zip file\u2026';
+      downloadModal.style.display = '';
     }
 
     window.location.href = `/api/proofing/${token}/download-all`;
+    setTimeout(hideDownloadModal, 5000);
   });
 
   // ============ Helpers ============

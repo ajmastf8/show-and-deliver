@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=13">
+  <link rel="stylesheet" href="/css/style.css?v=14">
 </head>
 <body>
   <header class="site-header">
@@ -256,8 +256,10 @@
             </div>
             <div class="setting-group">
               <label>Galleries in this Collection</label>
+              <div id="col-gallery-sorted" class="col-gallery-sorted"></div>
+              <p class="setting-hint" style="margin-bottom:8px;">Drag to reorder. Order is reflected on the collection page.</p>
+              <label style="font-size:13px;font-weight:600;color:var(--color-text);margin-top:8px;display:block;">Add Galleries</label>
               <div id="col-gallery-picker" class="col-gallery-picker"></div>
-              <p class="setting-hint">Check galleries to include in this collection</p>
             </div>
             <hr style="margin:16px 0;border:none;border-top:1px solid var(--color-gray-mid);">
             <h3 style="font-size:15px;margin-bottom:12px;">Collection Settings</h3>
@@ -496,6 +498,6 @@
 
   <script src="/js/header.js?v=2"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=28"></script>
+  <script src="/js/admin.js?v=29"></script>
 </body>
 </html>

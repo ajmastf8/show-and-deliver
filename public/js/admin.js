@@ -673,22 +673,85 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('col-setting-name').value = col.name;
     document.getElementById('col-setting-link').value = window.location.origin + '/collection/' + col.token;
 
-    // Gallery picker
-    const picker = document.getElementById('col-gallery-picker');
-    picker.innerHTML = '';
-    galleries.forEach(g => {
-      const row = document.createElement('label');
-      row.className = 'col-gallery-picker-row';
-      const checked = (col.galleryIds || []).includes(g.id) ? 'checked' : '';
+    // Sorted gallery list (included galleries, draggable)
+    const sortedList = document.getElementById('col-gallery-sorted');
+    sortedList.innerHTML = '';
+    const galMap = {};
+    galleries.forEach(g => galMap[g.id] = g);
+    const includedIds = col.galleryIds || [];
+
+    includedIds.forEach(gid => {
+      const g = galMap[gid];
+      if (!g) return;
+      const row = document.createElement('div');
+      row.className = 'col-gallery-sorted-row';
+      row.dataset.id = g.id;
       const badgeClass = g.type === 'proofing' ? 'proofing' : 'reels';
       const badgeText = g.type === 'proofing' ? 'Client' : 'Portfolio';
       row.innerHTML = `
-        <input type="checkbox" value="${g.id}" ${checked}>
+        <span class="drag-handle" style="cursor:grab;">&#9776;</span>
         <span class="col-gallery-picker-name">${escapeHtml(g.name)}</span>
         <span class="col-gallery-picker-badge ${badgeClass}">${badgeText}</span>
+        <button class="btn btn-icon col-gallery-remove" title="Remove">&times;</button>
       `;
-      picker.appendChild(row);
+      row.querySelector('.col-gallery-remove').addEventListener('click', () => {
+        row.remove();
+        rebuildAddPicker();
+      });
+      sortedList.appendChild(row);
     });
+
+    // Make the sorted list draggable
+    if (window._colSortable) window._colSortable.destroy();
+    window._colSortable = Sortable.create(sortedList, {
+      handle: '.drag-handle',
+      ghostClass: 'sortable-ghost',
+      animation: 150,
+    });
+
+    // Add picker (unchecked galleries only)
+    function rebuildAddPicker() {
+      const picker = document.getElementById('col-gallery-picker');
+      picker.innerHTML = '';
+      const currentIds = Array.from(sortedList.querySelectorAll('.col-gallery-sorted-row')).map(r => r.dataset.id);
+      const available = galleries.filter(g => !currentIds.includes(g.id));
+      if (available.length === 0) {
+        picker.innerHTML = '<p style="padding:8px 12px;font-size:12px;color:var(--color-gray-text);">All galleries are in this collection.</p>';
+        return;
+      }
+      available.forEach(g => {
+        const row = document.createElement('div');
+        row.className = 'col-gallery-picker-row';
+        row.style.cursor = 'pointer';
+        const badgeClass = g.type === 'proofing' ? 'proofing' : 'reels';
+        const badgeText = g.type === 'proofing' ? 'Client' : 'Portfolio';
+        row.innerHTML = `
+          <span style="color:var(--color-primary);font-weight:600;font-size:16px;">+</span>
+          <span class="col-gallery-picker-name">${escapeHtml(g.name)}</span>
+          <span class="col-gallery-picker-badge ${badgeClass}">${badgeText}</span>
+        `;
+        row.addEventListener('click', () => {
+          // Add to sorted list
+          const newRow = document.createElement('div');
+          newRow.className = 'col-gallery-sorted-row';
+          newRow.dataset.id = g.id;
+          newRow.innerHTML = `
+            <span class="drag-handle" style="cursor:grab;">&#9776;</span>
+            <span class="col-gallery-picker-name">${escapeHtml(g.name)}</span>
+            <span class="col-gallery-picker-badge ${badgeClass}">${badgeText}</span>
+            <button class="btn btn-icon col-gallery-remove" title="Remove">&times;</button>
+          `;
+          newRow.querySelector('.col-gallery-remove').addEventListener('click', () => {
+            newRow.remove();
+            rebuildAddPicker();
+          });
+          sortedList.appendChild(newRow);
+          rebuildAddPicker();
+        });
+        picker.appendChild(row);
+      });
+    }
+    rebuildAddPicker();
 
     // Collection settings
     document.getElementById('col-setting-password').value = '';
@@ -718,9 +781,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('col-save-btn').addEventListener('click', async () => {
     if (!currentCollectionId) return;
-    const picker = document.getElementById('col-gallery-picker');
-    const checked = picker.querySelectorAll('input[type="checkbox"]:checked');
-    const galleryIds = Array.from(checked).map(c => c.value);
+    const sortedRows = document.getElementById('col-gallery-sorted').querySelectorAll('.col-gallery-sorted-row');
+    const galleryIds = Array.from(sortedRows).map(r => r.dataset.id);
 
     const colBody = {
       name: document.getElementById('col-setting-name').value,

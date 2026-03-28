@@ -659,7 +659,7 @@ if ($method === 'POST' && $uri === '/api/galleries') {
         'downloadsEnabled' => !empty($input['downloadsEnabled']),
         'commentingEnabled' => !empty($input['commentingEnabled']),
         'expiresAt' => $input['expiresAt'] ?? null,
-        'active' => false,
+        'active' => true,
         'overrideCollectionSettings' => false,
         'createdAt' => date('c'),
     ];

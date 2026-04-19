@@ -183,12 +183,20 @@ router.get('/:token/download-all', checkAccess, async (req, res) => {
   const archiver = require('archiver');
   const videos = readGalleryVideos(req.gallery.id).filter(v => v.type === 'video');
 
+  // Uploaded media (mp4/webm/jpg/png) is already compressed; deflate wastes CPU for
+  // ~0 size savings and throttles throughput. Disable socket timeouts so large
+  // archives aren't killed mid-stream by proxy/Node defaults.
+  req.setTimeout(0);
+  res.setTimeout(0);
+
   const safeName = req.gallery.name.replace(/[^a-zA-Z0-9 .-]/g, '');
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"`);
 
-  const archive = archiver('zip', { zlib: { level: 5 } });
+  const archive = archiver('zip', { store: true });
   archive.on('error', err => { console.error('Archive error:', err); res.status(500).end(); });
+  archive.on('warning', err => { if (err.code !== 'ENOENT') console.error('Archive warning:', err); });
+  req.on('close', () => { archive.abort(); });
   archive.pipe(res);
 
   for (const video of videos) {

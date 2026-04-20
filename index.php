@@ -1918,16 +1918,22 @@ if ($method === 'POST' && $uri === '/api/settings/deploy') {
     $logFile = __DIR__ . '/deploy.log';
     $timestamp = date('Y-m-d H:i:s');
 
-    $cmd = "{$setRemote}git fetch origin && git checkout $branch && git pull origin $branch 2>&1";
+    // Hard reset to origin/$branch rather than `git pull`. On shared hosting
+    // the working tree occasionally ends up with local edits (cPanel file
+    // manager, admin-level tweaks, line-ending changes), which would block a
+    // normal merge. A hard reset makes the repo authoritative for every
+    // tracked file. Runtime data lives under site-data/ which is gitignored,
+    // so it's untouched.
+    $gitCmd = "git fetch origin && git checkout $branch && git reset --hard origin/$branch";
+    $cmd = "{$setRemote}$gitCmd 2>&1";
     $output = shell_exec($cmd);
-    $exitCode = ($output === null) ? -1 : 0;
 
     // Check for failure indicators in output
     $failed = ($output === null) || preg_match('/fatal:|error:|CONFLICT/i', $output);
 
     // Write log
     $logEntry = "[$timestamp] Branch: $branch\n"
-        . "Command: git fetch origin && git checkout $branch && git pull origin $branch\n"
+        . "Command: $gitCmd\n"
         . "Output:\n$output\n"
         . "Status: " . ($failed ? 'FAILED' : 'SUCCESS') . "\n"
         . str_repeat('-', 60) . "\n\n";

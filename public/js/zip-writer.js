@@ -158,44 +158,89 @@
     return buf;
   }
 
-  async function fetchBytes(url, signal) {
+  // Fetch a URL and stream the body through a ReadableStream reader. Chunks
+  // are collected into an array (not concatenated) so there's no single
+  // ArrayBuffer allocation — files can be larger than the ~2 GB per-alloc
+  // cap Chrome enforces. CRC-32 is computed incrementally as bytes arrive,
+  // so only the chunks themselves need to fit in memory (not double).
+  async function fetchEntryChunks(url, signal, onBytes) {
     const resp = await fetch(url, { signal });
-    if (!resp.ok) throw new Error(`Fetch failed (${resp.status}) for ${url}`);
-    const ab = await resp.arrayBuffer();
-    return new Uint8Array(ab);
+    if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+    if (!resp.body) {
+      const bytes = new Uint8Array(await resp.arrayBuffer());
+      if (onBytes) onBytes(bytes.length);
+      return { chunks: [bytes], size: bytes.length, crc: crc32(bytes) };
+    }
+    const reader = resp.body.getReader();
+    const chunks = [];
+    let size = 0;
+    let crc = 0xffffffff;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      size += value.length;
+      for (let i = 0; i < value.length; i++) {
+        crc = (CRC_TABLE[(crc ^ value[i]) & 0xff] ^ (crc >>> 8)) >>> 0;
+      }
+      if (onBytes) onBytes(value.length);
+    }
+    return { chunks, size, crc: (crc ^ 0xffffffff) >>> 0 };
   }
 
-  async function zipToWriter({ entries, write, onProgress, concurrency = 6, signal }) {
+  // Orchestrate the download + zip build.
+  //
+  // Returns { size, skipped } where `skipped` is the list of entries that
+  // couldn't be fetched (404s, network errors). A single bad file does NOT
+  // abort the whole archive — the caller can surface the list afterward.
+  //
+  // `onProgress(done, total, bytes)` fires after each successful entry.
+  // `onBytes(deltaBytes)` fires for every chunk as it streams in, so the
+  // UI can tick during a single large file download.
+  async function zipToWriter({ entries, write, onProgress, onBytes, concurrency = 6, signal }) {
     const records = [];
+    const skipped = [];
     let offset = 0;
     let done = 0;
     let totalBytes = 0;
 
-    // Process in batches to bound memory; writes happen sequentially after
-    // each batch so offsets line up. Zip has no mandated entry order.
+    const aborted = () => signal && signal.aborted;
+
+    // Fetches run in parallel batches; writes serialize after each batch so
+    // local-header offsets line up. ZIP has no mandated entry order.
     for (let i = 0; i < entries.length; i += concurrency) {
-      if (signal && signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      if (aborted()) throw new DOMException('Aborted', 'AbortError');
       const batch = entries.slice(i, i + concurrency);
-      const fetched = await Promise.all(batch.map(async (e) => {
-        const bytes = await fetchBytes(e.url, signal);
-        return { entry: e, bytes };
+      const results = await Promise.all(batch.map(async (entry) => {
+        try {
+          const got = await fetchEntryChunks(entry.url, signal, onBytes);
+          return { entry, got };
+        } catch (e) {
+          if (e.name === 'AbortError') throw e;
+          return { entry, error: e };
+        }
       }));
-      for (const { entry, bytes } of fetched) {
+      for (const r of results) {
+        if (r.error) {
+          skipped.push({ name: r.entry.name, reason: r.error.message || String(r.error) });
+          continue;
+        }
+        const { entry, got } = r;
         const { time, date } = dosTimeDate(entry.mtime || Date.now());
         const nameBytes = encodeUtf8(entry.name);
-        const size = bytes.length;
-        const crc = crc32(bytes);
         const { bytes: header, isZip64 } = buildLocalHeader({
-          nameBytes, size, crc, dosTime: time, dosDate: date, offset,
+          nameBytes, size: got.size, crc: got.crc, dosTime: time, dosDate: date, offset,
         });
         await write(header);
-        await write(bytes);
+        for (const chunk of got.chunks) {
+          await write(chunk);
+        }
         records.push({
-          nameBytes, size, crc, dosTime: time, dosDate: date,
+          nameBytes, size: got.size, crc: got.crc, dosTime: time, dosDate: date,
           offset, isZip64,
         });
-        offset += header.length + size;
-        totalBytes += size;
+        offset += header.length + got.size;
+        totalBytes += got.size;
         done++;
         if (onProgress) onProgress(done, entries.length, totalBytes);
       }
@@ -215,7 +260,10 @@
     }
     await write(buildEocd({ totalEntries: records.length, cdLen, cdOffset }));
 
-    return cdOffset + cdLen + (needZip64 ? 76 : 0) + 22;
+    return {
+      size: cdOffset + cdLen + (needZip64 ? 76 : 0) + 22,
+      skipped,
+    };
   }
 
   global.ZipWriter = { zipToWriter };

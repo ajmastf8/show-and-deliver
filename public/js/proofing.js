@@ -544,6 +544,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const downloadCancelBtn = document.getElementById('download-cancel-btn');
 
   let downloadAbort = null;
+  let downloadActive = false;
 
   function formatBytes(bytes) {
     if (bytes >= 1024 * 1024 * 1024) return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
@@ -564,7 +565,26 @@ document.addEventListener('DOMContentLoaded', () => {
     downloadModal.style.display = '';
   }
 
-  function updateDownloadProgress(done, total, bytes) {
+  // Per-file counters + the live stream of bytes. onBytes fires for every
+  // chunk the reader hands us, so the byte total and progress-bar fill
+  // advance smoothly even inside a single large video.
+  let progressState = { done: 0, total: 0, bytes: 0 };
+  function setProgressTotals(total) {
+    progressState = { done: 0, total, bytes: 0 };
+    renderProgress();
+  }
+  function onFileDone(done, total, bytes) {
+    progressState.done = done;
+    progressState.total = total;
+    progressState.bytes = bytes;
+    renderProgress();
+  }
+  function onChunkBytes(delta) {
+    progressState.bytes += delta;
+    renderProgress();
+  }
+  function renderProgress() {
+    const { done, total, bytes } = progressState;
     const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
     downloadProgressBar.style.width = pct.toFixed(1) + '%';
     downloadModalDetail.textContent =
@@ -576,6 +596,23 @@ document.addEventListener('DOMContentLoaded', () => {
     downloadProgressBar.classList.remove('indeterminate');
     downloadProgressBar.style.width = '0%';
     downloadAbort = null;
+    setDownloadActive(false);
+  }
+
+  // Block accidental tab-closes / navigation while a zip is in flight.
+  function onBeforeUnload(e) {
+    e.preventDefault();
+    e.returnValue = '';
+    return '';
+  }
+  function setDownloadActive(active) {
+    downloadActive = active;
+    downloadAllBtn.disabled = active;
+    if (active) {
+      window.addEventListener('beforeunload', onBeforeUnload);
+    } else {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    }
   }
 
   downloadCancelBtn.addEventListener('click', () => {
@@ -601,6 +638,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   downloadAllBtn.addEventListener('click', async () => {
+    if (downloadActive) return;
     if (!galleryData || !galleryData.videos) return;
 
     // Build entry list from already-loaded gallery data
@@ -622,11 +660,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const galleryBase = sanitizeName(galleryData.gallery.name, 'gallery');
     const suggestedName = galleryBase + '.zip';
 
+    setDownloadActive(true);
     openDownloadModal(
       'Downloading ' + mediaItems.length + ' photos',
       'Fetching files and packaging your zip\u2026'
     );
-    updateDownloadProgress(0, mediaItems.length, 0);
+    setProgressTotals(mediaItems.length);
 
     const controller = new AbortController();
     downloadAbort = controller;
@@ -655,13 +694,15 @@ document.addEventListener('DOMContentLoaded', () => {
       ? async (buf) => { await fileStream.write(buf); }
       : async (buf) => { chunks.push(buf); };
 
+    let result;
     try {
-      await ZipWriter.zipToWriter({
+      result = await ZipWriter.zipToWriter({
         entries,
         write,
         concurrency: 6,
         signal: controller.signal,
-        onProgress: (done, total, bytes) => updateDownloadProgress(done, total, bytes),
+        onProgress: onFileDone,
+        onBytes: onChunkBytes,
       });
     } catch (e) {
       if (fileStream) { try { await fileStream.abort(); } catch (_) {} }
@@ -692,7 +733,21 @@ document.addEventListener('DOMContentLoaded', () => {
     downloadModalDetail.textContent = '';
     downloadProgressBar.style.width = '100%';
     downloadCancelBtn.style.display = 'none';
-    setTimeout(hideDownloadModal, 2500);
+
+    // Surface any files we couldn't fetch after the modal dismisses, so the
+    // user knows their zip may be missing entries.
+    const skipped = (result && result.skipped) || [];
+    setTimeout(() => {
+      hideDownloadModal();
+      if (skipped.length > 0) {
+        const list = skipped.slice(0, 10).map(s => '  \u2022 ' + s.name).join('\n');
+        const more = skipped.length > 10 ? `\n  \u2026 and ${skipped.length - 10} more` : '';
+        alert(
+          `${skipped.length} file${skipped.length === 1 ? '' : 's'} couldn't be downloaded and ` +
+          `${skipped.length === 1 ? 'was' : 'were'} skipped:\n\n${list}${more}`
+        );
+      }
+    }, 2500);
   });
 
   // ============ Helpers ============

@@ -1371,26 +1371,155 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download-all', $uri, 
 
     $safeName = preg_replace('/[^a-zA-Z0-9 .\-]/', '', $gallery['name']);
     $zipName = $requestedPart > 0 ? "$safeName - Part $requestedPart.zip" : "$safeName.zip";
-    $tmpFile = tempnam(sys_get_temp_dir(), 'zip');
 
-    $zip = new ZipArchive();
-    $zip->open($tmpFile, ZipArchive::OVERWRITE);
+    // Build entry list: only files that exist on disk
+    $entries = [];
     foreach ($items as $v) {
         $filePath = UPLOADS_DIR . '/' . $v['filename'];
-        if (file_exists($filePath)) {
-            $ext = pathinfo($v['filename'], PATHINFO_EXTENSION);
-            $name = preg_replace('/[^a-zA-Z0-9 .\-]/', '', $v['title']) . '.' . $ext;
-            $zip->addFile($filePath, $name);
-        }
+        if (!file_exists($filePath)) continue;
+        $ext = pathinfo($v['filename'], PATHINFO_EXTENSION);
+        $entries[] = [
+            'path' => $filePath,
+            'name' => preg_replace('/[^a-zA-Z0-9 .\-]/', '', $v['title']) . '.' . $ext,
+            'size' => filesize($filePath),
+        ];
     }
-    $zip->close();
+
+    streamStoreZip($entries, $zipName);
+    exit;
+}
+
+// Stream a ZIP archive (STORE method, no compression, ZIP64-aware) directly to
+// the client. Pre-computes Content-Length so the browser shows real progress.
+// Photos and videos are already compressed — DEFLATE wastes CPU for ~0% gain
+// and forces buffering the whole archive to a temp file before sending a byte.
+function streamStoreZip(array $entries, string $zipName): void {
+    // Decide per-entry ZIP64 (size or running offset crosses 4GB) and tally length
+    $offset = 0;
+    $cdLen = 0;
+    foreach ($entries as &$e) {
+        $size = $e['size'];
+        $needsZip64 = $size >= 0xFFFFFFFF || $offset >= 0xFFFFFFFF;
+        $e['zip64'] = $needsZip64;
+        $e['offset'] = $offset;
+        $nameLen = strlen($e['name']);
+        $localHdr = 30 + $nameLen + ($needsZip64 ? 20 : 0);
+        $dd = $needsZip64 ? 24 : 16;
+        $offset += $localHdr + $size + $dd;
+        $cdLen += 46 + $nameLen + ($needsZip64 ? 28 : 0);
+    }
+    unset($e);
+
+    $cdOffset = $offset;
+    $totalEntries = count($entries);
+    $needCdZip64 = $totalEntries > 0xFFFF || $cdOffset >= 0xFFFFFFFF || $cdLen >= 0xFFFFFFFF;
+    $totalLen = $cdOffset + $cdLen + ($needCdZip64 ? 56 + 20 : 0) + 22;
+
+    // Defeat all forms of buffering and timeouts
+    @set_time_limit(0);
+    @ini_set('zlib.output_compression', 'Off');
+    @ini_set('output_buffering', 'Off');
+    @ini_set('implicit_flush', '1');
+    while (ob_get_level()) ob_end_clean();
+    ignore_user_abort(false);
 
     header('Content-Type: application/zip');
     header('Content-Disposition: attachment; filename="' . $zipName . '"');
-    header('Content-Length: ' . filesize($tmpFile));
-    readfile($tmpFile);
-    unlink($tmpFile);
-    exit;
+    header('Content-Length: ' . $totalLen);
+    header('Content-Transfer-Encoding: binary');
+    header('Cache-Control: no-store');
+    header('X-Accel-Buffering: no');
+
+    $cd = '';
+    foreach ($entries as $e) {
+        $name = $e['name'];
+        $nameLen = strlen($name);
+        $size = $e['size'];
+        $isZip64 = $e['zip64'];
+        $version = $isZip64 ? 45 : 20;
+        $sizeInHdr = $isZip64 ? 0xFFFFFFFF : 0; // 0 because data descriptor (GP bit 3) carries real values
+        $extraLen = $isZip64 ? 20 : 0;
+
+        // Local file header (GP flag 0x0008 = data descriptor follows; method 0 = STORE)
+        echo pack('VvvvvvVVVvv',
+            0x04034b50, $version, 0x0008, 0x0000,
+            0x0000, 0x0000,
+            0, $sizeInHdr, $sizeInHdr,
+            $nameLen, $extraLen
+        );
+        echo $name;
+        if ($isZip64) {
+            echo pack('vvPP', 0x0001, 16, 0, 0);
+        }
+        flush();
+
+        // Stream file body, computing CRC32 on the fly
+        $ctx = hash_init('crc32b');
+        $fp = fopen($e['path'], 'rb');
+        if ($fp === false) exit;
+        while (!feof($fp)) {
+            $buf = fread($fp, 262144);
+            if ($buf === false || $buf === '') break;
+            hash_update($ctx, $buf);
+            echo $buf;
+            if (connection_aborted()) { fclose($fp); exit; }
+        }
+        fclose($fp);
+        $crc32 = (int)hexdec(hash_final($ctx));
+        flush();
+
+        // Data descriptor
+        if ($isZip64) {
+            echo pack('VVPP', 0x08074b50, $crc32, $size, $size);
+        } else {
+            echo pack('VVVV', 0x08074b50, $crc32, $size, $size);
+        }
+
+        // Append central directory entry (kept in memory until end)
+        $sizeInCd = $isZip64 ? 0xFFFFFFFF : $size;
+        $offsetInCd = $isZip64 ? 0xFFFFFFFF : $e['offset'];
+        $cdExtraLen = $isZip64 ? 28 : 0;
+        $cd .= pack('VvvvvvvVVVvvvvvVV',
+            0x02014b50, 0x031E, $version, 0x0008, 0x0000,
+            0x0000, 0x0000,
+            $crc32, $sizeInCd, $sizeInCd,
+            $nameLen, $cdExtraLen, 0,
+            0, 0,
+            0,
+            $offsetInCd
+        );
+        $cd .= $name;
+        if ($isZip64) {
+            $cd .= pack('vv', 0x0001, 24);
+            $cd .= pack('PPP', $size, $size, $e['offset']);
+        }
+    }
+
+    echo $cd;
+
+    if ($needCdZip64) {
+        echo pack('VPvvVVPPPP',
+            0x06064b50, 44, 45, 45,
+            0, 0,
+            $totalEntries, $totalEntries,
+            $cdLen, $cdOffset
+        );
+        echo pack('VVPV',
+            0x07064b50, 0,
+            $cdOffset + $cdLen,
+            1
+        );
+    }
+
+    $eocdEntries = $totalEntries > 0xFFFF ? 0xFFFF : $totalEntries;
+    $eocdCdSize = $cdLen > 0xFFFFFFFF ? 0xFFFFFFFF : $cdLen;
+    $eocdCdOffset = $cdOffset > 0xFFFFFFFF ? 0xFFFFFFFF : $cdOffset;
+    echo pack('VvvvvVVv',
+        0x06054b50, 0, 0,
+        $eocdEntries, $eocdEntries,
+        $eocdCdSize, $eocdCdOffset, 0
+    );
+    flush();
 }
 
 // Send review

@@ -637,149 +637,6 @@ document.addEventListener('DOMContentLoaded', () => {
     return picked;
   }
 
-  // Pick the next available subfolder name inside a directory handle. If
-  // `galleryBase` already exists in the parent, try "Name (2)", "Name (3)",
-  // and so on — same convention the browser uses for duplicate downloads.
-  async function createUniqueSubdir(parentHandle, galleryBase) {
-    let name = galleryBase;
-    let n = 1;
-    while (true) {
-      try {
-        await parentHandle.getDirectoryHandle(name);
-        n++;
-        name = `${galleryBase} (${n})`;
-      } catch (e) {
-        if (e.name === 'NotFoundError') break;
-        throw e;
-      }
-    }
-    const handle = await parentHandle.getDirectoryHandle(name, { create: true });
-    return { handle, name };
-  }
-
-  // Fetch one file and stream it into a FileSystemWritableFileStream. Called
-  // with concurrency; writes are independent per file (each entry has its
-  // own writable stream), so there's no offset bookkeeping.
-  async function fetchFileToDir(entry, dirHandle, signal, onBytes) {
-    const resp = await fetch(entry.url, { signal });
-    if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
-    const fileHandle = await dirHandle.getFileHandle(entry.name, { create: true });
-    const stream = await fileHandle.createWritable();
-    try {
-      if (resp.body) {
-        const reader = resp.body.getReader();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          await stream.write(value);
-          if (onBytes) onBytes(value.length);
-        }
-      } else {
-        const buf = new Uint8Array(await resp.arrayBuffer());
-        await stream.write(buf);
-        if (onBytes) onBytes(buf.length);
-      }
-      await stream.close();
-    } catch (e) {
-      try { await stream.abort(); } catch (_) {}
-      throw e;
-    }
-  }
-
-  async function downloadToFolder({ entries, galleryBase, controller }) {
-    let parentHandle;
-    try {
-      // Start the picker in the Downloads folder so users don't land in
-      // their home root, which Chrome blocks with "contains system files".
-      parentHandle = await window.showDirectoryPicker({ mode: 'readwrite', startIn: 'downloads' });
-    } catch (e) {
-      if (e.name === 'AbortError') return { cancelled: true };
-      throw e;
-    }
-
-    const { handle: galleryDir, name: folderName } = await createUniqueSubdir(parentHandle, galleryBase);
-    downloadModalMsg.textContent = `Saving to \u201c${folderName}\u201d\u2026`;
-
-    const skipped = [];
-    let done = 0;
-    const concurrency = 6;
-    for (let i = 0; i < entries.length; i += concurrency) {
-      if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
-      const batch = entries.slice(i, i + concurrency);
-      const results = await Promise.all(batch.map(async (entry) => {
-        try {
-          await fetchFileToDir(entry, galleryDir, controller.signal, onChunkBytes);
-          return { entry };
-        } catch (e) {
-          if (e.name === 'AbortError') throw e;
-          return { entry, error: e };
-        }
-      }));
-      for (const r of results) {
-        if (r.error) {
-          skipped.push({ name: r.entry.name, reason: r.error.message || String(r.error) });
-        }
-        done++;
-        onFileDone(done, entries.length, progressState.bytes);
-      }
-    }
-
-    return { cancelled: false, skipped, folderName };
-  }
-
-  async function downloadAsZip({ entries, galleryBase, controller, suggestedName }) {
-    // Zip stream to disk via File System Access when we can; Blob fallback
-    // otherwise.
-    let fileStream = null;
-    if (window.showSaveFilePicker) {
-      try {
-        const fh = await window.showSaveFilePicker({
-          suggestedName,
-          types: [{ description: 'Zip archive', accept: { 'application/zip': ['.zip'] } }],
-        });
-        fileStream = await fh.createWritable();
-      } catch (e) {
-        if (e.name === 'AbortError') return { cancelled: true };
-      }
-    }
-
-    const chunks = fileStream ? null : [];
-    const write = fileStream
-      ? async (buf) => { await fileStream.write(buf); }
-      : async (buf) => { chunks.push(buf); };
-
-    let result;
-    try {
-      result = await ZipWriter.zipToWriter({
-        entries,
-        write,
-        concurrency: 6,
-        signal: controller.signal,
-        onProgress: onFileDone,
-        onBytes: onChunkBytes,
-      });
-    } catch (e) {
-      if (fileStream) { try { await fileStream.abort(); } catch (_) {} }
-      throw e;
-    }
-
-    if (fileStream) {
-      try { await fileStream.close(); } catch (_) {}
-    } else {
-      const blob = new Blob(chunks, { type: 'application/zip' });
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = suggestedName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
-    }
-
-    return { cancelled: false, skipped: result.skipped };
-  }
-
   downloadAllBtn.addEventListener('click', async () => {
     if (downloadActive) return;
     if (!galleryData || !galleryData.videos) return;
@@ -800,41 +657,86 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     const galleryBase = sanitizeName(galleryData.gallery.name, 'gallery');
+    const suggestedName = galleryBase + '.zip';
 
     setDownloadActive(true);
     openDownloadModal(
       'Downloading ' + mediaItems.length + ' photos',
-      'Fetching files\u2026'
+      'Fetching files and packaging your zip\u2026'
     );
     setProgressTotals(mediaItems.length);
 
     const controller = new AbortController();
     downloadAbort = controller;
 
-    let outcome;
-    const useFolder = typeof window.showDirectoryPicker === 'function';
+    // Stream to disk via File System Access when we can; Blob fallback
+    // otherwise. We skip showSaveFilePicker on macOS + Chromium-family
+    // browsers because iCloud Drive sync on Desktop/Documents causes the
+    // picker to reject saves into the user's usual folders. The Blob
+    // fallback routes through the browser's normal download mechanism,
+    // which always works.
+    let fileStream = null;
+    const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || '');
+    if (window.showSaveFilePicker && !isMac) {
+      try {
+        const fh = await window.showSaveFilePicker({
+          suggestedName,
+          types: [{ description: 'Zip archive', accept: { 'application/zip': ['.zip'] } }],
+        });
+        fileStream = await fh.createWritable();
+      } catch (e) {
+        if (e.name === 'AbortError') { hideDownloadModal(); return; }
+        // Any other error → fall through to Blob path
+        fileStream = null;
+      }
+    }
+
+    const chunks = fileStream ? null : [];
+    const write = fileStream
+      ? async (buf) => { await fileStream.write(buf); }
+      : async (buf) => { chunks.push(buf); };
+
+    let result;
     try {
-      outcome = useFolder
-        ? await downloadToFolder({ entries, galleryBase, controller })
-        : await downloadAsZip({ entries, galleryBase, controller, suggestedName: galleryBase + '.zip' });
+      result = await ZipWriter.zipToWriter({
+        entries,
+        write,
+        concurrency: 6,
+        signal: controller.signal,
+        onProgress: onFileDone,
+        onBytes: onChunkBytes,
+      });
     } catch (e) {
+      if (fileStream) { try { await fileStream.abort(); } catch (_) {} }
       if (e.name === 'AbortError') { hideDownloadModal(); return; }
       hideDownloadModal();
       alert('Download failed: ' + (e.message || e));
       return;
     }
 
-    if (outcome.cancelled) { hideDownloadModal(); return; }
+    if (fileStream) {
+      try { await fileStream.close(); } catch (_) {}
+    } else {
+      // Trigger native browser download — lands in the default Downloads
+      // folder with no picker, no iCloud Drive permission issues.
+      const blob = new Blob(chunks, { type: 'application/zip' });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = suggestedName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    }
 
     downloadModalTitle.textContent = 'Download complete';
-    downloadModalMsg.textContent = useFolder
-      ? `Saved ${mediaItems.length - outcome.skipped.length} file${(mediaItems.length - outcome.skipped.length) === 1 ? '' : 's'} to \u201c${outcome.folderName}\u201d.`
-      : 'Your zip was saved.';
+    downloadModalMsg.textContent = 'Your zip was saved.';
     downloadModalDetail.textContent = '';
     downloadProgressBar.style.width = '100%';
     downloadCancelBtn.style.display = 'none';
 
-    const skipped = outcome.skipped || [];
+    const skipped = (result && result.skipped) || [];
     setTimeout(() => {
       hideDownloadModal();
       if (skipped.length > 0) {

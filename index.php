@@ -272,13 +272,15 @@ function generatePhotoProxy($srcPath, $proxyPath) {
     return true;
 }
 
-function generateVideoThumbnail($videoPath, $thumbPath, $seekTime = '1') {
+function generateVideoThumbnail($videoPath, $thumbPath, $seekTime = '1', &$errorOutput = null) {
     global $FFMPEG;
+    // scale: fit within 640 wide, preserve aspect ratio; -2 snaps to even height
     $cmd = escapeshellcmd($FFMPEG) . ' -ss ' . escapeshellarg($seekTime)
         . ' -i ' . escapeshellarg($videoPath)
-        . ' -frames:v 1 -vf scale=320:180 -pix_fmt yuvj420p -threads 1 -strict unofficial -q:v 2 -y '
+        . ' -frames:v 1 -vf "scale=\'min(640,iw)\':-2" -pix_fmt yuvj420p -threads 1 -q:v 2 -y '
         . escapeshellarg($thumbPath) . ' 2>&1';
     exec($cmd, $output, $ret);
+    $errorOutput = implode("\n", $output);
     return file_exists($thumbPath) && filesize($thumbPath) >= 100;
 }
 
@@ -860,8 +862,16 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/thu
     $thumbPath = THUMBS_DIR . '/' . $thumbFilename;
     $seekTime = max(0, (float)($input['timestamp'] ?? 0));
 
-    if (!generateVideoThumbnail($videoPath, $thumbPath, (string)$seekTime)) {
-        respondError('Failed to extract thumbnail', 500);
+    $ffmpegOutput = '';
+    if (!generateVideoThumbnail($videoPath, $thumbPath, (string)$seekTime, $ffmpegOutput)) {
+        global $FFMPEG;
+        // Surface enough info that the admin can diagnose without shelling in.
+        $tail = trim(implode("\n", array_slice(explode("\n", $ffmpegOutput), -15)));
+        $detail = "ffmpeg binary: $FFMPEG\n" . ($tail !== '' ? "Last ffmpeg output:\n$tail" : 'No output from ffmpeg');
+        respond([
+            'error'  => 'Failed to extract thumbnail',
+            'detail' => $detail,
+        ], 500);
     }
 
     $video['thumbnail'] = $thumbFilename;

@@ -644,6 +644,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const mediaItems = galleryData.videos.filter(v => v.type === 'photo' || v.type === 'video');
     if (mediaItems.length === 0) return;
 
+    const photoCount = mediaItems.filter(v => v.type === 'photo').length;
+    const videoCount = mediaItems.length - photoCount;
+    const itemNoun = videoCount === 0 ? 'photo' : (photoCount === 0 ? 'video' : 'file');
+    const itemNounPlural = itemNoun + 's';
+
     const usedNames = new Set();
     const entries = mediaItems.map(item => {
       const ext = (item.filename.match(/\.([^.]+)$/) || [, ''])[1];
@@ -661,7 +666,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     setDownloadActive(true);
     openDownloadModal(
-      'Downloading ' + mediaItems.length + ' photos',
+      `Downloading ${mediaItems.length} ${mediaItems.length === 1 ? itemNoun : itemNounPlural}`,
       'Fetching files and packaging your zip\u2026'
     );
     setProgressTotals(mediaItems.length);

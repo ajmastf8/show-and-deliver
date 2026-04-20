@@ -637,55 +637,107 @@ document.addEventListener('DOMContentLoaded', () => {
     return picked;
   }
 
-  downloadAllBtn.addEventListener('click', async () => {
-    if (downloadActive) return;
-    if (!galleryData || !galleryData.videos) return;
+  // Pick the next available subfolder name inside a directory handle. If
+  // `galleryBase` already exists in the parent, try "Name (2)", "Name (3)",
+  // and so on — same convention the browser uses for duplicate downloads.
+  async function createUniqueSubdir(parentHandle, galleryBase) {
+    let name = galleryBase;
+    let n = 1;
+    while (true) {
+      try {
+        await parentHandle.getDirectoryHandle(name);
+        n++;
+        name = `${galleryBase} (${n})`;
+      } catch (e) {
+        if (e.name === 'NotFoundError') break;
+        throw e;
+      }
+    }
+    const handle = await parentHandle.getDirectoryHandle(name, { create: true });
+    return { handle, name };
+  }
 
-    // Build entry list from already-loaded gallery data
-    const mediaItems = galleryData.videos.filter(v => v.type === 'photo' || v.type === 'video');
-    if (mediaItems.length === 0) return;
+  // Fetch one file and stream it into a FileSystemWritableFileStream. Called
+  // with concurrency; writes are independent per file (each entry has its
+  // own writable stream), so there's no offset bookkeeping.
+  async function fetchFileToDir(entry, dirHandle, signal, onBytes) {
+    const resp = await fetch(entry.url, { signal });
+    if (!resp.ok) throw new Error(`Server returned ${resp.status}`);
+    const fileHandle = await dirHandle.getFileHandle(entry.name, { create: true });
+    const stream = await fileHandle.createWritable();
+    try {
+      if (resp.body) {
+        const reader = resp.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          await stream.write(value);
+          if (onBytes) onBytes(value.length);
+        }
+      } else {
+        const buf = new Uint8Array(await resp.arrayBuffer());
+        await stream.write(buf);
+        if (onBytes) onBytes(buf.length);
+      }
+      await stream.close();
+    } catch (e) {
+      try { await stream.abort(); } catch (_) {}
+      throw e;
+    }
+  }
 
-    const usedNames = new Set();
-    const entries = mediaItems.map(item => {
-      const ext = (item.filename.match(/\.([^.]+)$/) || [, ''])[1];
-      const base = sanitizeName(item.title, sanitizeName(item.filename.replace(/\.[^.]+$/, ''), 'file'));
-      const name = dedupeName(base + (ext ? '.' + ext : ''), usedNames);
-      return {
-        name,
-        url: `/api/proofing/${token}/download/${item.id}`,
-        mtime: Date.now(),
-      };
-    });
+  async function downloadToFolder({ entries, galleryBase, controller }) {
+    let parentHandle;
+    try {
+      parentHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    } catch (e) {
+      if (e.name === 'AbortError') return { cancelled: true };
+      throw e;
+    }
 
-    const galleryBase = sanitizeName(galleryData.gallery.name, 'gallery');
-    const suggestedName = galleryBase + '.zip';
+    const { handle: galleryDir, name: folderName } = await createUniqueSubdir(parentHandle, galleryBase);
+    downloadModalMsg.textContent = `Saving to \u201c${folderName}\u201d\u2026`;
 
-    setDownloadActive(true);
-    openDownloadModal(
-      'Downloading ' + mediaItems.length + ' photos',
-      'Fetching files and packaging your zip\u2026'
-    );
-    setProgressTotals(mediaItems.length);
+    const skipped = [];
+    let done = 0;
+    const concurrency = 6;
+    for (let i = 0; i < entries.length; i += concurrency) {
+      if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      const batch = entries.slice(i, i + concurrency);
+      const results = await Promise.all(batch.map(async (entry) => {
+        try {
+          await fetchFileToDir(entry, galleryDir, controller.signal, onChunkBytes);
+          return { entry };
+        } catch (e) {
+          if (e.name === 'AbortError') throw e;
+          return { entry, error: e };
+        }
+      }));
+      for (const r of results) {
+        if (r.error) {
+          skipped.push({ name: r.entry.name, reason: r.error.message || String(r.error) });
+        }
+        done++;
+        onFileDone(done, entries.length, progressState.bytes);
+      }
+    }
 
-    const controller = new AbortController();
-    downloadAbort = controller;
+    return { cancelled: false, skipped, folderName };
+  }
 
-    // On Chrome/Edge we can stream straight to disk via File System Access
-    // API (no memory buffering, works for arbitrary-size galleries). Elsewhere
-    // we accumulate into a Blob — fine for typical desktop use.
+  async function downloadAsZip({ entries, galleryBase, controller, suggestedName }) {
+    // Zip stream to disk via File System Access when we can; Blob fallback
+    // otherwise.
     let fileStream = null;
-    let fileHandle = null;
     if (window.showSaveFilePicker) {
       try {
-        fileHandle = await window.showSaveFilePicker({
+        const fh = await window.showSaveFilePicker({
           suggestedName,
           types: [{ description: 'Zip archive', accept: { 'application/zip': ['.zip'] } }],
         });
-        fileStream = await fileHandle.createWritable();
+        fileStream = await fh.createWritable();
       } catch (e) {
-        if (e.name === 'AbortError') { hideDownloadModal(); return; }
-        // Permission denied or unsupported — fall through to Blob path
-        fileStream = null;
+        if (e.name === 'AbortError') return { cancelled: true };
       }
     }
 
@@ -706,18 +758,12 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     } catch (e) {
       if (fileStream) { try { await fileStream.abort(); } catch (_) {} }
-      if (e.name === 'AbortError') { hideDownloadModal(); return; }
-      hideDownloadModal();
-      alert('Download failed: ' + (e.message || e));
-      return;
+      throw e;
     }
 
     if (fileStream) {
       try { await fileStream.close(); } catch (_) {}
-      downloadModalTitle.textContent = 'Download complete';
-      downloadModalMsg.textContent = 'Your zip was saved.';
     } else {
-      // Trigger a save via a Blob URL
       const blob = new Blob(chunks, { type: 'application/zip' });
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -727,16 +773,66 @@ document.addEventListener('DOMContentLoaded', () => {
       a.click();
       document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
-      downloadModalTitle.textContent = 'Download ready';
-      downloadModalMsg.textContent = 'Your browser is saving the zip.';
     }
+
+    return { cancelled: false, skipped: result.skipped };
+  }
+
+  downloadAllBtn.addEventListener('click', async () => {
+    if (downloadActive) return;
+    if (!galleryData || !galleryData.videos) return;
+
+    const mediaItems = galleryData.videos.filter(v => v.type === 'photo' || v.type === 'video');
+    if (mediaItems.length === 0) return;
+
+    const usedNames = new Set();
+    const entries = mediaItems.map(item => {
+      const ext = (item.filename.match(/\.([^.]+)$/) || [, ''])[1];
+      const base = sanitizeName(item.title, sanitizeName(item.filename.replace(/\.[^.]+$/, ''), 'file'));
+      const name = dedupeName(base + (ext ? '.' + ext : ''), usedNames);
+      return {
+        name,
+        url: `/api/proofing/${token}/download/${item.id}`,
+        mtime: Date.now(),
+      };
+    });
+
+    const galleryBase = sanitizeName(galleryData.gallery.name, 'gallery');
+
+    setDownloadActive(true);
+    openDownloadModal(
+      'Downloading ' + mediaItems.length + ' photos',
+      'Fetching files\u2026'
+    );
+    setProgressTotals(mediaItems.length);
+
+    const controller = new AbortController();
+    downloadAbort = controller;
+
+    let outcome;
+    const useFolder = typeof window.showDirectoryPicker === 'function';
+    try {
+      outcome = useFolder
+        ? await downloadToFolder({ entries, galleryBase, controller })
+        : await downloadAsZip({ entries, galleryBase, controller, suggestedName: galleryBase + '.zip' });
+    } catch (e) {
+      if (e.name === 'AbortError') { hideDownloadModal(); return; }
+      hideDownloadModal();
+      alert('Download failed: ' + (e.message || e));
+      return;
+    }
+
+    if (outcome.cancelled) { hideDownloadModal(); return; }
+
+    downloadModalTitle.textContent = 'Download complete';
+    downloadModalMsg.textContent = useFolder
+      ? `Saved ${mediaItems.length - outcome.skipped.length} file${(mediaItems.length - outcome.skipped.length) === 1 ? '' : 's'} to \u201c${outcome.folderName}\u201d.`
+      : 'Your zip was saved.';
     downloadModalDetail.textContent = '';
     downloadProgressBar.style.width = '100%';
     downloadCancelBtn.style.display = 'none';
 
-    // Surface any files we couldn't fetch after the modal dismisses, so the
-    // user knows their zip may be missing entries.
-    const skipped = (result && result.skipped) || [];
+    const skipped = outcome.skipped || [];
     setTimeout(() => {
       hideDownloadModal();
       if (skipped.length > 0) {

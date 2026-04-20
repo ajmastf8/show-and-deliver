@@ -712,7 +712,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const parts = info.chunks.map(c =>
         `Part ${c.part}: ${c.fileCount} files (${formatBytes(c.size)})`
       ).join('\n');
-      const msg = `This gallery is too large for a single download.\n\n${parts}\n\nDownload all parts?`;
+      const msg =
+        `This gallery will be split into ${info.chunks.length} parts for a reliable download:\n\n` +
+        `${parts}\n\nDownload all parts now?`;
       if (!confirm(msg)) return;
 
       downloadCancelled = false;

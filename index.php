@@ -1294,7 +1294,10 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download/{videoId}', 
 
 // Download all as ZIP
 // Download info — returns file count, total size, and chunk breakdown
-define('CHUNK_MAX_BYTES', 2 * 1024 * 1024 * 1024); // 2GB per chunk
+// 800MB per chunk. LiteSpeed on shared cPanel hosts caps dynamic response
+// bodies around 1GB and kills scripts at the LSAPI request-time limit
+// (typically 300s). Keeping chunks well below both avoids truncated zips.
+define('CHUNK_MAX_BYTES', 800 * 1024 * 1024);
 
 if ($method === 'GET' && matchRoute('/api/proofing/{token}/download-info', $uri, $params)) {
     $gallery = getProofingGallery($params['token']);

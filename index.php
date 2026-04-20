@@ -142,9 +142,26 @@ function generateToken($length = 12) {
 }
 
 function requireAuth() {
-    if (empty($_SESSION['authenticated'])) {
-        respondError('Unauthorized', 401);
+    // Browser path: session cookie set by /api/auth/login.
+    if (!empty($_SESSION['authenticated'])) return;
+
+    // Programmatic path: Authorization: Bearer <API_TOKEN>. Only active when
+    // API_TOKEN is defined in .env (empty value disables the Bearer path).
+    $configured = env('API_TOKEN', '');
+    if ($configured !== '') {
+        $hdr = $_SERVER['HTTP_AUTHORIZATION'] ?? $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        if (stripos($hdr, 'Bearer ') === 0) {
+            $presented = trim(substr($hdr, 7));
+            if (hash_equals($configured, $presented)) {
+                // Cheap-to-brute-force-from-LAN mitigations: one shared IP
+                // burst per minute should not be able to spam the admin API.
+                rateLimitCheck('api:' . ($_SERVER['REMOTE_ADDR'] ?? 'unknown'), 60, 60);
+                return;
+            }
+        }
     }
+
+    respondError('Unauthorized', 401);
 }
 
 function rateLimitCheck($key, $max, $windowSec) {
@@ -772,32 +789,21 @@ if ($method === 'GET' && matchRoute('/api/admin/galleries/{gid}/videos', $uri, $
     respond(readGalleryVideos($params['gid']));
 }
 
-// Upload
-if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/videos', $uri, $params)) {
-    requireAuth();
-    if (empty($_FILES['video'])) respondError('No file uploaded', 400);
-
-    $file = $_FILES['video'];
-    if ($file['error'] !== UPLOAD_ERR_OK) respondError('Upload error: ' . $file['error'], 400);
-
-    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-    if (!in_array($ext, MEDIA_EXTS)) respondError('Unsupported file type', 400);
-
-    $safeName = safeFilename($file['name']);
-    $destName = time() . '-' . $safeName;
+// Shared item-creation helper. Given a file already saved under UPLOADS_DIR
+// and its stored filename, probe metadata, generate thumbnail/proxy for
+// photos, append to the gallery's videos.json, and return the created item.
+// Used by both the multipart upload endpoint and the chunked-upload finalize.
+function registerGalleryItem(string $gid, string $destName, string $title): array {
     $destPath = UPLOADS_DIR . '/' . $destName;
-    move_uploaded_file($file['tmp_name'], $destPath);
-
     $isPhoto = isImageFile($destName);
     $item = [
         'id' => generateId($isPhoto ? 'p_' : 'v_'),
         'type' => $isPhoto ? 'photo' : 'video',
-        'title' => $_POST['title'] ?? 'Untitled',
+        'title' => $title !== '' ? $title : 'Untitled',
         'filename' => $destName,
         'visible' => true,
         'createdAt' => date('c'),
     ];
-
     if ($isPhoto) {
         $meta = probeImage($destPath);
         if ($meta) { $item['width'] = $meta['width']; $item['height'] = $meta['height']; }
@@ -815,11 +821,202 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/videos', $uri, 
             $item['height'] = $meta['height'];
         }
     }
-
-    $videos = readGalleryVideos($params['gid']);
+    $videos = readGalleryVideos($gid);
     $videos[] = $item;
-    writeGalleryVideos($params['gid'], $videos);
+    writeGalleryVideos($gid, $videos);
+    return $item;
+}
+
+// Upload (multipart, single-request; used by the web admin for files that
+// fit under post_max_size). The shared registerGalleryItem() helper does
+// the heavy lifting so the chunked-upload path below stays consistent.
+if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/videos', $uri, $params)) {
+    requireAuth();
+    if (empty($_FILES['video'])) respondError('No file uploaded', 400);
+
+    $file = $_FILES['video'];
+    if ($file['error'] !== UPLOAD_ERR_OK) respondError('Upload error: ' . $file['error'], 400);
+
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    if (!in_array($ext, MEDIA_EXTS)) respondError('Unsupported file type', 400);
+
+    $safeName = safeFilename($file['name']);
+    $destName = time() . '-' . $safeName;
+    $destPath = UPLOADS_DIR . '/' . $destName;
+    move_uploaded_file($file['tmp_name'], $destPath);
+
+    $item = registerGalleryItem($params['gid'], $destName, $_POST['title'] ?? 'Untitled');
     respond($item);
+}
+
+// ============================================================
+// CHUNKED / RESUMABLE UPLOAD
+// ============================================================
+//
+// Lets a CLI client push multi-GB files past the 500 MB post_max_size by
+// streaming them in contiguous chunks. Flow:
+//
+//   POST /api/admin/uploads        -> { uploadId, chunkMaxBytes }
+//   PUT  /api/admin/uploads/{id}/chunk   (Content-Range: bytes X-Y/TOTAL)
+//   POST /api/admin/uploads/{id}/finalize  { galleryId, title } -> item
+//   DELETE /api/admin/uploads/{id} (cancel)
+//
+// Temp files live under site-data/uploads/.tmp/{id}.part alongside a tiny
+// {id}.json metadata record. Sessions older than 24 h are swept on the next
+// initiate so interrupted uploads don't pile up on disk.
+
+define('UPLOAD_TMP_DIR', UPLOADS_DIR . '/.tmp');
+define('UPLOAD_TTL_SECONDS', 24 * 60 * 60);
+define('UPLOAD_CHUNK_MAX_BYTES', 50 * 1024 * 1024);
+if (!is_dir(UPLOAD_TMP_DIR)) @mkdir(UPLOAD_TMP_DIR, 0755, true);
+
+function cleanupStaleUploads(): void {
+    $cutoff = time() - UPLOAD_TTL_SECONDS;
+    foreach (glob(UPLOAD_TMP_DIR . '/*.json') ?: [] as $metaFile) {
+        if (@filemtime($metaFile) < $cutoff) {
+            $base = substr($metaFile, 0, -5);
+            @unlink($base . '.part');
+            @unlink($metaFile);
+        }
+    }
+}
+
+function readUploadMeta(string $uploadId): ?array {
+    if (!preg_match('/^[a-f0-9]{16,64}$/', $uploadId)) return null;
+    $path = UPLOAD_TMP_DIR . '/' . $uploadId . '.json';
+    if (!file_exists($path)) return null;
+    $data = json_decode(@file_get_contents($path), true);
+    return is_array($data) ? $data : null;
+}
+
+function writeUploadMeta(string $uploadId, array $meta): void {
+    @file_put_contents(UPLOAD_TMP_DIR . '/' . $uploadId . '.json', json_encode($meta));
+}
+
+// Initiate: server validates metadata, creates an empty .part file, returns
+// an upload id. Client keeps this id for subsequent chunks + finalize.
+if ($method === 'POST' && $uri === '/api/admin/uploads') {
+    requireAuth();
+    cleanupStaleUploads();
+    $input = getInput();
+    $filename = trim((string)($input['filename'] ?? ''));
+    $totalSize = (int)($input['totalSize'] ?? 0);
+    $contentType = (string)($input['contentType'] ?? '');
+
+    if ($filename === '') respondError('filename is required', 400);
+    if ($totalSize <= 0) respondError('totalSize must be a positive integer', 400);
+
+    $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    if (!in_array($ext, MEDIA_EXTS)) respondError('Unsupported file type', 400);
+
+    $uploadId = bin2hex(random_bytes(16));
+    $partPath = UPLOAD_TMP_DIR . '/' . $uploadId . '.part';
+    $fh = fopen($partPath, 'wb');
+    if (!$fh) respondError('Could not create upload session', 500);
+    fclose($fh);
+
+    writeUploadMeta($uploadId, [
+        'filename'    => $filename,
+        'totalSize'   => $totalSize,
+        'contentType' => $contentType,
+        'received'    => 0,
+        'createdAt'   => date('c'),
+    ]);
+
+    respond([
+        'uploadId'      => $uploadId,
+        'chunkMaxBytes' => UPLOAD_CHUNK_MAX_BYTES,
+        'totalSize'     => $totalSize,
+    ]);
+}
+
+// Append one chunk. `Content-Range: bytes X-Y/TOTAL` — X must equal what
+// we've received so far (contiguous); Y-X+1 must equal the body length.
+if ($method === 'PUT' && matchRoute('/api/admin/uploads/{uploadId}/chunk', $uri, $params)) {
+    requireAuth();
+    $meta = readUploadMeta($params['uploadId']);
+    if (!$meta) respondError('Upload session not found', 404);
+
+    $range = $_SERVER['HTTP_CONTENT_RANGE'] ?? '';
+    if (!preg_match('#^bytes\s+(\d+)-(\d+)/(\d+)$#', $range, $m)) {
+        respondError('Content-Range header required (e.g. "bytes 0-1048575/5242880")', 400);
+    }
+    $start = (int)$m[1];
+    $end   = (int)$m[2];
+    $total = (int)$m[3];
+
+    if ($total !== (int)$meta['totalSize']) respondError('Content-Range total does not match session totalSize', 400);
+    if ($start !== (int)$meta['received']) respondError('Chunk out of order; expected start=' . $meta['received'], 409);
+    if ($end < $start || $end >= $total) respondError('Invalid Content-Range', 400);
+
+    $expectedLen = $end - $start + 1;
+    if ($expectedLen > UPLOAD_CHUNK_MAX_BYTES) {
+        respondError('Chunk exceeds chunkMaxBytes', 413);
+    }
+
+    $body = file_get_contents('php://input');
+    if ($body === false) respondError('Could not read request body', 500);
+    if (strlen($body) !== $expectedLen) {
+        respondError('Chunk length ' . strlen($body) . ' does not match Content-Range ' . $expectedLen, 400);
+    }
+
+    $partPath = UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.part';
+    $fh = fopen($partPath, 'ab');
+    if (!$fh) respondError('Could not open upload file', 500);
+    $written = fwrite($fh, $body);
+    fclose($fh);
+    if ($written !== $expectedLen) respondError('Short write appending chunk', 500);
+
+    $meta['received'] = $end + 1;
+    writeUploadMeta($params['uploadId'], $meta);
+
+    respond([
+        'received'  => $meta['received'],
+        'totalSize' => (int)$meta['totalSize'],
+        'complete'  => $meta['received'] >= (int)$meta['totalSize'],
+    ]);
+}
+
+// Finalize: move the assembled .part file into uploads/ and attach it to a
+// gallery using the shared registerGalleryItem() helper.
+if ($method === 'POST' && matchRoute('/api/admin/uploads/{uploadId}/finalize', $uri, $params)) {
+    requireAuth();
+    $meta = readUploadMeta($params['uploadId']);
+    if (!$meta) respondError('Upload session not found', 404);
+    if ((int)$meta['received'] !== (int)$meta['totalSize']) {
+        respondError('Upload incomplete: received ' . $meta['received'] . ' of ' . $meta['totalSize'] . ' bytes', 400);
+    }
+
+    $input = getInput();
+    $gid = trim((string)($input['galleryId'] ?? ''));
+    $title = trim((string)($input['title'] ?? 'Untitled'));
+    if ($gid === '') respondError('galleryId is required', 400);
+
+    $galleries = readGalleries();
+    $gallery = null;
+    foreach ($galleries as $g) { if ($g['id'] === $gid) { $gallery = $g; break; } }
+    if (!$gallery) respondError('Gallery not found', 404);
+
+    $partPath = UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.part';
+    if (!file_exists($partPath)) respondError('Upload payload missing on disk', 500);
+
+    $safeName = safeFilename($meta['filename']);
+    $destName = time() . '-' . $safeName;
+    $destPath = UPLOADS_DIR . '/' . $destName;
+    if (!rename($partPath, $destPath)) respondError('Could not move assembled file into uploads/', 500);
+    @unlink(UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.json');
+
+    $item = registerGalleryItem($gid, $destName, $title);
+    respond($item);
+}
+
+// Cancel an in-progress upload.
+if ($method === 'DELETE' && matchRoute('/api/admin/uploads/{uploadId}', $uri, $params)) {
+    requireAuth();
+    if (!preg_match('/^[a-f0-9]{16,64}$/', $params['uploadId'])) respondError('Invalid upload id', 400);
+    @unlink(UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.part');
+    @unlink(UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.json');
+    respond(['ok' => true]);
 }
 
 // Update title/visibility

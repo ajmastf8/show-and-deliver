@@ -844,7 +844,6 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}', $
 // Generate thumbnail (video only)
 if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/thumbnail', $uri, $params)) {
     requireAuth();
-    $input = getInput();
     $videos = readGalleryVideos($params['gid']);
     $video = null;
     foreach ($videos as &$v) {
@@ -853,25 +852,28 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/thu
     unset($v);
     if (!$video) respondError('Not found', 404);
     if (($video['type'] ?? '') === 'photo') respondError('Photo thumbnails are generated automatically', 400);
-    if (!isset($input['timestamp'])) respondError('No timestamp provided', 400);
 
-    $videoPath = UPLOADS_DIR . '/' . $video['filename'];
-    if (!file_exists($videoPath)) respondError('Video file not found on disk', 404);
+    // Client sends a raw JPEG (captured in the browser from a <canvas>) in
+    // the request body. No ffmpeg needed — photographer's shared host often
+    // doesn't have it. Expect image/jpeg or image/png.
+    $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
+    if (strpos($contentType, 'image/') !== 0) {
+        respondError('Expected an image in the request body (Content-Type: image/jpeg)', 400);
+    }
+    $body = file_get_contents('php://input');
+    if (!$body) respondError('No image data received', 400);
+    if (strlen($body) > 10 * 1024 * 1024) respondError('Thumbnail image too large (>10MB)', 400);
 
     $thumbFilename = $video['id'] . '.jpg';
     $thumbPath = THUMBS_DIR . '/' . $thumbFilename;
-    $seekTime = max(0, (float)($input['timestamp'] ?? 0));
+    if (file_put_contents($thumbPath, $body) === false) {
+        respondError('Could not write thumbnail to disk', 500);
+    }
 
-    $ffmpegOutput = '';
-    if (!generateVideoThumbnail($videoPath, $thumbPath, (string)$seekTime, $ffmpegOutput)) {
-        global $FFMPEG;
-        // Surface enough info that the admin can diagnose without shelling in.
-        $tail = trim(implode("\n", array_slice(explode("\n", $ffmpegOutput), -15)));
-        $detail = "ffmpeg binary: $FFMPEG\n" . ($tail !== '' ? "Last ffmpeg output:\n$tail" : 'No output from ffmpeg');
-        respond([
-            'error'  => 'Failed to extract thumbnail',
-            'detail' => $detail,
-        ], 500);
+    // Sanity check: did we actually get an image?
+    if (@getimagesize($thumbPath) === false) {
+        @unlink($thumbPath);
+        respondError('Uploaded data is not a valid image', 400);
     }
 
     $video['thumbnail'] = $thumbFilename;

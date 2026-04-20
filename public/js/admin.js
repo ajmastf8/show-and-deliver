@@ -1440,8 +1440,16 @@ AJ Mast`;
 
   async function processUploadQueue(items) {
     for (const item of items) {
-      const ok = await uploadFile(item.file, item.title, item.rowId);
-      if (ok) loadVideos();
+      const uploaded = await uploadFile(item.file, item.title, item.rowId);
+      if (uploaded) {
+        loadVideos();
+        // Newly uploaded videos get a browser-generated thumbnail from a
+        // random frame in the first 10s. Non-blocking: upload queue moves
+        // on while this runs in the background.
+        if (uploaded.type === 'video' && !uploaded.thumbnail) {
+          autoGenerateVideoThumbnail(uploaded).catch(() => { /* non-fatal */ });
+        }
+      }
     }
   }
 
@@ -1472,7 +1480,9 @@ AJ Mast`;
           fill.style.background = '#4caf50';
           status.textContent = 'Done';
           setTimeout(() => row.remove(), 2000);
-          resolve(true);
+          let uploaded = null;
+          try { uploaded = JSON.parse(xhr.responseText); } catch (_) {}
+          resolve(uploaded);
         } else {
           fill.style.background = '#e00';
           status.textContent = 'Failed';
@@ -1485,7 +1495,7 @@ AJ Mast`;
           }
           addErrorDetail(row, detail);
           addDismissBtn(row);
-          resolve(false);
+          resolve(null);
         }
       });
 
@@ -1494,7 +1504,7 @@ AJ Mast`;
         status.textContent = 'Failed';
         addErrorDetail(row, 'Network error — the server may have rejected the request before it reached the app. Check that the file is under 500 MB.');
         addDismissBtn(row);
-        resolve(false);
+        resolve(null);
       });
 
       xhr.open('POST', `/api/admin/galleries/${currentGalleryId}/videos`);
@@ -1651,7 +1661,8 @@ AJ Mast`;
   });
 
   function openThumbPicker(videoSrc) {
-    thumbVideo.crossOrigin = 'anonymous';
+    // No crossOrigin: same-origin, and setting 'anonymous' can taint the
+    // canvas when the static file handler doesn't echo CORS headers.
     thumbVideo.src = videoSrc;
     thumbPicker.classList.add('open');
     thumbScrubber.value = 0;
@@ -1679,39 +1690,127 @@ AJ Mast`;
   });
 
   function drawThumbFrame() {
+    // Letterbox the frame into the preview canvas rather than distorting it
+    // to fill the fixed 16:9 box. The uploaded thumbnail is generated from a
+    // separate canvas that exactly matches the video's aspect ratio, so
+    // preview ≈ stored result (minus letterboxing).
+    const vw = thumbVideo.videoWidth || 16;
+    const vh = thumbVideo.videoHeight || 9;
+    const canvasAspect = thumbCanvas.width / thumbCanvas.height;
+    const videoAspect = vw / vh;
+    let dw, dh, dx, dy;
+    if (videoAspect > canvasAspect) {
+      dw = thumbCanvas.width;
+      dh = dw / videoAspect;
+      dx = 0;
+      dy = (thumbCanvas.height - dh) / 2;
+    } else {
+      dh = thumbCanvas.height;
+      dw = dh * videoAspect;
+      dx = (thumbCanvas.width - dw) / 2;
+      dy = 0;
+    }
+    thumbCtx.fillStyle = '#000';
+    thumbCtx.fillRect(0, 0, thumbCanvas.width, thumbCanvas.height);
     thumbCtx.imageSmoothingEnabled = true;
     thumbCtx.imageSmoothingQuality = 'high';
-    thumbCtx.drawImage(thumbVideo, 0, 0, thumbCanvas.width, thumbCanvas.height);
+    thumbCtx.drawImage(thumbVideo, dx, dy, dw, dh);
+  }
+
+  // Render the current frame from a <video> element to a JPEG Blob at the
+  // video's native aspect, capped at 640px wide. Used for both the manual
+  // thumbnail picker and the post-upload auto-thumbnail.
+  async function captureFrameAsJpegBlob(videoEl) {
+    const vw = videoEl.videoWidth;
+    const vh = videoEl.videoHeight;
+    if (!vw || !vh) throw new Error('Video not ready');
+    const maxW = 640;
+    const w = Math.min(vw, maxW);
+    const h = Math.round(w * vh / vw);
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(videoEl, 0, 0, w, h);
+    return await new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (b) => b ? resolve(b) : reject(new Error('Canvas export failed')),
+        'image/jpeg',
+        0.88
+      );
+    });
+  }
+
+  async function uploadThumbnailBlob(videoId, blob) {
+    const res = await fetch(`/api/admin/galleries/${currentGalleryId}/videos/${videoId}/thumbnail`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'image/jpeg' },
+      body: blob,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error((err.error || 'Failed to save thumbnail') + (err.detail ? '\n\n' + err.detail : ''));
+    }
   }
 
   thumbCaptureBtn.addEventListener('click', async () => {
-    const timestamp = thumbVideo.currentTime;
-
-    // Disable button while processing
     thumbCaptureBtn.disabled = true;
-    thumbCaptureBtn.textContent = 'Generating...';
-
+    thumbCaptureBtn.textContent = 'Saving\u2026';
     try {
-      const res = await fetch(`/api/admin/galleries/${currentGalleryId}/videos/${thumbVideoId}/thumbnail`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ timestamp })
-      });
-
-      if (res.ok) {
-        closeThumbPicker();
-        loadVideos();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        alert((err.error || 'Failed to save thumbnail.') + (err.detail ? '\n\n' + err.detail : ''));
-      }
+      const blob = await captureFrameAsJpegBlob(thumbVideo);
+      await uploadThumbnailBlob(thumbVideoId, blob);
+      closeThumbPicker();
+      loadVideos();
     } catch (err) {
-      alert('Network error saving thumbnail.');
+      alert(err.message || String(err));
     } finally {
       thumbCaptureBtn.disabled = false;
-      thumbCaptureBtn.textContent = 'Use This Frame';
+      thumbCaptureBtn.textContent = 'Set Thumbnail';
     }
   });
+
+  // Kick off a browser-side thumbnail generation for a newly uploaded video:
+  // load the video, seek to a random spot in the first 10 seconds, capture
+  // the frame, and upload the resulting JPEG as its thumbnail.
+  async function autoGenerateVideoThumbnail(video) {
+    const v = document.createElement('video');
+    v.muted = true;
+    v.preload = 'auto';
+    v.playsInline = true;
+    v.src = '/uploads/' + encodeURIComponent(video.filename);
+
+    const waitFor = (eventName, timeoutMs) => new Promise((resolve, reject) => {
+      let done = false;
+      const cleanup = () => {
+        v.removeEventListener(eventName, onOk);
+        v.removeEventListener('error', onErr);
+      };
+      const onOk = () => { if (done) return; done = true; cleanup(); resolve(); };
+      const onErr = () => { if (done) return; done = true; cleanup(); reject(new Error(eventName + ' failed')); };
+      v.addEventListener(eventName, onOk, { once: true });
+      v.addEventListener('error', onErr, { once: true });
+      setTimeout(() => { if (done) return; done = true; cleanup(); reject(new Error(eventName + ' timed out')); }, timeoutMs);
+    });
+
+    try {
+      await waitFor('loadedmetadata', 30000);
+      const duration = v.duration || 0;
+      const upper = Math.min(10, isFinite(duration) && duration > 0 ? duration : 10);
+      // Avoid the very first frame (often black) — pick between 0.3s and upper
+      const lo = Math.min(0.3, upper);
+      const seekTo = lo + Math.random() * Math.max(0, upper - lo);
+      v.currentTime = seekTo;
+      await waitFor('seeked', 15000);
+      const blob = await captureFrameAsJpegBlob(v);
+      await uploadThumbnailBlob(video.id, blob);
+      loadVideos();
+    } finally {
+      v.removeAttribute('src');
+      v.load();
+    }
+  }
 
   thumbCancelBtn.addEventListener('click', () => closeThumbPicker());
 

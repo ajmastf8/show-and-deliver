@@ -1372,16 +1372,28 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download-all', $uri, 
     $safeName = preg_replace('/[^a-zA-Z0-9 .\-]/', '', $gallery['name']);
     $zipName = $requestedPart > 0 ? "$safeName - Part $requestedPart.zip" : "$safeName.zip";
 
-    // Build entry list: only files that exist on disk
+    // Build entry list: only files that exist on disk, with unique names
     $entries = [];
+    $usedNames = [];
     foreach ($items as $v) {
         $filePath = UPLOADS_DIR . '/' . $v['filename'];
         if (!file_exists($filePath)) continue;
         $ext = pathinfo($v['filename'], PATHINFO_EXTENSION);
+        $base = trim(preg_replace('/[^a-zA-Z0-9 .\-]/', '', $v['title']));
+        if ($base === '') $base = pathinfo($v['filename'], PATHINFO_FILENAME);
+        $name = $base . '.' . $ext;
+        // Dedupe: strict readers like macOS Archive Utility reject duplicate entries
+        if (isset($usedNames[$name])) {
+            $n = 1;
+            do { $candidate = $base . ' (' . (++$n) . ').' . $ext; } while (isset($usedNames[$candidate]));
+            $name = $candidate;
+        }
+        $usedNames[$name] = true;
         $entries[] = [
             'path' => $filePath,
-            'name' => preg_replace('/[^a-zA-Z0-9 .\-]/', '', $v['title']) . '.' . $ext,
+            'name' => $name,
             'size' => filesize($filePath),
+            'mtime' => filemtime($filePath) ?: time(),
         ];
     }
 
@@ -1393,19 +1405,25 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download-all', $uri, 
 // the client. Pre-computes Content-Length so the browser shows real progress.
 // Photos and videos are already compressed — DEFLATE wastes CPU for ~0% gain
 // and forces buffering the whole archive to a temp file before sending a byte.
+//
+// CRC32 is pre-computed per file (second read hits OS page cache) so we avoid
+// data descriptors entirely. Strict readers like macOS Archive Utility reject
+// some streaming-style layouts; a classic local-file-header + CD layout is
+// maximally compatible.
 function streamStoreZip(array $entries, string $zipName): void {
-    // Decide per-entry ZIP64 (size or running offset crosses 4GB) and tally length
+    // Pre-compute CRC32 + DOS date, plan offsets and final archive size
     $offset = 0;
     $cdLen = 0;
     foreach ($entries as &$e) {
         $size = $e['size'];
+        $e['crc'] = (int)hexdec(hash_file('crc32b', $e['path']));
+        [$e['dosTime'], $e['dosDate']] = zipDosTimeDate($e['mtime'] ?? time());
         $needsZip64 = $size >= 0xFFFFFFFF || $offset >= 0xFFFFFFFF;
         $e['zip64'] = $needsZip64;
         $e['offset'] = $offset;
         $nameLen = strlen($e['name']);
         $localHdr = 30 + $nameLen + ($needsZip64 ? 20 : 0);
-        $dd = $needsZip64 ? 24 : 16;
-        $offset += $localHdr + $size + $dd;
+        $offset += $localHdr + $size;
         $cdLen += 46 + $nameLen + ($needsZip64 ? 28 : 0);
     }
     unset($e);
@@ -1430,62 +1448,58 @@ function streamStoreZip(array $entries, string $zipName): void {
     header('Cache-Control: no-store');
     header('X-Accel-Buffering: no');
 
+    // Unix external attrs: regular file 0100644
+    $externalAttrs = (0100644 << 16);
+
     $cd = '';
     foreach ($entries as $e) {
         $name = $e['name'];
         $nameLen = strlen($name);
         $size = $e['size'];
+        $crc = $e['crc'];
+        $dosTime = $e['dosTime'];
+        $dosDate = $e['dosDate'];
         $isZip64 = $e['zip64'];
         $version = $isZip64 ? 45 : 20;
-        $sizeInHdr = $isZip64 ? 0xFFFFFFFF : 0; // 0 because data descriptor (GP bit 3) carries real values
+        $sizeInHdr = $isZip64 ? 0xFFFFFFFF : $size;
         $extraLen = $isZip64 ? 20 : 0;
 
-        // Local file header (GP flag 0x0008 = data descriptor follows; method 0 = STORE)
+        // Local file header — GP flag 0 (no data descriptor), method 0 = STORE
         echo pack('VvvvvvVVVvv',
-            0x04034b50, $version, 0x0008, 0x0000,
-            0x0000, 0x0000,
-            0, $sizeInHdr, $sizeInHdr,
+            0x04034b50, $version, 0x0000, 0x0000,
+            $dosTime, $dosDate,
+            $crc, $sizeInHdr, $sizeInHdr,
             $nameLen, $extraLen
         );
         echo $name;
         if ($isZip64) {
-            echo pack('vvPP', 0x0001, 16, 0, 0);
+            echo pack('vvPP', 0x0001, 16, $size, $size);
         }
         flush();
 
-        // Stream file body, computing CRC32 on the fly
-        $ctx = hash_init('crc32b');
+        // Stream file body (CRC already known, so no hashing needed here)
         $fp = fopen($e['path'], 'rb');
         if ($fp === false) exit;
         while (!feof($fp)) {
             $buf = fread($fp, 262144);
             if ($buf === false || $buf === '') break;
-            hash_update($ctx, $buf);
             echo $buf;
             if (connection_aborted()) { fclose($fp); exit; }
         }
         fclose($fp);
-        $crc32 = (int)hexdec(hash_final($ctx));
         flush();
-
-        // Data descriptor
-        if ($isZip64) {
-            echo pack('VVPP', 0x08074b50, $crc32, $size, $size);
-        } else {
-            echo pack('VVVV', 0x08074b50, $crc32, $size, $size);
-        }
 
         // Append central directory entry (kept in memory until end)
         $sizeInCd = $isZip64 ? 0xFFFFFFFF : $size;
         $offsetInCd = $isZip64 ? 0xFFFFFFFF : $e['offset'];
         $cdExtraLen = $isZip64 ? 28 : 0;
         $cd .= pack('VvvvvvvVVVvvvvvVV',
-            0x02014b50, 0x031E, $version, 0x0008, 0x0000,
-            0x0000, 0x0000,
-            $crc32, $sizeInCd, $sizeInCd,
+            0x02014b50, 0x031E, $version, 0x0000, 0x0000,
+            $dosTime, $dosDate,
+            $crc, $sizeInCd, $sizeInCd,
             $nameLen, $cdExtraLen, 0,
             0, 0,
-            0,
+            $externalAttrs,
             $offsetInCd
         );
         $cd .= $name;
@@ -1520,6 +1534,16 @@ function streamStoreZip(array $entries, string $zipName): void {
         $eocdCdSize, $eocdCdOffset, 0
     );
     flush();
+}
+
+// Convert a Unix timestamp to (DOS time, DOS date) for a ZIP entry.
+// DOS epoch is 1980-01-01; earlier timestamps are clamped to it.
+function zipDosTimeDate(int $epoch): array {
+    $t = getdate($epoch);
+    if ($t['year'] < 1980) return [0, 0x0021];
+    $dosTime = ($t['hours'] << 11) | ($t['minutes'] << 5) | (((int)$t['seconds']) >> 1);
+    $dosDate = (($t['year'] - 1980) << 9) | ($t['mon'] << 5) | $t['mday'];
+    return [$dosTime, $dosDate];
 }
 
 // Send review

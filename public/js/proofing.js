@@ -537,37 +537,133 @@ document.addEventListener('DOMContentLoaded', () => {
   // ============ Download All ============
 
   const downloadModal = document.getElementById('download-modal');
+  const downloadModalTitle = document.getElementById('download-modal-title');
   const downloadModalMsg = document.getElementById('download-modal-msg');
+  const downloadModalDetail = document.getElementById('download-modal-detail');
+  const downloadProgressBar = document.getElementById('download-progress-bar');
+  const downloadCancelBtn = document.getElementById('download-cancel-btn');
 
-  function formatEstimate(totalSize, fileCount) {
-    // Rough estimate: ~2MB/s for zip creation + download prep
-    const seconds = Math.max(5, Math.ceil(totalSize / (2 * 1024 * 1024)));
-    if (seconds < 60) return `about ${seconds} seconds`;
-    const mins = Math.ceil(seconds / 60);
-    return mins === 1 ? 'about a minute' : `about ${mins} minutes`;
+  let currentDownloadAbort = null;
+  let downloadCancelled = false;
+
+  function formatBytes(bytes) {
+    if (bytes >= 1024 * 1024 * 1024) return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+    if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(0) + ' MB';
+    if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' KB';
+    return bytes + ' B';
   }
 
-  function showDownloadModal(fileCount, totalSize) {
-    const sizeMB = (totalSize / 1024 / 1024).toFixed(0);
-    const estimate = formatEstimate(totalSize, fileCount);
-    downloadModalMsg.textContent = `Gathering ${fileCount} images (~${sizeMB} MB) and creating your zip file. This may take ${estimate}.`;
+  function openDownloadModal({ title, msg, indeterminate }) {
+    downloadModalTitle.textContent = title || 'Downloading your photos';
+    downloadModalMsg.textContent = msg || '';
+    downloadModalDetail.textContent = '';
+    downloadProgressBar.style.width = '0%';
+    downloadProgressBar.classList.toggle('indeterminate', !!indeterminate);
+    downloadCancelBtn.style.display = '';
+    downloadCancelBtn.disabled = false;
+    downloadCancelBtn.textContent = 'Cancel';
     downloadModal.style.display = '';
+  }
+
+  function updateDownloadProgress(loaded, total) {
+    if (total) {
+      const pct = Math.min(100, (loaded / total) * 100);
+      downloadProgressBar.classList.remove('indeterminate');
+      downloadProgressBar.style.width = pct.toFixed(1) + '%';
+      downloadModalDetail.textContent =
+        `${formatBytes(loaded)} of ${formatBytes(total)} (${pct.toFixed(0)}%)`;
+    } else {
+      downloadProgressBar.classList.add('indeterminate');
+      downloadModalDetail.textContent = `${formatBytes(loaded)} downloaded`;
+    }
   }
 
   function hideDownloadModal() {
     downloadModal.style.display = 'none';
+    downloadProgressBar.classList.remove('indeterminate');
+    downloadProgressBar.style.width = '0%';
+    currentDownloadAbort = null;
   }
 
-  function triggerDownload(url) {
-    // Use a hidden iframe so the page stays intact and the modal remains visible
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = url;
-    document.body.appendChild(iframe);
-    // Clean up iframe after download starts, keep modal visible a bit longer
-    iframe.addEventListener('load', () => {
-      setTimeout(() => document.body.removeChild(iframe), 1000);
+  downloadCancelBtn.addEventListener('click', () => {
+    downloadCancelled = true;
+    if (currentDownloadAbort) currentDownloadAbort.abort();
+    hideDownloadModal();
+  });
+
+  async function streamDownload(url, suggestedName, fileCount) {
+    const controller = new AbortController();
+    currentDownloadAbort = controller;
+
+    openDownloadModal({
+      title: 'Downloading your photos',
+      msg: fileCount ? `${fileCount} photos` : 'Preparing your zip\u2026',
+      indeterminate: true,
     });
+
+    let res;
+    try {
+      res = await fetch(url, { signal: controller.signal });
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      hideDownloadModal();
+      alert('Download failed to start. Please try again.');
+      return;
+    }
+    if (!res.ok || !res.body) {
+      hideDownloadModal();
+      alert('Download failed (server returned ' + res.status + '). Please try again.');
+      return;
+    }
+
+    const total = Number(res.headers.get('Content-Length')) || 0;
+    updateDownloadProgress(0, total);
+
+    const reader = res.body.getReader();
+    const chunks = [];
+    let loaded = 0;
+    let lastPaint = 0;
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        loaded += value.byteLength;
+        const now = performance.now();
+        if (now - lastPaint > 100) {
+          updateDownloadProgress(loaded, total);
+          lastPaint = now;
+        }
+      }
+    } catch (e) {
+      if (e.name !== 'AbortError') {
+        hideDownloadModal();
+        alert('Download interrupted. Please try again.');
+      }
+      return;
+    }
+
+    updateDownloadProgress(loaded, total || loaded);
+    downloadModalMsg.textContent = 'Saving file\u2026';
+    downloadCancelBtn.disabled = true;
+
+    // Build blob and trigger save via anchor
+    const blob = new Blob(chunks, { type: 'application/zip' });
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = suggestedName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // Revoke the object URL after the browser has a chance to start the save
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+
+    downloadModalTitle.textContent = 'Download complete';
+    downloadModalMsg.textContent = 'Your zip is ready.';
+    downloadCancelBtn.style.display = 'none';
+    setTimeout(hideDownloadModal, 1500);
   }
 
   downloadAllBtn.addEventListener('click', async () => {
@@ -577,41 +673,38 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch(`/api/proofing/${token}/download-info`);
       info = await res.json();
     } catch (e) {
-      // If info check fails, show generic modal and download directly
+      // If info check fails, proceed without it
     }
 
-    if (info && info.chunks && info.chunks.length > 1) {
-      // Multiple chunks needed — show download options
-      const parts = info.chunks.map(c => {
-        const sizeMB = (c.size / 1024 / 1024).toFixed(0);
-        return `Part ${c.part}: ${c.fileCount} files (~${sizeMB} MB)`;
-      }).join('\n');
+    const baseName = (document.getElementById('gallery-name')?.textContent || 'gallery')
+      .replace(/[^a-zA-Z0-9 .\-]/g, '').trim() || 'gallery';
 
+    if (info && info.chunks && info.chunks.length > 1) {
+      // Multi-chunk download (>2GB): ask and download parts sequentially with progress
+      const parts = info.chunks.map(c =>
+        `Part ${c.part}: ${c.fileCount} files (${formatBytes(c.size)})`
+      ).join('\n');
       const msg = `This gallery is too large for a single download.\n\n${parts}\n\nDownload all parts?`;
       if (!confirm(msg)) return;
 
-      showDownloadModal(info.fileCount, info.totalSize);
+      downloadCancelled = false;
       for (const chunk of info.chunks) {
-        window.open(`/api/proofing/${token}/download-all?part=${chunk.part}`, '_blank');
+        if (downloadCancelled) break;
+        await streamDownload(
+          `/api/proofing/${token}/download-all?part=${chunk.part}`,
+          `${baseName} - Part ${chunk.part}.zip`,
+          chunk.fileCount
+        );
       }
-      setTimeout(hideDownloadModal, 8000);
       return;
     }
 
-    // Show modal first, then trigger download
-    if (info) {
-      showDownloadModal(info.fileCount, info.totalSize);
-    } else {
-      downloadModalMsg.textContent = 'Gathering images and creating your zip file\u2026';
-      downloadModal.style.display = '';
-    }
-
-    // Small delay to ensure the modal paints before the download kicks off
-    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-    triggerDownload(`/api/proofing/${token}/download-all`);
-    // Hide modal after a generous delay — the browser download bar takes over
-    const estimatedMs = info ? Math.max(5000, (info.totalSize / (2 * 1024 * 1024)) * 1000) : 8000;
-    setTimeout(hideDownloadModal, Math.min(estimatedMs, 30000));
+    downloadCancelled = false;
+    await streamDownload(
+      `/api/proofing/${token}/download-all`,
+      `${baseName}.zip`,
+      info ? info.fileCount : 0
+    );
   });
 
   // ============ Helpers ============

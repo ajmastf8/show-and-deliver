@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css?v=12">
-  <link rel="stylesheet" href="/css/proofing.css?v=8">
+  <link rel="stylesheet" href="/css/proofing.css?v=9">
 </head>
 <body>
   <header class="site-header">
@@ -59,9 +59,13 @@
   <!-- Download Notification Modal -->
   <div id="download-modal" class="name-modal" style="display:none;">
     <div class="name-modal-inner">
-      <h2>Preparing Your Download</h2>
-      <p id="download-modal-msg">Gathering images and creating your zip file&hellip;</p>
-      <div class="download-spinner"></div>
+      <h2 id="download-modal-title">Downloading your photos</h2>
+      <p id="download-modal-msg">Starting download&hellip;</p>
+      <div class="download-progress">
+        <div class="download-progress-bar" id="download-progress-bar"></div>
+      </div>
+      <p id="download-modal-detail" class="download-modal-detail"></p>
+      <button type="button" id="download-cancel-btn" class="btn btn-secondary download-cancel-btn">Cancel</button>
     </div>
   </div>
 
@@ -118,6 +122,6 @@
   </div>
 
   <script src="/js/header.js?v=1"></script>
-  <script src="/js/proofing.js?v=11"></script>
+  <script src="/js/proofing.js?v=12"></script>
 </body>
 </html>

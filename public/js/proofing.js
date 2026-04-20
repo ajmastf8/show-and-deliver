@@ -689,7 +689,9 @@ document.addEventListener('DOMContentLoaded', () => {
   async function downloadToFolder({ entries, galleryBase, controller }) {
     let parentHandle;
     try {
-      parentHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+      // Start the picker in the Downloads folder so users don't land in
+      // their home root, which Chrome blocks with "contains system files".
+      parentHandle = await window.showDirectoryPicker({ mode: 'readwrite', startIn: 'downloads' });
     } catch (e) {
       if (e.name === 'AbortError') return { cancelled: true };
       throw e;

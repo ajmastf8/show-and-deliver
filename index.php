@@ -14,9 +14,10 @@ define('UPLOADS_DIR', SITE_DATA . '/uploads');
 define('THUMBS_DIR', SITE_DATA . '/thumbnails');
 define('PROXY_DIR', SITE_DATA . '/proxies');
 define('IMPORT_DIR', SITE_DATA . '/imports');
+define('DOWNLOADS_DIR', SITE_DATA . '/downloads');
 
 // Ensure directories exist
-foreach ([DATA_DIR, UPLOADS_DIR, THUMBS_DIR, PROXY_DIR, IMPORT_DIR, DATA_DIR . '/sessions', DATA_DIR . '/ratelimit'] as $dir) {
+foreach ([DATA_DIR, UPLOADS_DIR, THUMBS_DIR, PROXY_DIR, IMPORT_DIR, DOWNLOADS_DIR, DATA_DIR . '/sessions', DATA_DIR . '/ratelimit'] as $dir) {
     if (!is_dir($dir)) mkdir($dir, 0755, true);
 }
 
@@ -1292,88 +1293,46 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download/{videoId}', 
     exit;
 }
 
-// Download all as ZIP
-// Download info — returns file count, total size, and chunk breakdown
-// 800MB per chunk. LiteSpeed on shared cPanel hosts caps dynamic response
-// bodies around 1GB and kills scripts at the LSAPI request-time limit
-// (typically 300s). Keeping chunks well below both avoids truncated zips.
-define('CHUNK_MAX_BYTES', 800 * 1024 * 1024);
+// How long a prepared zip sits in site-data/downloads/ before it's eligible
+// for cleanup. Long enough that a slow download finishes; short enough that
+// we don't pile up disk usage.
+define('DOWNLOAD_ZIP_TTL_SECONDS', 24 * 60 * 60);
 
+// Download info — returns file count + total size so the client can decide
+// messaging. Chunking is gone: PHP now builds the zip once on disk and the
+// browser downloads the static file directly (which bypasses the LiteSpeed
+// ~1GB dynamic-response cap and the LSAPI request-time limit).
 if ($method === 'GET' && matchRoute('/api/proofing/{token}/download-info', $uri, $params)) {
     $gallery = getProofingGallery($params['token']);
     if (!$gallery['downloadsEnabled']) respondError('Downloads disabled', 403);
 
     $items = array_values(array_filter(readGalleryVideos($gallery['id']), fn($v) => in_array($v['type'] ?? '', ['video', 'photo'])));
     $totalSize = 0;
-    $files = [];
+    $fileCount = 0;
     foreach ($items as $v) {
         $filePath = UPLOADS_DIR . '/' . $v['filename'];
-        $size = file_exists($filePath) ? filesize($filePath) : 0;
-        $files[] = ['title' => $v['title'], 'size' => $size];
-        $totalSize += $size;
-    }
-
-    // Calculate chunks
-    $chunks = [];
-    $chunkSize = 0;
-    $chunkFiles = 0;
-    $chunkNum = 1;
-    foreach ($files as $f) {
-        if ($chunkSize + $f['size'] > CHUNK_MAX_BYTES && $chunkFiles > 0) {
-            $chunks[] = ['part' => $chunkNum, 'size' => $chunkSize, 'fileCount' => $chunkFiles];
-            $chunkNum++;
-            $chunkSize = 0;
-            $chunkFiles = 0;
-        }
-        $chunkSize += $f['size'];
-        $chunkFiles++;
-    }
-    if ($chunkFiles > 0) {
-        $chunks[] = ['part' => $chunkNum, 'size' => $chunkSize, 'fileCount' => $chunkFiles];
+        if (!file_exists($filePath)) continue;
+        $totalSize += filesize($filePath);
+        $fileCount++;
     }
 
     respond([
-        'fileCount' => count($files),
+        'fileCount' => $fileCount,
         'totalSize' => $totalSize,
-        'chunks' => $chunks,
     ]);
 }
 
-// Download all as ZIP (supports ?part=N for chunked downloads)
-if ($method === 'GET' && matchRoute('/api/proofing/{token}/download-all', $uri, $params)) {
+// Build a zip of the whole gallery on disk and return a static URL. The
+// browser then downloads it via the static-file handler — no 1GB cap, no
+// LSAPI timeout on the download phase, native progress + resume support.
+if ($method === 'POST' && matchRoute('/api/proofing/{token}/download-prepare', $uri, $params)) {
     $gallery = getProofingGallery($params['token']);
     if (!$gallery['downloadsEnabled']) respondError('Downloads disabled', 403);
 
     $items = array_values(array_filter(readGalleryVideos($gallery['id']), fn($v) => in_array($v['type'] ?? '', ['video', 'photo'])));
-    $requestedPart = isset($_GET['part']) ? (int)$_GET['part'] : 0;
 
-    // If part requested, calculate which files belong to this chunk
-    if ($requestedPart > 0) {
-        $chunkFiles = [];
-        $chunkSize = 0;
-        $chunkNum = 1;
-        $currentChunk = [];
-        foreach ($items as $v) {
-            $filePath = UPLOADS_DIR . '/' . $v['filename'];
-            $size = file_exists($filePath) ? filesize($filePath) : 0;
-            if ($chunkSize + $size > CHUNK_MAX_BYTES && count($currentChunk) > 0) {
-                if ($chunkNum === $requestedPart) { $chunkFiles = $currentChunk; break; }
-                $chunkNum++;
-                $chunkSize = 0;
-                $currentChunk = [];
-            }
-            $chunkSize += $size;
-            $currentChunk[] = $v;
-        }
-        if (empty($chunkFiles) && $chunkNum === $requestedPart) {
-            $chunkFiles = $currentChunk;
-        }
-        if (empty($chunkFiles)) respondError('Invalid part number', 400);
-        $items = $chunkFiles;
-    }
-
-    $safeName = preg_replace('/[^a-zA-Z0-9 .\-]/', '', $gallery['name']);
-    $zipName = $requestedPart > 0 ? "$safeName - Part $requestedPart.zip" : "$safeName.zip";
+    $safeName = trim(preg_replace('/[^a-zA-Z0-9 .\-]/', '', $gallery['name'])) ?: 'gallery';
+    $zipName = $safeName . '.zip';
 
     // Build entry list: only files that exist on disk, with unique names
     $entries = [];
@@ -1385,7 +1344,7 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download-all', $uri, 
         $base = trim(preg_replace('/[^a-zA-Z0-9 .\-]/', '', $v['title']));
         if ($base === '') $base = pathinfo($v['filename'], PATHINFO_FILENAME);
         $name = $base . '.' . $ext;
-        // Dedupe: strict readers like macOS Archive Utility reject duplicate entries
+        // Strict readers (macOS Archive Utility) reject duplicate entries
         if (isset($usedNames[$name])) {
             $n = 1;
             do { $candidate = $base . ' (' . (++$n) . ').' . $ext; } while (isset($usedNames[$candidate]));
@@ -1395,36 +1354,46 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download-all', $uri, 
         $entries[] = [
             'path' => $filePath,
             'name' => $name,
-            'size' => filesize($filePath),
             'mtime' => filemtime($filePath) ?: time(),
         ];
     }
 
-    streamStoreZip($entries, $zipName);
-    exit;
-}
+    if (!$entries) respondError('No files available to download', 404);
 
-// Stream a ZIP archive (STORE method, no compression, ZIP64-aware) directly to
-// the client. Pre-computes Content-Length so the browser shows real progress.
-// Photos and videos are already compressed — DEFLATE wastes CPU for ~0% gain
-// and forces buffering the whole archive to a temp file before sending a byte.
-//
-// CRC32 is pre-computed per file (second read hits OS page cache) so we avoid
-// data descriptors entirely. Strict readers like macOS Archive Utility reject
-// some streaming-style layouts; a classic local-file-header + CD layout is
-// maximally compatible.
-function streamStoreZip(array $entries, string $zipName): void {
-    // Suppress any PHP warning/notice output — any stray byte mixed into the
-    // response will corrupt the archive and produce opaque "Bad message" errors
-    // in strict readers like macOS Archive Utility.
+    cleanupOldDownloads();
+
+    // Unguessable token in the URL is the only auth for the static file.
+    // 32 bytes = 64 hex chars; effectively impossible to brute-force.
+    $token = bin2hex(random_bytes(32));
+    $outPath = DOWNLOADS_DIR . '/' . $token . '.zip';
+
+    @set_time_limit(0);
     @ini_set('display_errors', '0');
     @ini_set('html_errors', '0');
     error_reporting(0);
 
-    // Single-pass CRC + size measurement. Using filesize() separately can
-    // disagree with what fread actually returns (stat cache vs real bytes);
-    // any mismatch means declared sizes in the header don't match streamed
-    // data, which is exactly what triggers Archive Utility's Error 94.
+    $fh = fopen($outPath, 'wb');
+    if (!$fh) respondError('Could not create zip file', 500);
+    $totalBytes = writeStoreZip($entries, $fh);
+    fclose($fh);
+
+    // Expose just the filename; the .htaccess rule maps /downloads/* to site-data/downloads/*
+    respond([
+        'url'  => '/downloads/' . $token . '.zip',
+        'name' => $zipName,
+        'size' => $totalBytes,
+    ]);
+}
+
+// Write a ZIP archive (STORE method, no compression, ZIP64-aware) into a
+// file handle. Used by the download-prepare endpoint; the browser then
+// downloads the finished file via the static-file handler.
+//
+// CRC32 is pre-computed per file (second read hits OS page cache) so we
+// avoid data descriptors entirely. A classic local-file-header + CD layout
+// is what strict readers like macOS Archive Utility expect.
+function writeStoreZip(array $entries, $fh): int {
+    // Pass 1: compute CRC + actual size, plan offsets
     $offset = 0;
     $cdLen = 0;
     foreach ($entries as &$e) {
@@ -1453,36 +1422,11 @@ function streamStoreZip(array $entries, string $zipName): void {
     }
     unset($e);
 
-    // Drop any entries that couldn't be opened in pass 1
     $entries = array_values(array_filter($entries, fn($e) => empty($e['skip'])));
 
     $cdOffset = $offset;
     $totalEntries = count($entries);
     $needCdZip64 = $totalEntries > 0xFFFF || $cdOffset >= 0xFFFFFFFF || $cdLen >= 0xFFFFFFFF;
-    $totalLen = $cdOffset + $cdLen + ($needCdZip64 ? 56 + 20 : 0) + 22;
-
-    // Defeat all forms of buffering and timeouts
-    @set_time_limit(0);
-    @ini_set('zlib.output_compression', 'Off');
-    @ini_set('output_buffering', 'Off');
-    @ini_set('implicit_flush', '1');
-    while (ob_get_level()) ob_end_clean();
-    ignore_user_abort(false);
-
-    // Make sure nothing has leaked to output already; if it has, bail rather
-    // than corrupt the archive.
-    if (headers_sent()) exit;
-
-    header('Content-Type: application/zip');
-    header('Content-Disposition: attachment; filename="' . $zipName . '"');
-    header('Content-Length: ' . $totalLen);
-    header('Content-Transfer-Encoding: binary');
-    header('Content-Encoding: identity');
-    header('Cache-Control: no-store, no-transform');
-    header('X-Accel-Buffering: no');
-    header('X-Content-Type-Options: nosniff');
-
-    // Unix external attrs: regular file 0100644
     $externalAttrs = (0100644 << 16);
 
     $cd = '';
@@ -1498,32 +1442,29 @@ function streamStoreZip(array $entries, string $zipName): void {
         $sizeInHdr = $isZip64 ? 0xFFFFFFFF : $size;
         $extraLen = $isZip64 ? 20 : 0;
 
-        // Local file header — GP flag 0 (no data descriptor), method 0 = STORE
-        echo pack('VvvvvvVVVvv',
+        // Local file header
+        fwrite($fh, pack('VvvvvvVVVvv',
             0x04034b50, $version, 0x0000, 0x0000,
             $dosTime, $dosDate,
             $crc, $sizeInHdr, $sizeInHdr,
             $nameLen, $extraLen
-        );
-        echo $name;
+        ));
+        fwrite($fh, $name);
         if ($isZip64) {
-            echo pack('vvPP', 0x0001, 16, $size, $size);
+            fwrite($fh, pack('vvPP', 0x0001, 16, $size, $size));
         }
-        flush();
 
-        // Stream file body (CRC already known, so no hashing needed here)
+        // File body — stream from source to destination
         $fp = fopen($e['path'], 'rb');
-        if ($fp === false) exit;
+        if ($fp === false) continue;
         while (!feof($fp)) {
-            $buf = fread($fp, 262144);
+            $buf = fread($fp, 524288);
             if ($buf === false || $buf === '') break;
-            echo $buf;
-            if (connection_aborted()) { fclose($fp); exit; }
+            fwrite($fh, $buf);
         }
         fclose($fp);
-        flush();
 
-        // Append central directory entry (kept in memory until end)
+        // Central directory entry (buffered in memory until end)
         $sizeInCd = $isZip64 ? 0xFFFFFFFF : $size;
         $offsetInCd = $isZip64 ? 0xFFFFFFFF : $e['offset'];
         $cdExtraLen = $isZip64 ? 28 : 0;
@@ -1543,31 +1484,35 @@ function streamStoreZip(array $entries, string $zipName): void {
         }
     }
 
-    echo $cd;
+    fwrite($fh, $cd);
+    $tailLen = strlen($cd);
 
     if ($needCdZip64) {
-        echo pack('VPvvVVPPPP',
+        fwrite($fh, pack('VPvvVVPPPP',
             0x06064b50, 44, 45, 45,
             0, 0,
             $totalEntries, $totalEntries,
             $cdLen, $cdOffset
-        );
-        echo pack('VVPV',
+        ));
+        fwrite($fh, pack('VVPV',
             0x07064b50, 0,
             $cdOffset + $cdLen,
             1
-        );
+        ));
+        $tailLen += 56 + 20;
     }
 
     $eocdEntries = $totalEntries > 0xFFFF ? 0xFFFF : $totalEntries;
     $eocdCdSize = $cdLen > 0xFFFFFFFF ? 0xFFFFFFFF : $cdLen;
     $eocdCdOffset = $cdOffset > 0xFFFFFFFF ? 0xFFFFFFFF : $cdOffset;
-    echo pack('VvvvvVVv',
+    fwrite($fh, pack('VvvvvVVv',
         0x06054b50, 0, 0,
         $eocdEntries, $eocdEntries,
         $eocdCdSize, $eocdCdOffset, 0
-    );
-    flush();
+    ));
+    $tailLen += 22;
+
+    return $cdOffset + $tailLen;
 }
 
 // Convert a Unix timestamp to (DOS time, DOS date) for a ZIP entry.
@@ -1578,6 +1523,18 @@ function zipDosTimeDate(int $epoch): array {
     $dosTime = ($t['hours'] << 11) | ($t['minutes'] << 5) | (((int)$t['seconds']) >> 1);
     $dosDate = (($t['year'] - 1980) << 9) | ($t['mon'] << 5) | $t['mday'];
     return [$dosTime, $dosDate];
+}
+
+// Delete prepared zips older than DOWNLOAD_ZIP_TTL_SECONDS. Called before
+// each new build so the directory doesn't grow without bound on shared
+// hosting where no cron is guaranteed.
+function cleanupOldDownloads(): void {
+    $dir = DOWNLOADS_DIR;
+    if (!is_dir($dir)) return;
+    $cutoff = time() - DOWNLOAD_ZIP_TTL_SECONDS;
+    foreach (glob($dir . '/*.zip') ?: [] as $f) {
+        if (@filemtime($f) < $cutoff) @unlink($f);
+    }
 }
 
 // Send review

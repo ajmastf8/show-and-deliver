@@ -543,8 +543,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const downloadProgressBar = document.getElementById('download-progress-bar');
   const downloadCancelBtn = document.getElementById('download-cancel-btn');
 
-  let currentDownloadAbort = null;
-  let downloadCancelled = false;
+  let prepareAbort = null;
 
   function formatBytes(bytes) {
     if (bytes >= 1024 * 1024 * 1024) return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
@@ -553,188 +552,88 @@ document.addEventListener('DOMContentLoaded', () => {
     return bytes + ' B';
   }
 
-  function openDownloadModal({ title, msg, indeterminate }) {
-    downloadModalTitle.textContent = title || 'Downloading your photos';
-    downloadModalMsg.textContent = msg || '';
-    downloadModalDetail.textContent = '';
-    downloadProgressBar.style.width = '0%';
-    downloadProgressBar.classList.toggle('indeterminate', !!indeterminate);
+  function showPreparingModal(fileCount, totalSize) {
+    downloadModalTitle.textContent = 'Preparing your download';
+    downloadModalMsg.textContent = fileCount
+      ? `Packaging ${fileCount} photos (${formatBytes(totalSize)}) on the server\u2026`
+      : 'Packaging your photos on the server\u2026';
+    downloadModalDetail.textContent = 'Your download will start automatically when ready.';
+    downloadProgressBar.classList.add('indeterminate');
+    downloadProgressBar.style.width = '';
     downloadCancelBtn.style.display = '';
     downloadCancelBtn.disabled = false;
     downloadCancelBtn.textContent = 'Cancel';
     downloadModal.style.display = '';
   }
 
-  function updateDownloadProgress(loaded, total) {
-    if (total) {
-      const pct = Math.min(100, (loaded / total) * 100);
-      downloadProgressBar.classList.remove('indeterminate');
-      downloadProgressBar.style.width = pct.toFixed(1) + '%';
-      downloadModalDetail.textContent =
-        `${formatBytes(loaded)} of ${formatBytes(total)} (${pct.toFixed(0)}%)`;
-    } else {
-      downloadProgressBar.classList.add('indeterminate');
-      downloadModalDetail.textContent = `${formatBytes(loaded)} downloaded`;
-    }
-  }
-
   function hideDownloadModal() {
     downloadModal.style.display = 'none';
     downloadProgressBar.classList.remove('indeterminate');
     downloadProgressBar.style.width = '0%';
-    currentDownloadAbort = null;
+    prepareAbort = null;
   }
 
   downloadCancelBtn.addEventListener('click', () => {
-    downloadCancelled = true;
-    if (currentDownloadAbort) currentDownloadAbort.abort();
+    if (prepareAbort) prepareAbort.abort();
     hideDownloadModal();
   });
 
-  async function streamDownload(url, suggestedName, fileCount) {
-    const controller = new AbortController();
-    currentDownloadAbort = controller;
-
-    openDownloadModal({
-      title: 'Downloading your photos',
-      msg: fileCount ? `${fileCount} photos` : 'Preparing your zip\u2026',
-      indeterminate: true,
-    });
-
-    let res;
-    try {
-      res = await fetch(url, { signal: controller.signal });
-    } catch (e) {
-      if (e.name === 'AbortError') return;
-      hideDownloadModal();
-      alert('Download failed to start. Please try again.');
-      return;
-    }
-    if (!res.ok || !res.body) {
-      hideDownloadModal();
-      alert('Download failed (server returned ' + res.status + '). Please try again.');
-      return;
-    }
-
-    const total = Number(res.headers.get('Content-Length')) || 0;
-    updateDownloadProgress(0, total);
-
-    const reader = res.body.getReader();
-    const chunks = [];
-    let loaded = 0;
-    let lastPaint = 0;
-
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        loaded += value.byteLength;
-        const now = performance.now();
-        if (now - lastPaint > 100) {
-          updateDownloadProgress(loaded, total);
-          lastPaint = now;
-        }
-      }
-    } catch (e) {
-      if (e.name !== 'AbortError') {
-        hideDownloadModal();
-        alert('Download interrupted. Please try again.');
-      }
-      return;
-    }
-
-    updateDownloadProgress(loaded, total || loaded);
-
-    // Sanity-check byte count: if LiteSpeed/proxy re-encoded or the connection
-    // was truncated, the saved file will be corrupt. Tell the user instead of
-    // silently handing them a bad zip.
-    if (total > 0 && loaded !== total) {
-      hideDownloadModal();
-      alert(
-        `Download was incomplete: received ${loaded.toLocaleString()} of ` +
-        `${total.toLocaleString()} bytes. Please try again. If it keeps ` +
-        `failing, let us know.`
-      );
-      return;
-    }
-
-    // Verify zip signature: first 4 bytes should be PK\x03\x04.
-    if (chunks.length > 0) {
-      const head = chunks[0];
-      if (head.byteLength >= 4 &&
-          !(head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04)) {
-        hideDownloadModal();
-        alert(
-          'Download appears corrupted (bad zip header). ' +
-          'The server may have re-encoded the response. Please try again.'
-        );
-        return;
-      }
-    }
-
-    downloadModalMsg.textContent = 'Saving file\u2026';
-    downloadCancelBtn.disabled = true;
-
-    // Build blob and trigger save via anchor
-    const blob = new Blob(chunks, { type: 'application/zip' });
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = suggestedName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    // Revoke the object URL after the browser has a chance to start the save
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
-
-    downloadModalTitle.textContent = 'Download complete';
-    downloadModalMsg.textContent = 'Your zip is ready.';
-    downloadCancelBtn.style.display = 'none';
-    setTimeout(hideDownloadModal, 1500);
-  }
-
   downloadAllBtn.addEventListener('click', async () => {
-    // Fetch download info for file count, size, and chunking
+    // Quick info lookup so the "preparing" modal can show file count/size
     let info = null;
     try {
       const res = await fetch(`/api/proofing/${token}/download-info`);
-      info = await res.json();
-    } catch (e) {
-      // If info check fails, proceed without it
-    }
+      if (res.ok) info = await res.json();
+    } catch (e) { /* non-fatal */ }
 
-    const baseName = (document.getElementById('gallery-name')?.textContent || 'gallery')
-      .replace(/[^a-zA-Z0-9 .\-]/g, '').trim() || 'gallery';
+    showPreparingModal(info && info.fileCount, info && info.totalSize);
 
-    if (info && info.chunks && info.chunks.length > 1) {
-      // Multi-chunk download (>2GB): ask and download parts sequentially with progress
-      const parts = info.chunks.map(c =>
-        `Part ${c.part}: ${c.fileCount} files (${formatBytes(c.size)})`
-      ).join('\n');
-      const msg =
-        `This gallery will be split into ${info.chunks.length} parts for a reliable download:\n\n` +
-        `${parts}\n\nDownload all parts now?`;
-      if (!confirm(msg)) return;
+    // Build the zip on the server and get back a static URL
+    const controller = new AbortController();
+    prepareAbort = controller;
 
-      downloadCancelled = false;
-      for (const chunk of info.chunks) {
-        if (downloadCancelled) break;
-        await streamDownload(
-          `/api/proofing/${token}/download-all?part=${chunk.part}`,
-          `${baseName} - Part ${chunk.part}.zip`,
-          chunk.fileCount
-        );
+    let prep;
+    try {
+      const res = await fetch(`/api/proofing/${token}/download-prepare`, {
+        method: 'POST',
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        hideDownloadModal();
+        alert('Could not prepare the download (server returned ' + res.status + '). Please try again.');
+        return;
       }
+      prep = await res.json();
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      hideDownloadModal();
+      alert('Could not prepare the download. Please try again.');
       return;
     }
 
-    downloadCancelled = false;
-    await streamDownload(
-      `/api/proofing/${token}/download-all`,
-      `${baseName}.zip`,
-      info ? info.fileCount : 0
-    );
+    if (!prep || !prep.url) {
+      hideDownloadModal();
+      alert('Download preparation failed. Please try again.');
+      return;
+    }
+
+    // Hand off to the browser's native downloader — no JS blob, no 1GB cap,
+    // resumable, shows progress in the browser's download manager.
+    const a = document.createElement('a');
+    a.href = prep.url;
+    a.download = prep.name || 'gallery.zip';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    downloadModalTitle.textContent = 'Download started';
+    downloadModalMsg.textContent =
+      `Your browser is downloading ${prep.name || 'your zip'}${prep.size ? ' (' + formatBytes(prep.size) + ')' : ''}.`;
+    downloadModalDetail.textContent = '';
+    downloadProgressBar.classList.remove('indeterminate');
+    downloadProgressBar.style.width = '100%';
+    downloadCancelBtn.style.display = 'none';
+    setTimeout(hideDownloadModal, 2500);
   });
 
   // ============ Helpers ============

@@ -645,6 +645,34 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     updateDownloadProgress(loaded, total || loaded);
+
+    // Sanity-check byte count: if LiteSpeed/proxy re-encoded or the connection
+    // was truncated, the saved file will be corrupt. Tell the user instead of
+    // silently handing them a bad zip.
+    if (total > 0 && loaded !== total) {
+      hideDownloadModal();
+      alert(
+        `Download was incomplete: received ${loaded.toLocaleString()} of ` +
+        `${total.toLocaleString()} bytes. Please try again. If it keeps ` +
+        `failing, let us know.`
+      );
+      return;
+    }
+
+    // Verify zip signature: first 4 bytes should be PK\x03\x04.
+    if (chunks.length > 0) {
+      const head = chunks[0];
+      if (head.byteLength >= 4 &&
+          !(head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04)) {
+        hideDownloadModal();
+        alert(
+          'Download appears corrupted (bad zip header). ' +
+          'The server may have re-encoded the response. Please try again.'
+        );
+        return;
+      }
+    }
+
     downloadModalMsg.textContent = 'Saving file\u2026';
     downloadCancelBtn.disabled = true;
 

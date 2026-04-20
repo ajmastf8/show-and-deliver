@@ -1411,22 +1411,47 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download-all', $uri, 
 // some streaming-style layouts; a classic local-file-header + CD layout is
 // maximally compatible.
 function streamStoreZip(array $entries, string $zipName): void {
-    // Pre-compute CRC32 + DOS date, plan offsets and final archive size
+    // Suppress any PHP warning/notice output — any stray byte mixed into the
+    // response will corrupt the archive and produce opaque "Bad message" errors
+    // in strict readers like macOS Archive Utility.
+    @ini_set('display_errors', '0');
+    @ini_set('html_errors', '0');
+    error_reporting(0);
+
+    // Single-pass CRC + size measurement. Using filesize() separately can
+    // disagree with what fread actually returns (stat cache vs real bytes);
+    // any mismatch means declared sizes in the header don't match streamed
+    // data, which is exactly what triggers Archive Utility's Error 94.
     $offset = 0;
     $cdLen = 0;
     foreach ($entries as &$e) {
-        $size = $e['size'];
-        $e['crc'] = (int)hexdec(hash_file('crc32b', $e['path']));
+        clearstatcache(true, $e['path']);
+        $ctx = hash_init('crc32b');
+        $measured = 0;
+        $fp = @fopen($e['path'], 'rb');
+        if ($fp === false) { $e['skip'] = true; continue; }
+        while (!feof($fp)) {
+            $buf = @fread($fp, 524288);
+            if ($buf === false || $buf === '') break;
+            hash_update($ctx, $buf);
+            $measured += strlen($buf);
+        }
+        fclose($fp);
+        $e['crc'] = (int)hexdec(hash_final($ctx));
+        $e['size'] = $measured;
         [$e['dosTime'], $e['dosDate']] = zipDosTimeDate($e['mtime'] ?? time());
-        $needsZip64 = $size >= 0xFFFFFFFF || $offset >= 0xFFFFFFFF;
+        $needsZip64 = $measured >= 0xFFFFFFFF || $offset >= 0xFFFFFFFF;
         $e['zip64'] = $needsZip64;
         $e['offset'] = $offset;
         $nameLen = strlen($e['name']);
         $localHdr = 30 + $nameLen + ($needsZip64 ? 20 : 0);
-        $offset += $localHdr + $size;
+        $offset += $localHdr + $measured;
         $cdLen += 46 + $nameLen + ($needsZip64 ? 28 : 0);
     }
     unset($e);
+
+    // Drop any entries that couldn't be opened in pass 1
+    $entries = array_values(array_filter($entries, fn($e) => empty($e['skip'])));
 
     $cdOffset = $offset;
     $totalEntries = count($entries);
@@ -1441,12 +1466,18 @@ function streamStoreZip(array $entries, string $zipName): void {
     while (ob_get_level()) ob_end_clean();
     ignore_user_abort(false);
 
+    // Make sure nothing has leaked to output already; if it has, bail rather
+    // than corrupt the archive.
+    if (headers_sent()) exit;
+
     header('Content-Type: application/zip');
     header('Content-Disposition: attachment; filename="' . $zipName . '"');
     header('Content-Length: ' . $totalLen);
     header('Content-Transfer-Encoding: binary');
-    header('Cache-Control: no-store');
+    header('Content-Encoding: identity');
+    header('Cache-Control: no-store, no-transform');
     header('X-Accel-Buffering: no');
+    header('X-Content-Type-Options: nosniff');
 
     // Unix external attrs: regular file 0100644
     $externalAttrs = (0100644 << 16);

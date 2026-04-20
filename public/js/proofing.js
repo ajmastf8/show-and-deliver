@@ -543,7 +543,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const downloadProgressBar = document.getElementById('download-progress-bar');
   const downloadCancelBtn = document.getElementById('download-cancel-btn');
 
-  let prepareAbort = null;
+  let downloadAbort = null;
 
   function formatBytes(bytes) {
     if (bytes >= 1024 * 1024 * 1024) return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
@@ -552,85 +552,144 @@ document.addEventListener('DOMContentLoaded', () => {
     return bytes + ' B';
   }
 
-  function showPreparingModal(fileCount, totalSize) {
-    downloadModalTitle.textContent = 'Preparing your download';
-    downloadModalMsg.textContent = fileCount
-      ? `Packaging ${fileCount} photos (${formatBytes(totalSize)}) on the server\u2026`
-      : 'Packaging your photos on the server\u2026';
-    downloadModalDetail.textContent = 'Your download will start automatically when ready.';
-    downloadProgressBar.classList.add('indeterminate');
-    downloadProgressBar.style.width = '';
+  function openDownloadModal(title, msg) {
+    downloadModalTitle.textContent = title;
+    downloadModalMsg.textContent = msg;
+    downloadModalDetail.textContent = '';
+    downloadProgressBar.classList.remove('indeterminate');
+    downloadProgressBar.style.width = '0%';
     downloadCancelBtn.style.display = '';
     downloadCancelBtn.disabled = false;
     downloadCancelBtn.textContent = 'Cancel';
     downloadModal.style.display = '';
   }
 
+  function updateDownloadProgress(done, total, bytes) {
+    const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
+    downloadProgressBar.style.width = pct.toFixed(1) + '%';
+    downloadModalDetail.textContent =
+      `${done} of ${total} files\u2002\u00b7\u2002${formatBytes(bytes)} downloaded`;
+  }
+
   function hideDownloadModal() {
     downloadModal.style.display = 'none';
     downloadProgressBar.classList.remove('indeterminate');
     downloadProgressBar.style.width = '0%';
-    prepareAbort = null;
+    downloadAbort = null;
   }
 
   downloadCancelBtn.addEventListener('click', () => {
-    if (prepareAbort) prepareAbort.abort();
+    if (downloadAbort) downloadAbort.abort();
     hideDownloadModal();
   });
 
+  function sanitizeName(s, fallback) {
+    const cleaned = (s || '').replace(/[^a-zA-Z0-9 .\-()]/g, '').trim();
+    return cleaned || fallback;
+  }
+
+  function dedupeName(name, used) {
+    if (!used.has(name)) { used.add(name); return name; }
+    const dot = name.lastIndexOf('.');
+    const base = dot >= 0 ? name.slice(0, dot) : name;
+    const ext = dot >= 0 ? name.slice(dot) : '';
+    let n = 2;
+    while (used.has(base + ' (' + n + ')' + ext)) n++;
+    const picked = base + ' (' + n + ')' + ext;
+    used.add(picked);
+    return picked;
+  }
+
   downloadAllBtn.addEventListener('click', async () => {
-    // Quick info lookup so the "preparing" modal can show file count/size
-    let info = null;
-    try {
-      const res = await fetch(`/api/proofing/${token}/download-info`);
-      if (res.ok) info = await res.json();
-    } catch (e) { /* non-fatal */ }
+    if (!galleryData || !galleryData.videos) return;
 
-    showPreparingModal(info && info.fileCount, info && info.totalSize);
+    // Build entry list from already-loaded gallery data
+    const mediaItems = galleryData.videos.filter(v => v.type === 'photo' || v.type === 'video');
+    if (mediaItems.length === 0) return;
 
-    // Build the zip on the server and get back a static URL
+    const usedNames = new Set();
+    const entries = mediaItems.map(item => {
+      const ext = (item.filename.match(/\.([^.]+)$/) || [, ''])[1];
+      const base = sanitizeName(item.title, sanitizeName(item.filename.replace(/\.[^.]+$/, ''), 'file'));
+      const name = dedupeName(base + (ext ? '.' + ext : ''), usedNames);
+      return {
+        name,
+        url: `/api/proofing/${token}/download/${item.id}`,
+        mtime: Date.now(),
+      };
+    });
+
+    const galleryBase = sanitizeName(galleryData.gallery.name, 'gallery');
+    const suggestedName = galleryBase + '.zip';
+
+    openDownloadModal(
+      'Downloading ' + mediaItems.length + ' photos',
+      'Fetching files and packaging your zip\u2026'
+    );
+    updateDownloadProgress(0, mediaItems.length, 0);
+
     const controller = new AbortController();
-    prepareAbort = controller;
+    downloadAbort = controller;
 
-    let prep;
-    try {
-      const res = await fetch(`/api/proofing/${token}/download-prepare`, {
-        method: 'POST',
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        hideDownloadModal();
-        alert('Could not prepare the download (server returned ' + res.status + '). Please try again.');
-        return;
+    // On Chrome/Edge we can stream straight to disk via File System Access
+    // API (no memory buffering, works for arbitrary-size galleries). Elsewhere
+    // we accumulate into a Blob — fine for typical desktop use.
+    let fileStream = null;
+    let fileHandle = null;
+    if (window.showSaveFilePicker) {
+      try {
+        fileHandle = await window.showSaveFilePicker({
+          suggestedName,
+          types: [{ description: 'Zip archive', accept: { 'application/zip': ['.zip'] } }],
+        });
+        fileStream = await fileHandle.createWritable();
+      } catch (e) {
+        if (e.name === 'AbortError') { hideDownloadModal(); return; }
+        // Permission denied or unsupported — fall through to Blob path
+        fileStream = null;
       }
-      prep = await res.json();
+    }
+
+    const chunks = fileStream ? null : [];
+    const write = fileStream
+      ? async (buf) => { await fileStream.write(buf); }
+      : async (buf) => { chunks.push(buf); };
+
+    try {
+      await ZipWriter.zipToWriter({
+        entries,
+        write,
+        concurrency: 6,
+        signal: controller.signal,
+        onProgress: (done, total, bytes) => updateDownloadProgress(done, total, bytes),
+      });
     } catch (e) {
-      if (e.name === 'AbortError') return;
+      if (fileStream) { try { await fileStream.abort(); } catch (_) {} }
+      if (e.name === 'AbortError') { hideDownloadModal(); return; }
       hideDownloadModal();
-      alert('Could not prepare the download. Please try again.');
+      alert('Download failed: ' + (e.message || e));
       return;
     }
 
-    if (!prep || !prep.url) {
-      hideDownloadModal();
-      alert('Download preparation failed. Please try again.');
-      return;
+    if (fileStream) {
+      try { await fileStream.close(); } catch (_) {}
+      downloadModalTitle.textContent = 'Download complete';
+      downloadModalMsg.textContent = 'Your zip was saved.';
+    } else {
+      // Trigger a save via a Blob URL
+      const blob = new Blob(chunks, { type: 'application/zip' });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = suggestedName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+      downloadModalTitle.textContent = 'Download ready';
+      downloadModalMsg.textContent = 'Your browser is saving the zip.';
     }
-
-    // Hand off to the browser's native downloader — no JS blob, no 1GB cap,
-    // resumable, shows progress in the browser's download manager.
-    const a = document.createElement('a');
-    a.href = prep.url;
-    a.download = prep.name || 'gallery.zip';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-    downloadModalTitle.textContent = 'Download started';
-    downloadModalMsg.textContent =
-      `Your browser is downloading ${prep.name || 'your zip'}${prep.size ? ' (' + formatBytes(prep.size) + ')' : ''}.`;
     downloadModalDetail.textContent = '';
-    downloadProgressBar.classList.remove('indeterminate');
     downloadProgressBar.style.width = '100%';
     downloadCancelBtn.style.display = 'none';
     setTimeout(hideDownloadModal, 2500);

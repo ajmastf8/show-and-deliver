@@ -28,3 +28,13 @@ DirectoryIndex public/index.html
 php_value upload_max_filesize 500M
 php_value post_max_size 500M
 php_value max_execution_time 300
+
+# HTML must always be fresh so its versioned <script src="...?v=N"> tags
+# point at the current JS. Cached HTML keeps referencing old versions.
+<IfModule mod_headers.c>
+  <FilesMatch "\.html$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+</IfModule>

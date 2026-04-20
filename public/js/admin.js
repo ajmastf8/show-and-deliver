@@ -134,6 +134,21 @@ document.addEventListener('DOMContentLoaded', () => {
     renderGalleryList();
   }
 
+  const EXPANDED_COLLECTIONS_KEY = 'admin-expanded-collections';
+
+  function getExpandedCollections() {
+    try {
+      return new Set(JSON.parse(localStorage.getItem(EXPANDED_COLLECTIONS_KEY) || '[]'));
+    } catch (_) { return new Set(); }
+  }
+
+  function setCollectionExpanded(colId, expanded) {
+    const ids = getExpandedCollections();
+    if (expanded) ids.add(colId); else ids.delete(colId);
+    try { localStorage.setItem(EXPANDED_COLLECTIONS_KEY, JSON.stringify([...ids])); }
+    catch (_) { /* storage full / disabled */ }
+  }
+
   function renderGalleryList() {
     galleryListEl.innerHTML = '';
 
@@ -143,7 +158,11 @@ document.addEventListener('DOMContentLoaded', () => {
       (col.galleryIds || []).forEach(gid => groupedIds.add(gid));
     });
 
-    // Render collections as groups
+    // Render collections as groups. Default to collapsed — expand only if
+    // the user is currently viewing a gallery inside this collection, or if
+    // they've manually expanded it earlier in this browser (remembered in
+    // localStorage so clicks survive page reloads).
+    const expandedIds = getExpandedCollections();
     collections.forEach(col => {
       const group = document.createElement('div');
       group.className = 'collection-group';
@@ -152,6 +171,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const colGalleries = (col.galleryIds || [])
         .map(gid => galleries.find(g => g.id === gid))
         .filter(Boolean);
+
+      const containsCurrentGallery = currentGalleryId && colGalleries.some(g => g.id === currentGalleryId);
+      const shouldExpand = containsCurrentGallery || expandedIds.has(col.id);
+      if (!shouldExpand) group.classList.add('collapsed');
 
       const header = document.createElement('div');
       header.className = 'collection-group-header' + (col.id === currentCollectionId ? ' active' : '');
@@ -164,8 +187,9 @@ document.addEventListener('DOMContentLoaded', () => {
       // Click header to open collection settings
       header.addEventListener('click', (e) => {
         if (e.target.closest('.collection-group-toggle')) {
-          // Toggle collapse
+          // Toggle collapse and persist the new state
           group.classList.toggle('collapsed');
+          setCollectionExpanded(col.id, !group.classList.contains('collapsed'));
           e.stopPropagation();
           return;
         }

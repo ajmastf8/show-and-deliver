@@ -234,7 +234,7 @@ document.addEventListener('DOMContentLoaded', () => {
       : `<span class="gallery-badge reels">Portfolio</span>`;
 
     const count = g.type === 'proofing'
-      ? `${g.videoCount} item${g.videoCount !== 1 ? 's' : ''} &middot; ${g.commentCount} comment${g.commentCount !== 1 ? 's' : ''}`
+      ? `${g.videoCount} item${g.videoCount !== 1 ? 's' : ''} &middot; ${g.commentCount} comment${g.commentCount !== 1 ? 's' : ''} &middot; ${g.viewCount || 0} view${(g.viewCount || 0) !== 1 ? 's' : ''}`
       : `${g.videoCount} item${g.videoCount !== 1 ? 's' : ''}`;
 
     item.innerHTML = `
@@ -272,7 +272,115 @@ document.addEventListener('DOMContentLoaded', () => {
       if (tab.dataset.settingsTab === 'header' && !headerLoaded) {
         loadHeaderConfig();
       }
+      // Refresh API token state whenever the API tab is opened, so it
+      // reflects a token generated/revoked in another tab.
+      if (tab.dataset.settingsTab === 'api') {
+        loadApiTokenState();
+      }
     });
+  });
+
+  // ============ API Token Management ============
+
+  const apiTokenLoadingEl = document.getElementById('api-token-loading');
+  const apiTokenEnvEl = document.getElementById('api-token-env-state');
+  const apiTokenStateEl = document.getElementById('api-token-state');
+  const apiTokenStatusText = document.getElementById('api-token-status-text');
+  const apiTokenStatus = document.getElementById('api-token-status');
+  const apiTokenGenerateBtn = document.getElementById('api-token-generate-btn');
+  const apiTokenRegenerateBtn = document.getElementById('api-token-regenerate-btn');
+  const apiTokenRevokeBtn = document.getElementById('api-token-revoke-btn');
+  const apiTokenModal = document.getElementById('api-token-modal');
+  const apiTokenRevealInput = document.getElementById('api-token-reveal-input');
+  const apiTokenCopyBtn = document.getElementById('api-token-copy-btn');
+  const apiTokenModalDoneBtn = document.getElementById('api-token-modal-done-btn');
+
+  async function loadApiTokenState() {
+    apiTokenLoadingEl.style.display = '';
+    apiTokenEnvEl.style.display = 'none';
+    apiTokenStateEl.style.display = 'none';
+    apiTokenStatus.textContent = '';
+    try {
+      const res = await fetch('/api/settings/api-token');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const info = await res.json();
+      apiTokenLoadingEl.style.display = 'none';
+      if (info.envManaged) {
+        apiTokenEnvEl.style.display = '';
+        return;
+      }
+      apiTokenStateEl.style.display = '';
+      if (info.hasToken) {
+        apiTokenStatusText.textContent = 'An API token is active.';
+        apiTokenGenerateBtn.style.display = 'none';
+        apiTokenRegenerateBtn.style.display = '';
+        apiTokenRevokeBtn.style.display = '';
+      } else {
+        apiTokenStatusText.textContent = 'No API token is set.';
+        apiTokenGenerateBtn.style.display = '';
+        apiTokenRegenerateBtn.style.display = 'none';
+        apiTokenRevokeBtn.style.display = 'none';
+      }
+    } catch (err) {
+      apiTokenLoadingEl.textContent = 'Could not load API token state: ' + err.message;
+    }
+  }
+
+  async function generateApiToken(isRotate) {
+    if (isRotate && !confirm('Rotate the API token? Any client using the old token will start getting 401 errors.')) return;
+    apiTokenStatus.textContent = 'Generating\u2026';
+    try {
+      const res = await fetch('/api/settings/api-token', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) {
+        apiTokenStatus.textContent = data.error || ('HTTP ' + res.status);
+        return;
+      }
+      apiTokenStatus.textContent = '';
+      apiTokenRevealInput.value = data.token;
+      apiTokenModal.style.display = 'flex';
+      apiTokenRevealInput.focus();
+      apiTokenRevealInput.select();
+      loadApiTokenState();
+    } catch (err) {
+      apiTokenStatus.textContent = 'Network error: ' + err.message;
+    }
+  }
+
+  apiTokenGenerateBtn.addEventListener('click', () => generateApiToken(false));
+  apiTokenRegenerateBtn.addEventListener('click', () => generateApiToken(true));
+
+  apiTokenRevokeBtn.addEventListener('click', async () => {
+    if (!confirm('Revoke the current API token? Any client using it will immediately start getting 401 errors.')) return;
+    apiTokenStatus.textContent = 'Revoking\u2026';
+    try {
+      const res = await fetch('/api/settings/api-token', { method: 'DELETE' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        apiTokenStatus.textContent = data.error || ('HTTP ' + res.status);
+        return;
+      }
+      apiTokenStatus.textContent = 'Token revoked.';
+      loadApiTokenState();
+    } catch (err) {
+      apiTokenStatus.textContent = 'Network error: ' + err.message;
+    }
+  });
+
+  apiTokenCopyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(apiTokenRevealInput.value);
+      apiTokenCopyBtn.textContent = 'Copied!';
+      setTimeout(() => { apiTokenCopyBtn.textContent = 'Copy'; }, 1500);
+    } catch (_) {
+      apiTokenRevealInput.select();
+      document.execCommand('copy');
+    }
+  });
+
+  apiTokenModalDoneBtn.addEventListener('click', () => {
+    apiTokenModal.style.display = 'none';
+    apiTokenRevealInput.value = '';
   });
 
   // ============ Deploy from GitHub ============
@@ -694,6 +802,7 @@ document.addEventListener('DOMContentLoaded', () => {
     collectionPanel.style.display = '';
 
     document.getElementById('collection-title').textContent = 'Collection: ' + col.name;
+    renderCollectionStats(col);
     document.getElementById('col-setting-name').value = col.name;
     document.getElementById('col-setting-link').value = window.location.origin + '/collection/' + col.token;
 
@@ -899,6 +1008,35 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ============ Create Gallery ============
+
+  // --- Generic confirmation modal ---
+  function confirmModal({ title, message, confirmText = 'Confirm', danger = true }) {
+    const modal = document.getElementById('confirm-modal');
+    document.getElementById('confirm-modal-title').textContent = title;
+    document.getElementById('confirm-modal-message').textContent = message;
+    const confirmBtn = document.getElementById('confirm-modal-confirm-btn');
+    const cancelBtn = document.getElementById('confirm-modal-cancel-btn');
+    confirmBtn.textContent = confirmText;
+    confirmBtn.className = 'btn btn-sm ' + (danger ? 'btn-danger' : 'btn-primary');
+    modal.style.display = '';
+
+    return new Promise((resolve) => {
+      function cleanup() {
+        modal.style.display = 'none';
+        confirmBtn.removeEventListener('click', onConfirm);
+        cancelBtn.removeEventListener('click', onCancel);
+        modal.querySelector('.import-modal-backdrop').removeEventListener('click', onCancel);
+        document.removeEventListener('keydown', onKeydown);
+      }
+      function onConfirm() { cleanup(); resolve(true); }
+      function onCancel() { cleanup(); resolve(false); }
+      function onKeydown(e) { if (e.key === 'Escape') onCancel(); }
+      confirmBtn.addEventListener('click', onConfirm);
+      cancelBtn.addEventListener('click', onCancel);
+      modal.querySelector('.import-modal-backdrop').addEventListener('click', onCancel);
+      document.addEventListener('keydown', onKeydown);
+    });
+  }
 
   // --- New Gallery Modal logic ---
   function openNewGalleryModal(type) {
@@ -1186,6 +1324,23 @@ AJ Mast`;
     }
   });
 
+  document.getElementById('reset-stats-btn').addEventListener('click', async () => {
+    if (!currentGalleryId) return;
+    const ok = await confirmModal({
+      title: 'Reset Statistics',
+      message: `Reset view and download counts for "${currentGallery.name}"? This cannot be undone.`,
+      confirmText: 'Reset Stats',
+    });
+    if (!ok) return;
+    const res = await fetch(`/api/admin/galleries/${currentGalleryId}/stats/reset`, { method: 'POST' });
+    if (res.ok) {
+      loadVideos();
+      loadGalleries();
+    } else {
+      alert('Failed to reset statistics.');
+    }
+  });
+
   document.getElementById('delete-gallery-btn').addEventListener('click', async () => {
     if (!confirm(`Delete "${currentGallery.name}"? This cannot be undone.`)) return;
     const res = await fetch(`/api/galleries/${currentGalleryId}`, { method: 'DELETE' });
@@ -1207,12 +1362,65 @@ AJ Mast`;
       if (res.status === 401) checkAuth();
       return;
     }
-    const items = await res.json();
-    renderVideos(items);
+    const data = await res.json();
+    const items = Array.isArray(data) ? data : (data.videos || []);
+    const stats = (data && data.stats) || {};
+    renderVideos(items, stats);
+    renderGalleryStats(stats);
   }
 
-  function renderVideos(items) {
+  function renderGalleryStats(stats) {
+    const bar = document.getElementById('gallery-stats-bar');
+    if (!bar) return;
+    if (!currentGallery || currentGallery.type !== 'proofing') {
+      bar.style.display = 'none';
+      return;
+    }
+    const views = (stats && stats.views) || {};
+    const downloads = (stats && stats.downloads) || {};
+    const total = views.total || 0;
+    const unique = views.unique || 0;
+    const parts = [];
+    if (total === 0) {
+      parts.push('Not viewed yet');
+    } else {
+      parts.push(`Viewed ${total} time${total !== 1 ? 's' : ''}`);
+      parts.push(`${unique} unique visitor${unique !== 1 ? 's' : ''}`);
+      if (views.lastViewedAt) {
+        const d = new Date(views.lastViewedAt);
+        parts.push(`last viewed ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`);
+      }
+    }
+    if (downloads.downloadAll) {
+      parts.push(`Download All run ${downloads.downloadAll}×`);
+    }
+    bar.textContent = parts.join('  ·  ');
+    bar.style.display = '';
+  }
+
+  function renderCollectionStats(col) {
+    const bar = document.getElementById('collection-stats-bar');
+    if (!bar) return;
+    const total = col.viewCount || 0;
+    const unique = col.uniqueVisitors || 0;
+    const parts = [];
+    if (total === 0) {
+      parts.push('Not viewed yet');
+    } else {
+      parts.push(`Viewed ${total} time${total !== 1 ? 's' : ''}`);
+      parts.push(`${unique} unique visitor${unique !== 1 ? 's' : ''}`);
+      if (col.lastViewedAt) {
+        const d = new Date(col.lastViewedAt);
+        parts.push(`last viewed ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`);
+      }
+    }
+    bar.textContent = parts.join('  ·  ');
+    bar.style.display = '';
+  }
+
+  function renderVideos(items, stats) {
     videoList.innerHTML = '';
+    const dlItems = (stats && stats.downloads && stats.downloads.items) || {};
     items.forEach(entry => {
       if (entry.type === 'header') {
         const item = document.createElement('div');
@@ -1246,10 +1454,14 @@ AJ Mast`;
         mediaThumbnail = `<video src="/uploads/${encodeURIComponent(entry.filename)}" muted preload="metadata" class="admin-thumb"></video>`;
       }
 
+      const dlCount = dlItems[entry.id] || 0;
+      const dlBadge = `<span class="video-dl-count" title="${dlCount} download${dlCount !== 1 ? 's' : ''}">&#8595; ${dlCount}</span>`;
+
       item.innerHTML = `
         <span class="drag-handle">&#9776;</span>
         ${mediaThumbnail}
         <input type="text" class="title-input" value="${escapeHtml(entry.title)}">
+        ${dlBadge}
         <button class="btn btn-icon replace-btn" title="Replace file">&#8635;</button>
         ${isPhoto ? '' : '<button class="btn btn-icon thumb-btn" title="Set thumbnail">&#127910;</button>'}
         <button class="btn btn-icon toggle-vis ${entry.visible ? '' : 'hidden-video'}" title="${entry.visible ? 'Visible' : 'Hidden'}">
@@ -1673,7 +1885,8 @@ AJ Mast`;
     }
 
     if (!src) {
-      fetch(`/api/admin/galleries/${currentGalleryId}/videos`).then(r => r.json()).then(videos => {
+      fetch(`/api/admin/galleries/${currentGalleryId}/videos`).then(r => r.json()).then(data => {
+        const videos = Array.isArray(data) ? data : (data.videos || []);
         const video = videos.find(v => v.id === thumbVideoId);
         if (video) {
           openThumbPicker('/uploads/' + encodeURIComponent(video.filename));

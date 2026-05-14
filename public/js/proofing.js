@@ -665,6 +665,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const suggestedName = galleryBase + '.zip';
 
     setDownloadActive(true);
+    // Fire-and-forget: record that a "Download All" run started.
+    fetch(`/api/proofing/${token}/event/download-all`, { method: 'POST', keepalive: true })
+      .catch(() => {});
     openDownloadModal(
       `Downloading ${mediaItems.length} ${mediaItems.length === 1 ? itemNoun : itemNounPlural}`,
       'Fetching files and packaging your zip\u2026'

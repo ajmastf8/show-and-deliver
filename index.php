@@ -58,6 +58,14 @@ if (!env('SESSION_SECRET')) {
     }
 }
 
+// API_TOKEN can live in either .env (manual, server-admin managed) or
+// site-data/data/.api-token (generated + rotated via the admin UI). If both
+// are set, .env wins. The admin-UI path avoids touching .env at all.
+define('API_TOKEN_PATH', DATA_DIR . '/.api-token');
+if (!env('API_TOKEN') && file_exists(API_TOKEN_PATH)) {
+    $_ENV['API_TOKEN'] = trim(file_get_contents(API_TOKEN_PATH));
+}
+
 // Admin credentials: check admin.json first, then .env fallback
 define('ADMIN_CONFIG_PATH', DATA_DIR . '/admin.json');
 
@@ -124,6 +132,26 @@ function jsonRead($path) {
 
 function jsonWrite($path, $data) {
     file_put_contents($path, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+}
+
+// Atomic read-modify-write for counter files. Holds an exclusive lock for the
+// whole cycle so concurrent view/download hits can't clobber each other.
+function jsonUpdate($path, callable $mutator) {
+    $dir = dirname($path);
+    if (!is_dir($dir)) mkdir($dir, 0755, true);
+    $fp = fopen($path, 'c+');
+    if (!$fp) return null;
+    flock($fp, LOCK_EX);
+    $raw = stream_get_contents($fp);
+    $data = ($raw !== '' && $raw !== false) ? json_decode($raw, true) : null;
+    $data = $mutator(is_array($data) ? $data : []);
+    rewind($fp);
+    ftruncate($fp, 0);
+    fwrite($fp, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    fflush($fp);
+    flock($fp, LOCK_UN);
+    fclose($fp);
+    return $data;
 }
 
 function generateId($prefix = '') {
@@ -330,6 +358,104 @@ function readGalleryVideos($gid) { return jsonRead(galleryDir($gid) . '/videos.j
 function writeGalleryVideos($gid, $data) { ensureGalleryDir($gid); jsonWrite(galleryDir($gid) . '/videos.json', $data); }
 function readGalleryComments($gid) { return jsonRead(galleryDir($gid) . '/comments.json') ?: []; }
 function writeGalleryComments($gid, $data) { ensureGalleryDir($gid); jsonWrite(galleryDir($gid) . '/comments.json', $data); }
+
+// --- View / download stats ---
+
+function galleryStatsPath($gid) { return galleryDir($gid) . '/stats.json'; }
+function readGalleryStats($gid) { return jsonRead(galleryStatsPath($gid)) ?: []; }
+function collectionDir($cid) { return DATA_DIR . '/collection-' . $cid; }
+function collectionStatsPath($cid) { return collectionDir($cid) . '/stats.json'; }
+function readCollectionStats($cid) { return jsonRead(collectionStatsPath($cid)) ?: []; }
+
+// Stable per-browser visitor id, planted in a long-lived cookie. Primary
+// signal for unique-visitor counts.
+function visitorId() {
+    $cookie = $_COOKIE['vrs_vid'] ?? '';
+    if (preg_match('/^[a-f0-9]{32}$/', $cookie)) return $cookie;
+    $id = bin2hex(random_bytes(16));
+    setcookie('vrs_vid', $id, [
+        'expires' => time() + 2 * 365 * 24 * 3600,
+        'path' => '/',
+        'httponly' => true,
+        'samesite' => 'Lax',
+        'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
+    ]);
+    $_COOKIE['vrs_vid'] = $id;
+    return $id;
+}
+
+// Salted hash of the client IP — never stored raw. Used only as a same-day
+// dedup guard for visitors who clear cookies between visits.
+function visitorIpHash() {
+    $ip = $_SERVER['REMOTE_ADDR'] ?? '';
+    return substr(hash_hmac('sha256', $ip, env('SESSION_SECRET')), 0, 16);
+}
+
+// Record one view against a stats.json file. total bumps every load; unique
+// counts distinct cookie ids, with the ip-hash+date map suppressing a recount
+// when a returning visitor has cleared their cookie that same day.
+function recordView($statsPath) {
+    $vid = visitorId();
+    $ipDay = visitorIpHash() . '|' . date('Y-m-d');
+    jsonUpdate($statsPath, function($stats) use ($vid, $ipDay) {
+        $views = $stats['views'] ?? [];
+        $views['total'] = ($views['total'] ?? 0) + 1;
+        $views['lastViewedAt'] = date('c');
+        $seen = $views['seenVisitors'] ?? [];
+        $ipDays = $views['seenIpDays'] ?? [];
+        if (!in_array($vid, $seen, true) && !isset($ipDays[$ipDay])) {
+            $seen[] = $vid;
+        }
+        if (!isset($ipDays[$ipDay])) $ipDays[$ipDay] = $vid;
+        // Keep the ip-day map bounded — 30 days is plenty for dedup.
+        $cutoff = date('Y-m-d', time() - 30 * 24 * 3600);
+        foreach ($ipDays as $k => $v) {
+            if (substr($k, strpos($k, '|') + 1) < $cutoff) unset($ipDays[$k]);
+        }
+        $views['seenVisitors'] = $seen;
+        $views['seenIpDays'] = $ipDays;
+        $views['unique'] = count($seen);
+        $stats['views'] = $views;
+        return $stats;
+    });
+}
+
+function recordItemDownload($statsPath, $videoId) {
+    jsonUpdate($statsPath, function($stats) use ($videoId) {
+        $dl = $stats['downloads'] ?? [];
+        $items = $dl['items'] ?? [];
+        $items[$videoId] = ($items[$videoId] ?? 0) + 1;
+        $dl['items'] = $items;
+        $stats['downloads'] = $dl;
+        return $stats;
+    });
+}
+
+function recordDownloadAll($statsPath) {
+    jsonUpdate($statsPath, function($stats) {
+        $dl = $stats['downloads'] ?? [];
+        $dl['downloadAll'] = ($dl['downloadAll'] ?? 0) + 1;
+        $stats['downloads'] = $dl;
+        return $stats;
+    });
+}
+
+// Public-facing slice of a stats file — drops the internal dedup bookkeeping.
+function publicStats($stats) {
+    $views = $stats['views'] ?? [];
+    $downloads = $stats['downloads'] ?? [];
+    return [
+        'views' => [
+            'total' => $views['total'] ?? 0,
+            'unique' => $views['unique'] ?? 0,
+            'lastViewedAt' => $views['lastViewedAt'] ?? null,
+        ],
+        'downloads' => [
+            'downloadAll' => $downloads['downloadAll'] ?? 0,
+            'items' => $downloads['items'] ?? (object)[],
+        ],
+    ];
+}
 
 function findReelsGallery() {
     foreach (readGalleries() as $g) {
@@ -652,6 +778,10 @@ if ($method === 'GET' && $uri === '/api/galleries') {
         $s['commentCount'] = $g['type'] === 'proofing' ? count(readGalleryComments($g['id'])) : 0;
         $s['collectionId'] = $galColMap[$g['id']]['id'] ?? null;
         $s['collectionName'] = $galColMap[$g['id']]['name'] ?? null;
+        $views = readGalleryStats($g['id'])['views'] ?? [];
+        $s['viewCount'] = $views['total'] ?? 0;
+        $s['uniqueVisitors'] = $views['unique'] ?? 0;
+        $s['lastViewedAt'] = $views['lastViewedAt'] ?? null;
         return $s;
     }, readGalleries());
     respond($galleries);
@@ -786,7 +916,17 @@ if ($method === 'DELETE' && matchRoute('/api/galleries/{id}', $uri, $params)) {
 
 if ($method === 'GET' && matchRoute('/api/admin/galleries/{gid}/videos', $uri, $params)) {
     requireAuth();
-    respond(readGalleryVideos($params['gid']));
+    respond([
+        'videos' => readGalleryVideos($params['gid']),
+        'stats' => publicStats(readGalleryStats($params['gid'])),
+    ]);
+}
+
+if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/stats/reset', $uri, $params)) {
+    requireAuth();
+    $statsFile = galleryStatsPath($params['gid']);
+    if (file_exists($statsFile)) unlink($statsFile);
+    respond(['ok' => true]);
 }
 
 // Shared item-creation helper. Given a file already saved under UPLOADS_DIR
@@ -1422,6 +1562,7 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}', $uri, $params)) {
     if (!empty($gallery['password'])) {
         respond(['passwordRequired' => true, 'galleryName' => $gallery['name']]);
     }
+    recordView(galleryStatsPath($gallery['id']));
     respond(galleryPayload($gallery));
 }
 
@@ -1442,6 +1583,7 @@ if ($method === 'POST' && matchRoute('/api/proofing/{token}/unlock', $uri, $para
     }
 
     if (!$match) respondError('Incorrect password', 401);
+    recordView(galleryStatsPath($gallery['id']));
     respond(galleryPayload($gallery));
 }
 
@@ -1491,6 +1633,8 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download/{videoId}', 
     $filePath = UPLOADS_DIR . '/' . $video['filename'];
     if (!file_exists($filePath)) respondError('File not found', 404);
 
+    recordItemDownload(galleryStatsPath($gallery['id']), $video['id']);
+
     $ext = pathinfo($video['filename'], PATHINFO_EXTENSION);
     $downloadName = preg_replace('/[^a-zA-Z0-9 .\-]/', '', $video['title']) . '.' . $ext;
 
@@ -1499,6 +1643,15 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download/{videoId}', 
     header('Content-Length: ' . filesize($filePath));
     readfile($filePath);
     exit;
+}
+
+// Bulk "Download All" beacon — fired once by proofing.js when a zip run starts.
+// Per-file counts are still captured via the single-download endpoint above.
+if ($method === 'POST' && matchRoute('/api/proofing/{token}/event/download-all', $uri, $params)) {
+    $gallery = getProofingGallery($params['token']);
+    if (!$gallery['downloadsEnabled']) respondError('Downloads disabled', 403);
+    recordDownloadAll(galleryStatsPath($gallery['id']));
+    respond(['ok' => true]);
 }
 
 // Bulk "Download All" is now done entirely client-side: the browser fetches
@@ -1559,6 +1712,10 @@ if ($method === 'GET' && $uri === '/api/collections') {
         $col['galleries'] = $colGalleries;
         $col['hasPassword'] = !empty($col['password']);
         unset($col['password']);
+        $views = readCollectionStats($col['id'])['views'] ?? [];
+        $col['viewCount'] = $views['total'] ?? 0;
+        $col['uniqueVisitors'] = $views['unique'] ?? 0;
+        $col['lastViewedAt'] = $views['lastViewedAt'] ?? null;
         return $col;
     }, $collections);
     respond($enriched);
@@ -1649,6 +1806,8 @@ if ($method === 'DELETE' && matchRoute('/api/collections/{id}', $uri, $params)) 
         if ($c['id'] === $params['id']) { $idx = $i; break; }
     }
     if ($idx === null) respondError('Not found', 404);
+    $statsFile = collectionStatsPath($collections[$idx]['id']);
+    if (file_exists($statsFile)) { unlink($statsFile); @rmdir(dirname($statsFile)); }
     array_splice($collections, $idx, 1);
     writeCollections($collections);
     respond(['ok' => true]);
@@ -1701,6 +1860,7 @@ if ($method === 'GET' && matchRoute('/api/collections/public/{token}', $uri, $pa
     if (!empty($col['password'])) {
         respond(['passwordRequired' => true, 'collectionName' => $col['name']]);
     }
+    recordView(collectionStatsPath($col['id']));
     respond(collectionPublicPayload($col));
 }
 
@@ -1726,6 +1886,7 @@ if ($method === 'POST' && matchRoute('/api/collections/public/{token}/unlock', $
     }
 
     if (!$match) respondError('Incorrect password', 401);
+    recordView(collectionStatsPath($col['id']));
     respond(collectionPublicPayload($col));
 }
 
@@ -1913,6 +2074,86 @@ if ($method === 'POST' && $uri === '/api/settings/deploy') {
     }
 
     respond(['ok' => true, 'message' => "Deploy successful (branch: $branch)."]);
+}
+
+// ============================================================
+// API TOKEN MANAGEMENT
+// ============================================================
+//
+// Token can live in one of two places:
+//   (a) .env as API_TOKEN=...   — manual, edit-the-file management
+//   (b) site-data/data/.api-token — generated + rotated by this UI
+// If both are set, (a) wins (requireAuth reads env('API_TOKEN') first).
+// This UI only manages (b) so we never touch the user's .env.
+
+// Return "is a token currently active?" and where it's stored.
+if ($method === 'GET' && $uri === '/api/settings/api-token') {
+    requireAuth();
+    // env() reflects the resolved value, which is .env first, then the
+    // data-dir fallback populated at startup.
+    $active = env('API_TOKEN', '') !== '';
+    // Whether .env itself carries the token (determined by reading .env,
+    // since $_ENV may have been overwritten by the data-file fallback —
+    // but in our case the fallback only runs if .env is empty, so $_ENV
+    // having a value + no data file means .env is the source).
+    $hasDataToken = file_exists(API_TOKEN_PATH);
+    $envHasToken = $active && !$hasDataToken;
+    respond([
+        'hasToken' => $active,
+        'managedHere' => $hasDataToken || !$active,
+        'envManaged' => $envHasToken,
+    ]);
+}
+
+// Generate (or rotate) a token stored in site-data/data/.api-token.
+// Returns the token in plaintext once — this is the only chance to see it.
+if ($method === 'POST' && $uri === '/api/settings/api-token') {
+    requireAuth();
+    // If the user has API_TOKEN in .env, refuse rather than silently create
+    // a data-file token that gets shadowed by .env.
+    $envToken = '';
+    $envFile = __DIR__ . '/.env';
+    if (file_exists($envFile)) {
+        foreach (file($envFile, FILE_IGNORE_NEW_LINES) as $line) {
+            if (preg_match('/^\s*API_TOKEN\s*=\s*(.+)\s*$/', $line, $m)) {
+                $val = trim($m[1]);
+                if (strlen($val) >= 2 && in_array($val[0], ['"', "'"]) && $val[0] === substr($val, -1)) {
+                    $val = substr($val, 1, -1);
+                }
+                if ($val !== '') { $envToken = $val; break; }
+            }
+        }
+    }
+    if ($envToken !== '') {
+        respondError('An API token is already set in .env. Remove it from .env before managing tokens here.', 409);
+    }
+
+    $token = bin2hex(random_bytes(32));
+    if (file_put_contents(API_TOKEN_PATH, $token) === false) {
+        respondError('Could not write token to site-data/data/.api-token', 500);
+    }
+    @chmod(API_TOKEN_PATH, 0600);
+    $_ENV['API_TOKEN'] = $token;
+    respond(['token' => $token]);
+}
+
+// Revoke the data-file-managed token. Cannot revoke a token set in .env —
+// the admin has to edit the file for that.
+if ($method === 'DELETE' && $uri === '/api/settings/api-token') {
+    requireAuth();
+    if (!file_exists(API_TOKEN_PATH)) {
+        // Either there's no token at all, or it's managed via .env.
+        if (env('API_TOKEN', '') !== '') {
+            respondError('The active token is set in .env and must be removed there.', 409);
+        }
+        respond(['ok' => true]);
+    }
+    if (!@unlink(API_TOKEN_PATH)) {
+        respondError('Could not remove token file', 500);
+    }
+    unset($_ENV['API_TOKEN']);
+    putenv('API_TOKEN');
+    respond(['ok' => true]);
 }
 
 // ============================================================

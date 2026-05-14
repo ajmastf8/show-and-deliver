@@ -77,6 +77,7 @@
             <button class="settings-tab active" data-settings-tab="email">Email</button>
             <button class="settings-tab" data-settings-tab="update">Update</button>
             <button class="settings-tab" data-settings-tab="header">Header</button>
+            <button class="settings-tab" data-settings-tab="api">API</button>
           </div>
 
           <!-- Email Tab -->
@@ -232,6 +233,53 @@
             </div>
             <div id="header-status" class="email-status"></div>
           </div>
+
+          <!-- API Tab -->
+          <div id="settings-tab-api" class="settings-tab-content settings-panel" style="display:none;">
+            <p class="setting-hint" style="margin-bottom:16px;">
+              Generate an API token to let an external tool (a CLI, a script, a mobile app) create galleries, create collections, and upload media over HTTP. See
+              <a href="/docs/API.md" target="_blank" style="color:var(--color-primary);">the API docs</a> for endpoints and examples.
+            </p>
+
+            <div id="api-token-loading" class="setting-hint">Checking current state&hellip;</div>
+
+            <div id="api-token-env-state" style="display:none;">
+              <div class="setting-group">
+                <label>Current Token</label>
+                <p style="font-weight:600;color:var(--color-gray-text);">Set via <code>.env</code> on the server.</p>
+                <p class="setting-hint">To change or remove it, edit the <code>API_TOKEN</code> line in your <code>.env</code> file and redeploy. This panel only manages tokens stored in <code>site-data/</code>.</p>
+              </div>
+            </div>
+
+            <div id="api-token-state" style="display:none;">
+              <div class="setting-group">
+                <label>Current Token</label>
+                <p id="api-token-status-text" style="font-weight:600;"></p>
+                <p class="setting-hint">The token itself is never displayed after it's generated \u2014 if you've lost it, regenerate to get a new one (which invalidates the old one).</p>
+              </div>
+              <div class="settings-actions">
+                <button id="api-token-generate-btn" class="btn btn-primary">Generate Token</button>
+                <button id="api-token-regenerate-btn" class="btn btn-secondary" style="display:none;">Regenerate</button>
+                <button id="api-token-revoke-btn" class="btn btn-secondary" style="display:none;">Revoke</button>
+              </div>
+              <div id="api-token-status" class="email-status"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- API token reveal modal (shown once right after generation) -->
+        <div id="api-token-modal" class="name-modal" style="display:none;">
+          <div class="name-modal-inner" style="max-width:560px;">
+            <h2>Your new API token</h2>
+            <p>Copy this now \u2014 you won't see it again. If you lose it, generate a new one.</p>
+            <div style="display:flex;gap:8px;align-items:center;margin:16px 0;">
+              <input type="text" id="api-token-reveal-input" readonly class="setting-input" style="flex:1;font-family:monospace;">
+              <button id="api-token-copy-btn" class="btn btn-secondary">Copy</button>
+            </div>
+            <div class="settings-actions" style="justify-content:flex-end;">
+              <button id="api-token-modal-done-btn" class="btn btn-primary">I've saved it</button>
+            </div>
+          </div>
         </div>
 
         <!-- Collection Settings Panel -->
@@ -239,6 +287,7 @@
           <div class="panel-header">
             <h2 id="collection-title"></h2>
           </div>
+          <div id="collection-stats-bar" class="gallery-stats-bar" style="display:none;"></div>
           <div class="settings-panel">
             <div class="setting-group">
               <label>Collection Name</label>
@@ -318,6 +367,7 @@
               <button id="gallery-link-open" class="btn btn-secondary btn-sm">Open Link</button>
               <button id="gallery-link-email" class="btn btn-secondary btn-sm">Email Link</button>
             </div>
+            <div id="gallery-stats-bar" class="gallery-stats-bar" style="display:none;"></div>
             <div id="upload-area" class="upload-area">
               <div class="upload-drop-zone" id="drop-zone">
                 <p>Drag &amp; drop video or photo files here</p>
@@ -394,6 +444,11 @@
                 <label>Expiration Date</label>
                 <input type="date" id="setting-expires" class="setting-input">
                 <p class="setting-hint">Leave empty for no expiration</p>
+              </div>
+              <div class="setting-group setting-proofing-only" style="display:none;">
+                <label>Statistics</label>
+                <button type="button" id="reset-stats-btn" class="btn btn-secondary btn-sm">Reset View &amp; Download Counts</button>
+                <p class="setting-hint">Clears this gallery's view count, unique visitors, and per-file download counts.</p>
               </div>
               <div class="setting-group">
                 <label>Active</label>
@@ -504,8 +559,24 @@
     </div>
   </div>
 
+  <!-- Generic Confirmation Modal -->
+  <div id="confirm-modal" class="import-modal" style="display:none;">
+    <div class="import-modal-backdrop"></div>
+    <div class="import-modal-inner" style="max-width:420px;">
+      <h3 id="confirm-modal-title">Confirm</h3>
+      <p id="confirm-modal-message" style="font-size:13px;color:var(--color-body-text);margin-top:8px;"></p>
+      <div class="import-modal-actions" style="margin-top:16px;">
+        <div></div>
+        <div class="import-btns">
+          <button id="confirm-modal-cancel-btn" class="btn btn-secondary btn-sm">Cancel</button>
+          <button id="confirm-modal-confirm-btn" class="btn btn-danger btn-sm">Confirm</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/header.js?v=2"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=31"></script>
+  <script src="/js/admin.js?v=33"></script>
 </body>
 </html>

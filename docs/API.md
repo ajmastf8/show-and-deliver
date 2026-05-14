@@ -10,7 +10,14 @@ large files.
 
 ## Authentication
 
-Set a token in `.env`:
+There are two ways to set a token:
+
+**Preferred — the admin UI.** Open `Settings → API`, click **Generate
+Token**. The token is shown once; copy it and save it somewhere safe. The
+token is stored at `site-data/data/.api-token` (mode 0600) and can be
+rotated or revoked from the same panel. Nothing is written to `.env`.
+
+**Alternative — `.env`.** For installs managed via config files:
 
 ```bash
 # Generate a 64-character random token
@@ -20,21 +27,21 @@ php -r 'echo bin2hex(random_bytes(32));'
 API_TOKEN=<the generated hex string>
 ```
 
-Every request includes it as a Bearer token:
+If both are set, `.env` wins. If you're using `.env`, the admin UI panel
+will show "Set via .env" and disable the buttons.
+
+Every request includes the token as a Bearer header:
 
 ```
 Authorization: Bearer <API_TOKEN>
 ```
 
-Requests without a valid token get `401 Unauthorized`. Without `API_TOKEN`
-set in `.env`, the Bearer path is disabled entirely — existing installs
-are unaffected.
+Requests without a valid token get `401 Unauthorized`. With no token set
+anywhere, the Bearer path is disabled entirely — existing installs are
+unaffected.
 
-Rate limit: 60 authenticated requests per minute per client IP. Beyond that
-you get `429 Too many attempts`.
-
-To rotate: edit `.env`, replace the token, and deploy. There's no admin UI
-for token management; rotation is manual.
+Rate limit: 60 authenticated requests per minute per client IP. Beyond
+that you get `429 Too many attempts`.
 
 ## Common envelope
 
@@ -354,3 +361,34 @@ curl -s -X POST "$HOST/api/admin/uploads/$UPLOAD_ID/finalize" "${AUTH[@]}" "${JS
   "proxy": "filename.jpg | null"
 }
 ```
+
+## View & download stats
+
+Proofing galleries and collections track engagement automatically — no
+configuration needed.
+
+- A **view** is counted when a client opens the gallery/collection page
+  (or unlocks a password-protected one). `total` counts every load;
+  `unique` counts distinct visitors, identified by a long-lived
+  `vrs_vid` cookie with a salted-IP same-day dedup fallback.
+- A **download** is counted per file each time it's fetched — whether
+  downloaded individually or as part of a "Download All" zip. The
+  gallery also tracks how many times "Download All" was run.
+
+`GET /api/galleries` and `GET /api/collections` include `viewCount`,
+`uniqueVisitors`, and `lastViewedAt` (ISO8601 or `null`) on each record.
+
+`GET /api/admin/galleries/{id}/videos` returns:
+
+```json
+{
+  "videos": [ /* item records */ ],
+  "stats": {
+    "views":     { "total": 12, "unique": 3, "lastViewedAt": "ISO8601 | null" },
+    "downloads": { "downloadAll": 2, "items": { "p_xxx": 5, "v_yyy": 1 } }
+  }
+}
+```
+
+`POST /api/admin/galleries/{id}/stats/reset` clears a gallery's view and
+download counts.

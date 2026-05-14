@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0 — 2026-05-14
+- Gallery view counts and per-file download tracking for client galleries and collections
+- Reset stats action in gallery settings, behind a confirmation modal
+- Third-party upload API — Bearer auth with chunked, resumable uploads
+- Browser-based video thumbnail generation (drops the ffmpeg dependency)
+- Download All rewritten: client-side parallel fetch and zip assembly with a real progress bar
+- Collections collapsed by default in the admin sidebar
+- Galleries active by default on creation
+- Hardened git deploy to hard-reset against origin
+
 ## 1.0.0 — 2026-03-27
 - Rewrite backend from Node.js to single PHP file
 - Add photo support (jpg, jpeg, png, webp, gif) alongside videos

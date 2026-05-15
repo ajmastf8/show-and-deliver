@@ -1524,10 +1524,25 @@ function resolveEffectiveSettings($gallery) {
             $gallery['commentingEnabled'] = $col['commentingEnabled'] ?? false;
             $gallery['expiresAt'] = $col['expiresAt'] ?? null;
             $gallery['active'] = $col['active'] ?? true;
+            $gallery['_inheritedCollectionId'] = $col['id'];
             return $gallery;
         }
     }
     return $gallery;
+}
+
+function isCollectionUnlocked($collectionId) {
+    return !empty($_SESSION['unlocked_collections'])
+        && in_array($collectionId, $_SESSION['unlocked_collections'], true);
+}
+
+function markCollectionUnlocked($collectionId) {
+    if (!isset($_SESSION['unlocked_collections']) || !is_array($_SESSION['unlocked_collections'])) {
+        $_SESSION['unlocked_collections'] = [];
+    }
+    if (!in_array($collectionId, $_SESSION['unlocked_collections'], true)) {
+        $_SESSION['unlocked_collections'][] = $collectionId;
+    }
 }
 
 function getProofingGallery($token) {
@@ -1559,7 +1574,8 @@ function galleryPayload($gallery) {
 
 if ($method === 'GET' && matchRoute('/api/proofing/{token}', $uri, $params)) {
     $gallery = getProofingGallery($params['token']);
-    if (!empty($gallery['password'])) {
+    $colId = $gallery['_inheritedCollectionId'] ?? null;
+    if (!empty($gallery['password']) && !($colId && isCollectionUnlocked($colId))) {
         respond(['passwordRequired' => true, 'galleryName' => $gallery['name']]);
     }
     recordView(galleryStatsPath($gallery['id']));
@@ -1583,6 +1599,9 @@ if ($method === 'POST' && matchRoute('/api/proofing/{token}/unlock', $uri, $para
     }
 
     if (!$match) respondError('Incorrect password', 401);
+    if (!empty($gallery['_inheritedCollectionId'])) {
+        markCollectionUnlocked($gallery['_inheritedCollectionId']);
+    }
     recordView(galleryStatsPath($gallery['id']));
     respond(galleryPayload($gallery));
 }
@@ -1857,7 +1876,7 @@ if ($method === 'GET' && matchRoute('/api/collections/public/{token}', $uri, $pa
     if (!empty($col['expiresAt']) && strtotime($col['expiresAt']) < time()) {
         respondError('Collection expired', 410);
     }
-    if (!empty($col['password'])) {
+    if (!empty($col['password']) && !isCollectionUnlocked($col['id'])) {
         respond(['passwordRequired' => true, 'collectionName' => $col['name']]);
     }
     recordView(collectionStatsPath($col['id']));
@@ -1886,6 +1905,7 @@ if ($method === 'POST' && matchRoute('/api/collections/public/{token}/unlock', $
     }
 
     if (!$match) respondError('Incorrect password', 401);
+    markCollectionUnlocked($col['id']);
     recordView(collectionStatsPath($col['id']));
     respond(collectionPublicPayload($col));
 }

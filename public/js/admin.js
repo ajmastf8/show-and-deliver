@@ -1284,10 +1284,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const name = currentGallery.name;
 
     const hasVideos = currentGalleryItems.some(i => i.type === 'video');
-    const mediaWord = hasVideos ? 'video' : 'photo';
     const commentingOn = !!currentGallery.commentingEnabled;
 
-    const subject = `${name} — ${hasVideos ? 'Videos' : 'Photos'} ready for review`;
+    const subject = `Your ${hasVideos ? 'videos' : 'photos'} are ready — ${name}`;
 
     const passwordLine = currentGallery.hasPassword
       ? `\nPassword: [enter the gallery password here]\n`
@@ -1314,7 +1313,7 @@ Each comment is tied to a specific moment in the video, so I can see exactly wha
 
     const body = `Hello,
 
-Your ${mediaWord} gallery is ready for review.
+Your gallery is ready.
 
 ${galleryUrl}
 ${passwordLine}${commentsSection}

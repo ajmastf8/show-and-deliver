@@ -1324,14 +1324,24 @@ AJ Mast`;
     return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   }
 
+  function openMailtoInNewWindow(mailto) {
+    if (!mailto) return;
+    const a = document.createElement('a');
+    a.href = mailto;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+
   document.getElementById('email-link-btn').addEventListener('click', () => {
-    const mailto = buildGalleryMailto();
-    if (mailto) window.location.href = mailto;
+    openMailtoInNewWindow(buildGalleryMailto());
   });
 
   document.getElementById('gallery-link-email').addEventListener('click', () => {
-    const mailto = buildGalleryMailto();
-    if (mailto) window.location.href = mailto;
+    openMailtoInNewWindow(buildGalleryMailto());
   });
 
   document.getElementById('regen-link-btn').addEventListener('click', async () => {

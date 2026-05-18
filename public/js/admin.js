@@ -43,6 +43,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let collections = [];
   let currentGalleryId = null;
   let currentGallery = null;
+  let currentGalleryItems = [];
   let currentCollectionId = null;
 
   // ============ Auth ============
@@ -739,6 +740,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     currentGalleryId = gid;
     currentGallery = gallery;
+    currentGalleryItems = [];
     currentCollectionId = null;
     noGallery.style.display = 'none';
     videosPanel.style.display = '';
@@ -769,8 +771,20 @@ document.addEventListener('DOMContentLoaded', () => {
     renderGalleryList();
 
     if (tab === 'videos') loadVideos();
-    else if (tab === 'settings') loadSettings();
+    else if (tab === 'settings') { loadSettings(); if (isProofing) loadGalleryItemsForEmail(); }
     else if (tab === 'comments') loadComments();
+  }
+
+  async function loadGalleryItemsForEmail() {
+    if (!currentGalleryId) return;
+    const gid = currentGalleryId;
+    try {
+      const res = await fetch(`/api/admin/galleries/${gid}/videos`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const items = Array.isArray(data) ? data : (data.videos || []);
+      if (currentGalleryId === gid) currentGalleryItems = items;
+    } catch (e) {}
   }
 
   // ============ Tabs ============
@@ -1269,27 +1283,38 @@ document.addEventListener('DOMContentLoaded', () => {
     const galleryUrl = window.location.origin + '/gallery/' + currentGallery.token;
     const name = currentGallery.name;
 
-    const subject = `${name} — Videos for Review`;
+    const hasVideos = currentGalleryItems.some(i => i.type === 'video');
+    const mediaWord = hasVideos ? 'video' : 'photo';
+
+    const subject = `${name} — ${hasVideos ? 'Videos' : 'Photos'} ready for review`;
 
     const passwordLine = currentGallery.hasPassword
       ? `\nPassword: [enter the gallery password here]\n`
       : '';
 
+    const instructions = hasVideos
+      ? `1. Open the link and enter your name when prompted.
+2. Click any video to open it.
+3. Pause at the moment you'd like to comment on.
+4. Type your note in the box on the right — the timestamp is captured automatically.
+5. Press Enter to post (Shift+Enter for a new line).
+6. When you're finished with a video, click "Finish & Send Comments" to share your feedback.
+
+Each comment is tied to a specific moment in the video, so I can see exactly what you're referring to.`
+      : `1. Open the link and enter your name when prompted.
+2. Click any photo to open it.
+3. Type your note in the box on the right.
+4. Press Enter to post (Shift+Enter for a new line).
+5. When you're finished with a photo, click "Finish & Send Comments" to share your feedback.`;
+
     const body = `Hello,
 
-I'd like to share some videos with you for review.
+Your ${mediaWord} gallery is ready for review.
 
 ${galleryUrl}
 ${passwordLine}
-HOW TO LEAVE COMMENTS
-1. Open the link above and enter your name when prompted.
-2. Click on any video to open it.
-3. Play the video to the moment you'd like to comment on, then pause it.
-4. Type your comment in the box on the right — the timestamp is captured automatically when you start typing.
-5. Press Enter to post your comment (Shift+Enter for a new line).
-6. When you're finished with a video, click "Finish & Send Comments" to send your feedback.
-
-Your comments are time-stamped to the exact moment in the video, so I can find exactly what you're referring to.
+Leaving comments
+${instructions}
 
 Thanks,
 AJ Mast`;
@@ -1365,6 +1390,7 @@ AJ Mast`;
     const data = await res.json();
     const items = Array.isArray(data) ? data : (data.videos || []);
     const stats = (data && data.stats) || {};
+    currentGalleryItems = items;
     renderVideos(items, stats);
     renderGalleryStats(stats);
   }

@@ -1285,6 +1285,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const hasVideos = currentGalleryItems.some(i => i.type === 'video');
     const mediaWord = hasVideos ? 'video' : 'photo';
+    const commentingOn = !!currentGallery.commentingEnabled;
 
     const subject = `${name} — ${hasVideos ? 'Videos' : 'Photos'} ready for review`;
 
@@ -1292,8 +1293,10 @@ document.addEventListener('DOMContentLoaded', () => {
       ? `\nPassword: [enter the gallery password here]\n`
       : '';
 
-    const instructions = hasVideos
-      ? `1. Open the link and enter your name when prompted.
+    let commentsSection = '';
+    if (commentingOn) {
+      const instructions = hasVideos
+        ? `1. Open the link and enter your name when prompted.
 2. Click any video to open it.
 3. Pause at the moment you'd like to comment on.
 4. Type your note in the box on the right — the timestamp is captured automatically.
@@ -1301,21 +1304,20 @@ document.addEventListener('DOMContentLoaded', () => {
 6. When you're finished with a video, click "Finish & Send Comments" to share your feedback.
 
 Each comment is tied to a specific moment in the video, so I can see exactly what you're referring to.`
-      : `1. Open the link and enter your name when prompted.
+        : `1. Open the link and enter your name when prompted.
 2. Click any photo to open it.
 3. Type your note in the box on the right.
 4. Press Enter to post (Shift+Enter for a new line).
 5. When you're finished with a photo, click "Finish & Send Comments" to share your feedback.`;
+      commentsSection = `\nLeaving comments\n${instructions}\n`;
+    }
 
     const body = `Hello,
 
 Your ${mediaWord} gallery is ready for review.
 
 ${galleryUrl}
-${passwordLine}
-Leaving comments
-${instructions}
-
+${passwordLine}${commentsSection}
 Thanks,
 AJ Mast`;
 

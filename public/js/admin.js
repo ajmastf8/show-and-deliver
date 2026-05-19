@@ -1156,10 +1156,12 @@ document.addEventListener('DOMContentLoaded', () => {
       colInfo.style.display = '';
       document.getElementById('setting-collection-name').textContent = currentGallery.collectionName || 'Unknown';
       overrideCheck.checked = currentGallery.overrideCollectionSettings || false;
-      updateOverrideState();
     } else {
       colInfo.style.display = 'none';
     }
+    // Always recompute field enabled state — standalone galleries are always editable,
+    // collection members depend on the override toggle.
+    updateOverrideState();
 
     if (currentGallery.type === 'proofing') {
       const baseUrl = window.location.origin;
@@ -1175,20 +1177,20 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function updateOverrideState() {
-    const inCollection = currentGallery && currentGallery.collectionId && currentGallery.type === 'proofing';
-    if (!inCollection) return;
-    const isOverriding = document.getElementById('setting-override').checked;
-    // Disable/enable the proofing-only settings based on override state
+    if (!currentGallery) return;
+    const inCollection = currentGallery.collectionId && currentGallery.type === 'proofing';
+    // Standalone galleries are always editable. Collection members only when override is on.
+    const editable = !inCollection || document.getElementById('setting-override').checked;
     const fields = ['setting-password', 'setting-downloads', 'setting-commenting', 'setting-expires', 'setting-active'];
     fields.forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.disabled = !isOverriding;
+      if (el) el.disabled = !editable;
     });
     const removeBtn = document.getElementById('remove-password-btn');
-    if (removeBtn) removeBtn.disabled = !isOverriding;
-    // Visual dimming
+    if (removeBtn) removeBtn.disabled = !editable;
+    // Visual dimming only applies to collection members with override off.
     document.querySelectorAll('.setting-proofing-only').forEach(el => {
-      el.style.opacity = isOverriding ? '' : '0.5';
+      el.style.opacity = editable ? '' : '0.5';
     });
   }
 

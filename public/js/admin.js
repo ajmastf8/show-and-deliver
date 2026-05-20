@@ -1714,18 +1714,31 @@ AJ Mast`;
   }
 
   async function processUploadQueue(items) {
-    for (const item of items) {
-      const uploaded = await uploadFile(item.file, item.title, item.rowId);
-      if (uploaded) {
-        loadVideos();
-        // Newly uploaded videos get a browser-generated thumbnail from a
-        // random frame in the first 10s. Non-blocking: upload queue moves
-        // on while this runs in the background.
-        if (uploaded.type === 'video' && !uploaded.thumbnail) {
-          autoGenerateVideoThumbnail(uploaded).catch(() => { /* non-fatal */ });
+    // Run a small pool of uploads concurrently instead of one at a time. The
+    // server appends to the gallery atomically and releases its session lock
+    // after auth, so parallel requests are safe and genuinely overlap.
+    const CONCURRENCY = 3;
+    let next = 0;
+
+    async function worker() {
+      while (next < items.length) {
+        const item = items[next++];
+        const uploaded = await uploadFile(item.file, item.title, item.rowId);
+        if (uploaded) {
+          loadVideos();
+          // Newly uploaded videos get a browser-generated thumbnail from a
+          // random frame in the first 10s. Non-blocking: upload queue moves
+          // on while this runs in the background.
+          if (uploaded.type === 'video' && !uploaded.thumbnail) {
+            autoGenerateVideoThumbnail(uploaded).catch(() => { /* non-fatal */ });
+          }
         }
       }
     }
+
+    const pool = [];
+    for (let i = 0; i < Math.min(CONCURRENCY, items.length); i++) pool.push(worker());
+    await Promise.all(pool);
   }
 
   function uploadFile(file, title, rowId) {

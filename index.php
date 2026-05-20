@@ -20,6 +20,10 @@ foreach ([DATA_DIR, UPLOADS_DIR, THUMBS_DIR, PROXY_DIR, IMPORT_DIR, DATA_DIR . '
     if (!is_dir($dir)) mkdir($dir, 0755, true);
 }
 
+// GD decodes the full bitmap into RAM, so a 24–50MP camera JPEG can need
+// several hundred MB. The default 128M limit fatals mid-import on large photos.
+@ini_set('memory_limit', '512M');
+
 // Load .env
 function loadEnv() {
     $envFile = __DIR__ . '/.env';
@@ -170,8 +174,10 @@ function generateToken($length = 12) {
 }
 
 function requireAuth() {
-    // Browser path: session cookie set by /api/auth/login.
-    if (!empty($_SESSION['authenticated'])) return;
+    // Browser path: session cookie set by /api/auth/login. Release the session
+    // lock once auth is confirmed (we don't write to it here) so concurrent
+    // requests sharing the same cookie aren't serialized by PHP's file lock.
+    if (!empty($_SESSION['authenticated'])) { session_write_close(); return; }
 
     // Programmatic path: Authorization: Bearer <API_TOKEN>. Only active when
     // API_TOKEN is defined in .env (empty value disables the Bearer path).
@@ -257,30 +263,70 @@ function probeVideo($filePath) {
     ];
 }
 
+// EXIF orientation flag (1–8); 1 means no transform needed.
+function imageOrientation($filePath) {
+    if (!function_exists('exif_read_data')) return 1;
+    $exif = @exif_read_data($filePath);
+    $o = (int)($exif['Orientation'] ?? 1);
+    return ($o >= 1 && $o <= 8) ? $o : 1;
+}
+
+// Bake an EXIF orientation flag into a GD image's pixels, returning the
+// (possibly replaced) resource. GD strips EXIF on re-encode, so without this
+// portrait photos from phones/cameras come out sideways in thumbs/proxies.
+function applyExifOrientation($img, $orientation) {
+    switch ($orientation) {
+        case 2: imageflip($img, IMG_FLIP_HORIZONTAL); break;
+        case 3: $img = imagerotate($img, 180, 0); break;
+        case 4: imageflip($img, IMG_FLIP_VERTICAL); break;
+        case 5: $img = imagerotate($img, -90, 0); imageflip($img, IMG_FLIP_HORIZONTAL); break;
+        case 6: $img = imagerotate($img, -90, 0); break;
+        case 7: $img = imagerotate($img, 90, 0); imageflip($img, IMG_FLIP_HORIZONTAL); break;
+        case 8: $img = imagerotate($img, 90, 0); break;
+    }
+    return $img;
+}
+
+// Load an image into a GD resource with EXIF orientation already applied.
+function loadOrientedImage($srcPath) {
+    $info = @getimagesize($srcPath);
+    if (!$info) return false;
+    switch ($info[2]) {
+        case IMAGETYPE_JPEG: $src = @imagecreatefromjpeg($srcPath); break;
+        case IMAGETYPE_PNG:  $src = @imagecreatefrompng($srcPath); break;
+        case IMAGETYPE_WEBP: $src = @imagecreatefromwebp($srcPath); break;
+        case IMAGETYPE_GIF:  $src = @imagecreatefromgif($srcPath); break;
+        default: return false;
+    }
+    if (!$src) return false;
+    if ($info[2] === IMAGETYPE_JPEG) {
+        $src = applyExifOrientation($src, imageOrientation($srcPath));
+    }
+    return $src;
+}
+
 function probeImage($filePath) {
     $info = @getimagesize($filePath);
     if (!$info) return null;
-    return ['width' => $info[0], 'height' => $info[1]];
+    $w = $info[0];
+    $h = $info[1];
+    // Orientations 5–8 are rotated 90°, so displayed dimensions are swapped.
+    if ($info[2] === IMAGETYPE_JPEG && in_array(imageOrientation($filePath), [5, 6, 7, 8], true)) {
+        [$w, $h] = [$h, $w];
+    }
+    return ['width' => $w, 'height' => $h];
 }
 
 function generatePhotoThumbnail($srcPath, $thumbPath) {
-    $info = @getimagesize($srcPath);
-    if (!$info) return false;
-    [$origW, $origH, $type] = $info;
+    $src = loadOrientedImage($srcPath);
+    if (!$src) return false;
+    $origW = imagesx($src);
+    $origH = imagesy($src);
 
     $maxDim = 640;
     $ratio = min($maxDim / max($origW, 1), $maxDim / max($origH, 1), 1);
     $newW = (int)($origW * $ratio);
     $newH = (int)($origH * $ratio);
-
-    switch ($type) {
-        case IMAGETYPE_JPEG: $src = imagecreatefromjpeg($srcPath); break;
-        case IMAGETYPE_PNG: $src = imagecreatefrompng($srcPath); break;
-        case IMAGETYPE_WEBP: $src = imagecreatefromwebp($srcPath); break;
-        case IMAGETYPE_GIF: $src = imagecreatefromgif($srcPath); break;
-        default: return false;
-    }
-    if (!$src) return false;
 
     $dst = imagecreatetruecolor($newW, $newH);
     imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
@@ -291,23 +337,15 @@ function generatePhotoThumbnail($srcPath, $thumbPath) {
 }
 
 function generatePhotoProxy($srcPath, $proxyPath) {
-    $info = @getimagesize($srcPath);
-    if (!$info) return false;
-    [$origW, $origH, $type] = $info;
+    $src = loadOrientedImage($srcPath);
+    if (!$src) return false;
+    $origW = imagesx($src);
+    $origH = imagesy($src);
 
     $maxDim = 2048;
     $ratio = min($maxDim / max($origW, 1), $maxDim / max($origH, 1), 1);
     $newW = (int)($origW * $ratio);
     $newH = (int)($origH * $ratio);
-
-    switch ($type) {
-        case IMAGETYPE_JPEG: $src = imagecreatefromjpeg($srcPath); break;
-        case IMAGETYPE_PNG: $src = imagecreatefrompng($srcPath); break;
-        case IMAGETYPE_WEBP: $src = imagecreatefromwebp($srcPath); break;
-        case IMAGETYPE_GIF: $src = imagecreatefromgif($srcPath); break;
-        default: return false;
-    }
-    if (!$src) return false;
 
     $dst = imagecreatetruecolor($newW, $newH);
     imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
@@ -949,10 +987,8 @@ function registerGalleryItem(string $gid, string $destName, string $title): arra
         if ($meta) { $item['width'] = $meta['width']; $item['height'] = $meta['height']; }
         $thumbFilename = $item['id'] . '.jpg';
         $proxyFilename = $item['id'] . '_proxy.jpg';
-        generatePhotoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename);
-        generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename);
-        $item['thumbnail'] = $thumbFilename;
-        $item['proxy'] = $proxyFilename;
+        if (generatePhotoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename)) $item['thumbnail'] = $thumbFilename;
+        if (generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename)) $item['proxy'] = $proxyFilename;
     } else {
         $meta = probeVideo($destPath);
         if ($meta) {
@@ -961,9 +997,13 @@ function registerGalleryItem(string $gid, string $destName, string $title): arra
             $item['height'] = $meta['height'];
         }
     }
-    $videos = readGalleryVideos($gid);
-    $videos[] = $item;
-    writeGalleryVideos($gid, $videos);
+    // Atomic append: concurrent uploads to the same gallery must not clobber
+    // each other's additions to videos.json.
+    ensureGalleryDir($gid);
+    jsonUpdate(galleryDir($gid) . '/videos.json', function ($videos) use ($item) {
+        $videos[] = $item;
+        return $videos;
+    });
     return $item;
 }
 
@@ -1401,6 +1441,8 @@ if ($method === 'GET' && $uri === '/api/admin/import/files') {
 // Import: import files
 if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/import', $uri, $params)) {
     requireAuth();
+    // Resizing many large photos is slow; don't let the request time out partway.
+    @set_time_limit(0);
     $input = getInput();
     $filenames = $input['filenames'] ?? [];
     if (!$filenames) respondError('No files selected', 400);
@@ -1441,10 +1483,8 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/import', $uri, 
             if ($meta) { $item['width'] = $meta['width']; $item['height'] = $meta['height']; }
             $thumbFilename = $itemId . '.jpg';
             $proxyFilename = $itemId . '_proxy.jpg';
-            generatePhotoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename);
-            generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename);
-            $item['thumbnail'] = $thumbFilename;
-            $item['proxy'] = $proxyFilename;
+            if (generatePhotoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename)) $item['thumbnail'] = $thumbFilename;
+            if (generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename)) $item['proxy'] = $proxyFilename;
         } else {
             $meta = probeVideo($destPath);
             if ($meta) {
@@ -1461,9 +1501,12 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/import', $uri, 
 
         $videos[] = $item;
         $imported[] = $item;
+        // Persist after each file so a fatal on a later (large) image doesn't
+        // discard the ones already processed — their originals are already moved
+        // out of the import folder by the rename above.
+        writeGalleryVideos($params['gid'], $videos);
     }
 
-    writeGalleryVideos($params['gid'], $videos);
     respond(['imported' => $imported, 'errors' => $errors]);
 }
 

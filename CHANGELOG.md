@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0 — 2026-06-06
+- Multi-language closed captions / subtitles for videos (WebVTT)
+- Admin: per-video caption manager — upload, replace, and remove tracks in 14 common languages plus custom codes
+- Captions play in both the client gallery and portfolio lightboxes, toggled via the player's CC button
+- Download All now bundles each video's matching .vtt files into the zip
+- New per-video "Download Transcripts" button — zips all of that video's caption tracks
+
 ## 1.1.0 — 2026-05-14
 - Gallery view counts and per-file download tracking for client galleries and collections
 - Reset stats action in gallery settings, behind a confirmation modal

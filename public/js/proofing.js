@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const lightboxPhoto = document.getElementById('lightbox-photo');
   const lightboxTitle = document.getElementById('lightbox-title');
   const lightboxDownloadBtn = document.getElementById('lightbox-download-btn');
+  const lightboxTranscriptsBtn = document.getElementById('lightbox-transcripts-btn');
   const lightboxComments = document.getElementById('lightbox-comments');
   const commentForm = document.getElementById('comment-form');
   const commentText = document.getElementById('comment-text');
@@ -257,6 +258,21 @@ document.addEventListener('DOMContentLoaded', () => {
   function showSpinner() { lightboxSpinner.classList.add('active'); }
   function hideSpinner() { lightboxSpinner.classList.remove('active'); }
 
+  // Rebuild the <track> children for the lightbox video. Captions are
+  // off by default — the browser's CC menu lets the viewer pick a language.
+  function setCaptionTracks(video, captions) {
+    video.querySelectorAll('track').forEach(t => t.remove());
+    (captions || []).forEach(c => {
+      if (!c.filename) return;
+      const track = document.createElement('track');
+      track.kind = 'subtitles';
+      track.src = '/captions/' + encodeURIComponent(c.filename);
+      track.srclang = c.lang || '';
+      track.label = c.label || (c.lang || '').toUpperCase();
+      video.appendChild(track);
+    });
+  }
+
   // Show spinner while browser is buffering mid-playback
   lightboxVideo.addEventListener('waiting', showSpinner);
   lightboxVideo.addEventListener('playing', hideSpinner);
@@ -320,6 +336,7 @@ document.addEventListener('DOMContentLoaded', () => {
       lightboxVideo.style.display = '';
       showSpinner();
       lightboxVideo.src = '/uploads/' + encodeURIComponent(item.filename);
+      setCaptionTracks(lightboxVideo, item.captions);
       lightboxVideo.load();
       // Show timestamp UI
       if (commentTimestampRow) commentTimestampRow.style.display = '';
@@ -337,6 +354,15 @@ document.addEventListener('DOMContentLoaded', () => {
       };
     } else {
       lightboxDownloadBtn.style.display = 'none';
+    }
+
+    // Transcripts button: only for videos that actually have caption tracks,
+    // and only when downloads are enabled for the gallery.
+    if (galleryData.gallery.downloadsEnabled && !currentItemIsPhoto && item.captions && item.captions.length) {
+      lightboxTranscriptsBtn.style.display = '';
+      lightboxTranscriptsBtn.onclick = () => downloadTranscripts(item);
+    } else {
+      lightboxTranscriptsBtn.style.display = 'none';
     }
 
     // Reset send status
@@ -637,6 +663,44 @@ document.addEventListener('DOMContentLoaded', () => {
     return picked;
   }
 
+  // Download every caption (.vtt) track for one video, as-is, bundled into a zip.
+  async function downloadTranscripts(item) {
+    const captions = (item.captions || []).filter(c => c.filename);
+    if (!captions.length) return;
+
+    const titleBase = sanitizeName(item.title, sanitizeName(item.filename.replace(/\.[^.]+$/, ''), 'transcript'));
+
+    const used = new Set();
+    const entries = captions.map(c => ({
+      name: dedupeName(`${titleBase}.${c.lang}.vtt`, used),
+      url: '/captions/' + encodeURIComponent(c.filename),
+      mtime: Date.now(),
+    }));
+
+    lightboxTranscriptsBtn.disabled = true;
+    try {
+      const chunks = [];
+      await ZipWriter.zipToWriter({
+        entries,
+        write: async (buf) => { chunks.push(buf); },
+        concurrency: 4,
+      });
+      const blob = new Blob(chunks, { type: 'application/zip' });
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = `${titleBase} transcripts.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+    } catch (e) {
+      alert('Transcript download failed: ' + (e.message || e));
+    } finally {
+      lightboxTranscriptsBtn.disabled = false;
+    }
+  }
+
   downloadAllBtn.addEventListener('click', async () => {
     if (downloadActive) return;
     if (!galleryData || !galleryData.videos) return;
@@ -650,15 +714,30 @@ document.addEventListener('DOMContentLoaded', () => {
     const itemNounPlural = itemNoun + 's';
 
     const usedNames = new Set();
-    const entries = mediaItems.map(item => {
+    const entries = [];
+    mediaItems.forEach(item => {
       const ext = (item.filename.match(/\.([^.]+)$/) || [, ''])[1];
       const base = sanitizeName(item.title, sanitizeName(item.filename.replace(/\.[^.]+$/, ''), 'file'));
       const name = dedupeName(base + (ext ? '.' + ext : ''), usedNames);
-      return {
+      entries.push({
         name,
         url: `/api/proofing/${token}/download/${item.id}`,
         mtime: Date.now(),
-      };
+      });
+
+      // Bundle each video's caption tracks as sibling .vtt files, named to
+      // match the video so players auto-associate them.
+      if (item.type === 'video' && item.captions && item.captions.length) {
+        const videoBase = name.replace(/\.[^.]+$/, '');
+        item.captions.forEach(c => {
+          if (!c.filename) return;
+          entries.push({
+            name: dedupeName(`${videoBase}.${c.lang}.vtt`, usedNames),
+            url: '/captions/' + encodeURIComponent(c.filename),
+            mtime: Date.now(),
+          });
+        });
+      }
     });
 
     const galleryBase = sanitizeName(galleryData.gallery.name, 'gallery');
@@ -672,7 +751,7 @@ document.addEventListener('DOMContentLoaded', () => {
       `Downloading ${mediaItems.length} ${mediaItems.length === 1 ? itemNoun : itemNounPlural}`,
       'Fetching files and packaging your zip\u2026'
     );
-    setProgressTotals(mediaItems.length);
+    setProgressTotals(entries.length);
 
     const controller = new AbortController();
     downloadAbort = controller;

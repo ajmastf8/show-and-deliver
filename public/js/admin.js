@@ -1502,6 +1502,7 @@ AJ Mast`;
         <input type="text" class="title-input" value="${escapeHtml(entry.title)}">
         ${dlBadge}
         <button class="btn btn-icon replace-btn" title="Replace file">&#8635;</button>
+        ${isPhoto ? '' : `<button class="btn btn-icon cc-btn${(entry.captions && entry.captions.length) ? ' has-captions' : ''}" title="Captions">CC</button>`}
         ${isPhoto ? '' : '<button class="btn btn-icon thumb-btn" title="Set thumbnail">&#127910;</button>'}
         <button class="btn btn-icon toggle-vis ${entry.visible ? '' : 'hidden-video'}" title="${entry.visible ? 'Visible' : 'Hidden'}">
           ${entry.visible ? '&#128065;' : '&#128064;'}
@@ -1615,6 +1616,145 @@ AJ Mast`;
     });
     xhr.open('PUT', `/api/admin/galleries/${currentGalleryId}/videos/${replaceVideoId}/replace`);
     xhr.send(formData);
+  });
+
+  // ============ Captions ============
+
+  const CAPTION_LANGUAGES = [
+    { code: 'en', label: 'English' },
+    { code: 'es', label: 'Español' },
+    { code: 'fr', label: 'Français' },
+    { code: 'de', label: 'Deutsch' },
+    { code: 'it', label: 'Italiano' },
+    { code: 'pt', label: 'Português' },
+    { code: 'pt-br', label: 'Português (Brasil)' },
+    { code: 'nl', label: 'Nederlands' },
+    { code: 'zh', label: '中文' },
+    { code: 'ja', label: '日本語' },
+    { code: 'ko', label: '한국어' },
+    { code: 'ar', label: 'العربية' },
+    { code: 'hi', label: 'हिन्दी' },
+    { code: 'ru', label: 'Русский' },
+  ];
+
+  const captionsModal = document.getElementById('captions-modal');
+  const captionsList = document.getElementById('captions-list');
+  const captionLangSelect = document.getElementById('caption-lang');
+  const captionCustomLabel = document.getElementById('caption-custom-lang-label');
+  const captionCustomCode = document.getElementById('caption-custom-code');
+  const captionCustomLabelInput = document.getElementById('caption-custom-label');
+  const captionFileInput = document.getElementById('caption-file-input');
+  const captionUploadStatus = document.getElementById('caption-upload-status');
+  let captionsVideoId = null;
+
+  captionLangSelect.innerHTML = CAPTION_LANGUAGES
+    .map(l => `<option value="${l.code}">${escapeHtml(l.label)} (${l.code})</option>`)
+    .join('') + '<option value="__custom__">Other…</option>';
+
+  captionLangSelect.addEventListener('change', () => {
+    captionCustomLabel.style.display = captionLangSelect.value === '__custom__' ? '' : 'none';
+  });
+
+  videoList.addEventListener('click', e => {
+    const btn = e.target.closest('.cc-btn');
+    if (!btn) return;
+    const item = btn.closest('.admin-video-item');
+    openCaptionsModal(item.dataset.id);
+  });
+
+  function openCaptionsModal(videoId) {
+    captionsVideoId = videoId;
+    captionUploadStatus.textContent = '';
+    captionFileInput.value = '';
+    captionLangSelect.value = CAPTION_LANGUAGES[0].code;
+    captionCustomLabel.style.display = 'none';
+    captionCustomCode.value = '';
+    captionCustomLabelInput.value = '';
+    const item = currentGalleryItems.find(v => v.id === videoId);
+    document.getElementById('captions-modal-title').textContent = item ? '— ' + item.title : '';
+    renderCaptionsList();
+    captionsModal.style.display = '';
+  }
+
+  function renderCaptionsList() {
+    const item = currentGalleryItems.find(v => v.id === captionsVideoId);
+    const captions = (item && item.captions) || [];
+    if (!captions.length) {
+      captionsList.innerHTML = '<p style="font-size:13px;color:var(--color-body-text);">No captions yet.</p>';
+      return;
+    }
+    captionsList.innerHTML = captions.map(c => `
+      <div class="caption-track-row">
+        <span>${escapeHtml(c.label || c.lang)} <span style="color:var(--color-body-text);">(${escapeHtml(c.lang)})</span></span>
+        <button class="caption-track-remove" data-lang="${escapeHtml(c.lang)}" title="Remove">&times;</button>
+      </div>
+    `).join('');
+  }
+
+  function closeCaptionsModal() {
+    captionsModal.style.display = 'none';
+    captionsVideoId = null;
+  }
+
+  document.getElementById('captions-close-btn').addEventListener('click', closeCaptionsModal);
+  captionsModal.querySelector('.import-modal-backdrop').addEventListener('click', closeCaptionsModal);
+
+  captionsList.addEventListener('click', async e => {
+    const btn = e.target.closest('.caption-track-remove');
+    if (!btn || !captionsVideoId) return;
+    const lang = btn.dataset.lang;
+    if (!confirm(`Remove the "${lang}" caption track?`)) return;
+    const res = await fetch(`/api/admin/galleries/${currentGalleryId}/videos/${captionsVideoId}/captions/${encodeURIComponent(lang)}`, { method: 'DELETE' });
+    if (res.ok) {
+      await loadVideos();
+      renderCaptionsList();
+    } else {
+      captionUploadStatus.textContent = 'Could not remove caption.';
+    }
+  });
+
+  document.getElementById('caption-upload-btn').addEventListener('click', async () => {
+    if (!captionsVideoId) return;
+    const file = captionFileInput.files[0];
+    if (!file) { captionUploadStatus.textContent = 'Choose a .vtt file first.'; return; }
+
+    let lang, label;
+    if (captionLangSelect.value === '__custom__') {
+      lang = captionCustomCode.value.trim().toLowerCase();
+      label = captionCustomLabelInput.value.trim();
+      if (!/^[a-z]{2,3}(-[a-z]{2,4})?$/.test(lang)) {
+        captionUploadStatus.textContent = 'Enter a valid language code (e.g. en or pt-br).';
+        return;
+      }
+    } else {
+      lang = captionLangSelect.value;
+      const known = CAPTION_LANGUAGES.find(l => l.code === lang);
+      label = known ? known.label : lang.toUpperCase();
+    }
+
+    const formData = new FormData();
+    formData.append('caption', file);
+    formData.append('lang', lang);
+    formData.append('label', label);
+
+    captionUploadStatus.textContent = 'Uploading…';
+    try {
+      const res = await fetch(`/api/admin/galleries/${currentGalleryId}/videos/${captionsVideoId}/captions`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        captionFileInput.value = '';
+        captionUploadStatus.textContent = 'Caption added.';
+        await loadVideos();
+        renderCaptionsList();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        captionUploadStatus.textContent = err.error || 'Upload failed.';
+      }
+    } catch (e) {
+      captionUploadStatus.textContent = 'Upload failed.';
+    }
   });
 
   // ============ Add Section Header ============

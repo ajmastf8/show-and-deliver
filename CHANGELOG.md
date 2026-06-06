@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.1 — 2026-06-06
+- Tighten the client gallery video player: controls and captions now hug the video frame instead of spreading into the surrounding black space
+
 ## 1.2.0 — 2026-06-06
 - Multi-language closed captions / subtitles for videos (WebVTT)
 - Admin: per-video caption manager — upload, replace, and remove tracks in 14 common languages plus custom codes

@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       card.dataset.filename = item.filename;
       card.dataset.type = item.type || 'video';
       if (item.proxy) card.dataset.proxy = item.proxy;
+      if (item.captions && item.captions.length) card.dataset.captions = JSON.stringify(item.captions);
 
       let thumbContent;
       if (item.thumbnail) {
@@ -57,7 +58,11 @@ document.addEventListener('DOMContentLoaded', async () => {
           : src;
         openPhotoLightbox(photoSrc);
       } else {
-        openLightbox(src);
+        let captions = [];
+        if (card.dataset.captions) {
+          try { captions = JSON.parse(card.dataset.captions); } catch (e) {}
+        }
+        openLightbox(src, captions);
       }
     });
 
@@ -68,7 +73,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // --- Lightbox ---
 
-function openLightbox(videoSrc) {
+function openLightbox(videoSrc, captions) {
   const overlay = document.createElement('div');
   overlay.className = 'lightbox-overlay';
   overlay.innerHTML = `
@@ -83,6 +88,17 @@ function openLightbox(videoSrc) {
 
   const video = overlay.querySelector('video');
   const spinner = overlay.querySelector('.lightbox-spinner');
+
+  // Caption tracks (off by default; viewer toggles via the player's CC menu)
+  (captions || []).forEach(c => {
+    if (!c.filename) return;
+    const track = document.createElement('track');
+    track.kind = 'subtitles';
+    track.src = '/captions/' + encodeURIComponent(c.filename);
+    track.srclang = c.lang || '';
+    track.label = c.label || (c.lang || '').toUpperCase();
+    video.appendChild(track);
+  });
 
   video.addEventListener('waiting', () => spinner.classList.add('active'));
   video.addEventListener('playing', () => spinner.classList.remove('active'));

@@ -13,10 +13,11 @@ define('DATA_DIR', SITE_DATA . '/data');
 define('UPLOADS_DIR', SITE_DATA . '/uploads');
 define('THUMBS_DIR', SITE_DATA . '/thumbnails');
 define('PROXY_DIR', SITE_DATA . '/proxies');
+define('CAPTIONS_DIR', SITE_DATA . '/captions');
 define('IMPORT_DIR', SITE_DATA . '/imports');
 
 // Ensure directories exist
-foreach ([DATA_DIR, UPLOADS_DIR, THUMBS_DIR, PROXY_DIR, IMPORT_DIR, DATA_DIR . '/sessions', DATA_DIR . '/ratelimit'] as $dir) {
+foreach ([DATA_DIR, UPLOADS_DIR, THUMBS_DIR, PROXY_DIR, CAPTIONS_DIR, IMPORT_DIR, DATA_DIR . '/sessions', DATA_DIR . '/ratelimit'] as $dir) {
     if (!is_dir($dir)) mkdir($dir, 0755, true);
 }
 
@@ -240,6 +241,9 @@ $FFPROBE = findBinary('ffprobe');
 define('IMAGE_EXTS', ['jpg', 'jpeg', 'png', 'webp', 'gif']);
 define('VIDEO_EXTS', ['mp4', 'webm', 'mov', 'm4v']);
 define('MEDIA_EXTS', array_merge(VIDEO_EXTS, IMAGE_EXTS));
+// Closed-caption / subtitle sidecar files. WebVTT only — it's the format
+// browsers consume natively via <track>.
+define('CAPTION_EXT', 'vtt');
 
 function isImageFile($filename) {
     return in_array(strtolower(pathinfo($filename, PATHINFO_EXTENSION)), IMAGE_EXTS);
@@ -1218,6 +1222,88 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}', $
     respond($video);
 }
 
+// Add / replace a caption track (video only). Multipart: `caption` file plus
+// `lang` (BCP-47-ish, e.g. en / pt-br) and an optional display `label`.
+// Uploading a second file for an existing lang replaces it.
+if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/captions', $uri, $params)) {
+    requireAuth();
+    if (empty($_FILES['caption'])) respondError('No file uploaded', 400);
+
+    $file = $_FILES['caption'];
+    if ($file['error'] !== UPLOAD_ERR_OK) respondError('Upload error: ' . $file['error'], 400);
+
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    if ($ext !== CAPTION_EXT) respondError('Captions must be a .vtt (WebVTT) file', 400);
+    if ($file['size'] > 2 * 1024 * 1024) respondError('Caption file too large (>2MB)', 400);
+
+    $lang = strtolower(trim($_POST['lang'] ?? ''));
+    if (!preg_match('/^[a-z]{2,3}(-[a-z]{2,4})?$/', $lang)) {
+        respondError('Invalid language code (use e.g. "en" or "pt-br")', 400);
+    }
+    $label = trim($_POST['label'] ?? '');
+    if ($label === '') $label = strtoupper($lang);
+    if (mb_strlen($label) > 60) $label = mb_substr($label, 0, 60);
+
+    // Boundary validation: this file is served to browsers and parsed as
+    // captions, so confirm it actually starts with the WEBVTT signature
+    // (after an optional UTF-8 BOM) rather than trusting the extension.
+    $head = (string)file_get_contents($file['tmp_name'], false, null, 0, 16);
+    if (strncmp(ltrim($head, "\xEF\xBB\xBF"), 'WEBVTT', 6) !== 0) {
+        respondError('File does not look like a valid WebVTT (.vtt) caption file', 400);
+    }
+
+    $videos = readGalleryVideos($params['gid']);
+    $video = null;
+    foreach ($videos as &$v) {
+        if ($v['id'] === $params['vid']) { $video = &$v; break; }
+    }
+    unset($v);
+    if (!$video) respondError('Not found', 404);
+    if (($video['type'] ?? '') === 'photo') respondError('Captions can only be added to videos', 400);
+
+    // Drop any existing track for this language (file + record) before adding.
+    $captions = $video['captions'] ?? [];
+    foreach ($captions as $c) {
+        if (($c['lang'] ?? '') === $lang && !empty($c['filename'])) {
+            $old = CAPTIONS_DIR . '/' . $c['filename'];
+            if (file_exists($old)) unlink($old);
+        }
+    }
+    $captions = array_values(array_filter($captions, fn($c) => ($c['lang'] ?? '') !== $lang));
+
+    $destName = $video['id'] . '-' . $lang . '-' . time() . '.vtt';
+    move_uploaded_file($file['tmp_name'], CAPTIONS_DIR . '/' . $destName);
+
+    $captions[] = ['lang' => $lang, 'label' => $label, 'filename' => $destName];
+    $video['captions'] = $captions;
+    writeGalleryVideos($params['gid'], $videos);
+    respond($video);
+}
+
+// Remove a caption track by language code.
+if ($method === 'DELETE' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/captions/{lang}', $uri, $params)) {
+    requireAuth();
+    $videos = readGalleryVideos($params['gid']);
+    $video = null;
+    foreach ($videos as &$v) {
+        if ($v['id'] === $params['vid']) { $video = &$v; break; }
+    }
+    unset($v);
+    if (!$video) respondError('Not found', 404);
+
+    $lang = strtolower($params['lang']);
+    $captions = $video['captions'] ?? [];
+    foreach ($captions as $c) {
+        if (($c['lang'] ?? '') === $lang && !empty($c['filename'])) {
+            $p = CAPTIONS_DIR . '/' . $c['filename'];
+            if (file_exists($p)) unlink($p);
+        }
+    }
+    $video['captions'] = array_values(array_filter($captions, fn($c) => ($c['lang'] ?? '') !== $lang));
+    writeGalleryVideos($params['gid'], $videos);
+    respond($video);
+}
+
 // Generate thumbnail (video only)
 if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/thumbnail', $uri, $params)) {
     requireAuth();
@@ -1286,6 +1372,14 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/rep
         $oldProxy = PROXY_DIR . '/' . $video['proxy'];
         if (file_exists($oldProxy)) unlink($oldProxy);
     }
+    // Captions describe the old clip — drop them so they don't carry over to a
+    // different replacement file.
+    foreach (($video['captions'] ?? []) as $c) {
+        if (!empty($c['filename'])) {
+            $oldCap = CAPTIONS_DIR . '/' . $c['filename'];
+            if (file_exists($oldCap)) unlink($oldCap);
+        }
+    }
 
     $safeName = safeFilename($file['name']);
     $destName = time() . '-' . $safeName;
@@ -1298,7 +1392,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/rep
     $video['replacedAt'] = date('c');
     $video['thumbnail'] = null;
     $video['proxy'] = null;
-    unset($video['duration'], $video['width'], $video['height']);
+    unset($video['duration'], $video['width'], $video['height'], $video['captions']);
 
     if ($isPhoto) {
         $meta = probeImage($destPath);
@@ -1335,6 +1429,12 @@ if ($method === 'DELETE' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}'
     if (!empty($removed['proxy'])) {
         $proxyPath = PROXY_DIR . '/' . $removed['proxy'];
         if (file_exists($proxyPath)) unlink($proxyPath);
+    }
+    foreach (($removed['captions'] ?? []) as $c) {
+        if (!empty($c['filename'])) {
+            $capPath = CAPTIONS_DIR . '/' . $c['filename'];
+            if (file_exists($capPath)) unlink($capPath);
+        }
     }
 
     array_splice($videos, $idx, 1);

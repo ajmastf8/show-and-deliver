@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=14">
+  <link rel="stylesheet" href="/css/style.css?v=15">
 </head>
 <body>
   <header class="site-header">
@@ -575,8 +575,43 @@
     </div>
   </div>
 
+  <!-- Captions Modal -->
+  <div id="captions-modal" class="import-modal" style="display:none;">
+    <div class="import-modal-backdrop"></div>
+    <div class="import-modal-inner" style="max-width:460px;">
+      <h3>Captions <span id="captions-modal-title" style="font-weight:400;color:var(--color-body-text);"></span></h3>
+      <p style="font-size:12px;color:var(--color-body-text);margin-top:4px;">Upload a WebVTT (.vtt) file per language. Viewers turn captions on with the player's CC button.</p>
+
+      <div id="captions-list" style="display:flex;flex-direction:column;gap:6px;margin-top:12px;"></div>
+
+      <div style="border-top:1px solid var(--color-border);margin-top:14px;padding-top:14px;display:flex;flex-direction:column;gap:10px;">
+        <label style="font-size:13px;font-weight:600;color:var(--color-text);">
+          Language
+          <select id="caption-lang" class="setting-input" style="margin-top:4px;"></select>
+        </label>
+        <label id="caption-custom-lang-label" style="font-size:13px;font-weight:600;color:var(--color-text);display:none;">
+          Language code &amp; label
+          <div style="display:flex;gap:8px;margin-top:4px;">
+            <input type="text" id="caption-custom-code" class="setting-input" placeholder="code (e.g. pt-br)" style="flex:0 0 130px;">
+            <input type="text" id="caption-custom-label" class="setting-input" placeholder="label (e.g. Português)" style="flex:1;">
+          </div>
+        </label>
+        <input type="file" id="caption-file-input" accept=".vtt,text/vtt" class="setting-input" style="padding:6px;">
+        <div id="caption-upload-status" style="font-size:12px;color:var(--color-body-text);min-height:16px;"></div>
+      </div>
+
+      <div class="import-modal-actions" style="margin-top:16px;">
+        <div></div>
+        <div class="import-btns">
+          <button id="captions-close-btn" class="btn btn-secondary btn-sm">Close</button>
+          <button id="caption-upload-btn" class="btn btn-primary btn-sm">Add Caption</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="/js/header.js?v=2"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=39"></script>
+  <script src="/js/admin.js?v=40"></script>
 </body>
 </html>

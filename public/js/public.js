@@ -107,6 +107,39 @@ function openLightbox(videoSrc, captions) {
     spinner.classList.remove('active');
     video.play().catch(() => {});
   });
+
+  // Native controls paint at the bottom of the element box. Size the element to
+  // the picture height plus a strip for the control bar (picture pinned to the
+  // top via object-position) so the controls sit directly under the video
+  // instead of covering the bottom of the picture.
+  const CONTROL_BAR = 40;
+  const layout = () => {
+    if (!video.videoWidth) return;
+    if ((document.fullscreenElement || document.webkitFullscreenElement) === video) return;
+    const availW = video.parentElement.clientWidth;
+    const availH = window.innerHeight * 0.8;
+    const scale = Math.min(availW / video.videoWidth, (availH - CONTROL_BAR) / video.videoHeight);
+    video.style.width = (video.videoWidth * scale) + 'px';
+    video.style.height = (video.videoHeight * scale + CONTROL_BAR) + 'px';
+  };
+  const onFullscreen = () => {
+    if ((document.fullscreenElement || document.webkitFullscreenElement) === video) {
+      video.style.width = '';
+      video.style.height = '';
+    } else {
+      layout();
+    }
+  };
+  video.addEventListener('loadedmetadata', layout);
+  window.addEventListener('resize', layout);
+  document.addEventListener('fullscreenchange', onFullscreen);
+  document.addEventListener('webkitfullscreenchange', onFullscreen);
+  overlay._cleanup = () => {
+    window.removeEventListener('resize', layout);
+    document.removeEventListener('fullscreenchange', onFullscreen);
+    document.removeEventListener('webkitfullscreenchange', onFullscreen);
+  };
+
   video.load();
 
   // Close on overlay click (not video)
@@ -156,6 +189,7 @@ function openPhotoLightbox(imgSrc) {
 function closeLightbox(overlay) {
   const video = overlay.querySelector('video');
   if (video) video.pause();
+  if (overlay._cleanup) overlay._cleanup();
   overlay.remove();
   document.body.style.overflow = '';
 }

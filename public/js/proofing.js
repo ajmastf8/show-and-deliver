@@ -278,6 +278,37 @@ document.addEventListener('DOMContentLoaded', () => {
   lightboxVideo.addEventListener('playing', hideSpinner);
   lightboxVideo.addEventListener('canplay', hideSpinner);
 
+  // Native video controls paint at the bottom of the element box. Size the
+  // element to the picture height plus a strip for the control bar (with the
+  // picture pinned to the top via object-position), so the controls sit
+  // directly under the video instead of covering the bottom of the picture.
+  const VIDEO_CONTROL_BAR = 40;
+  function layoutLightboxVideo() {
+    if (currentItemIsPhoto || !lightboxVideo.videoWidth) return;
+    if ((document.fullscreenElement || document.webkitFullscreenElement) === lightboxVideo) return;
+    const wrap = lightboxVideo.parentElement;
+    const scale = Math.min(
+      wrap.clientWidth / lightboxVideo.videoWidth,
+      (wrap.clientHeight - VIDEO_CONTROL_BAR) / lightboxVideo.videoHeight
+    );
+    lightboxVideo.style.width = (lightboxVideo.videoWidth * scale) + 'px';
+    lightboxVideo.style.height = (lightboxVideo.videoHeight * scale + VIDEO_CONTROL_BAR) + 'px';
+  }
+  lightboxVideo.addEventListener('loadedmetadata', layoutLightboxVideo);
+  window.addEventListener('resize', layoutLightboxVideo);
+  // Clear the fixed size in fullscreen (the browser sizes the element itself),
+  // then recompute when returning to the windowed lightbox.
+  function onLightboxFullscreenChange() {
+    if ((document.fullscreenElement || document.webkitFullscreenElement) === lightboxVideo) {
+      lightboxVideo.style.width = '';
+      lightboxVideo.style.height = '';
+    } else {
+      layoutLightboxVideo();
+    }
+  }
+  document.addEventListener('fullscreenchange', onLightboxFullscreenChange);
+  document.addEventListener('webkitfullscreenchange', onLightboxFullscreenChange);
+
   // Build navigable items list (exclude headers and hidden)
   function getNavigableItems() {
     if (!galleryData) return [];

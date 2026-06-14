@@ -440,12 +440,16 @@ a { color: inherit; text-decoration: none; }
 }
 
 .lightbox-video-wrapper video {
-  /* Size the element box to the video's own aspect ratio (capped to the
-     wrapper) and center it, so the native controls and caption cues hug the
-     frame instead of anchoring to a stretched, letterboxed box. */
+  /* The native control bar paints at the bottom of the element box. JS
+     (layoutLightboxVideo) sizes the element to the picture height plus a strip
+     for the controls and pins the picture to the top, so the controls sit
+     directly under the video instead of overlapping the bottom of the picture.
+     object-fit: contain keeps the picture undistorted within that taller box. */
   max-width: 100%;
   max-height: 100%;
   margin: auto;
+  object-fit: contain;
+  object-position: top center;
   background: var(--color-black);
 }
 

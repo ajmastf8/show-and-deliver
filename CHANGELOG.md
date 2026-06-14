@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.2 — 2026-06-14
+- Video player controls now sit directly under the video frame instead of overlapping the bottom of the picture, in both the client gallery and portfolio lightboxes
+
 ## 1.2.1 — 2026-06-06
 - Tighten the client gallery video player: controls and captions now hug the video frame instead of spreading into the surrounding black space
 

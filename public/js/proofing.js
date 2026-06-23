@@ -269,8 +269,34 @@ document.addEventListener('DOMContentLoaded', () => {
       track.src = '/captions/' + encodeURIComponent(c.filename);
       track.srclang = c.lang || '';
       track.label = c.label || (c.lang || '').toUpperCase();
+      // Cues load once the viewer enables this track; reposition them then.
+      track.addEventListener('load', () => positionCues(video));
       video.appendChild(track);
     });
+  }
+
+  // The element box is taller than the picture (picture + a control strip at the
+  // bottom — see layoutLightboxVideo), so native caption cues, which anchor to
+  // the bottom of the element, land in the strip behind the controls and vanish.
+  // Pin each cue just above the strip so captions sit over the picture. In
+  // fullscreen the browser sizes the element itself, so restore default anchoring.
+  function positionCues(video) {
+    const fs = (document.fullscreenElement || document.webkitFullscreenElement) === video;
+    const h = video.clientHeight;
+    for (const tt of video.textTracks) {
+      if (!tt.cues) continue;
+      for (const cue of tt.cues) {
+        if (fs || !h) {
+          cue.snapToLines = true;
+          cue.line = 'auto';
+          try { cue.lineAlign = 'start'; } catch (e) {}
+        } else {
+          cue.snapToLines = false;
+          try { cue.lineAlign = 'end'; } catch (e) {}
+          cue.line = Math.max(0, Math.min(100, ((h - VIDEO_CONTROL_BAR - 8) / h) * 100));
+        }
+      }
+    }
   }
 
   // Show spinner while browser is buffering mid-playback
@@ -293,15 +319,22 @@ document.addEventListener('DOMContentLoaded', () => {
     );
     lightboxVideo.style.width = (lightboxVideo.videoWidth * scale) + 'px';
     lightboxVideo.style.height = (lightboxVideo.videoHeight * scale + VIDEO_CONTROL_BAR) + 'px';
+    positionCues(lightboxVideo);
   }
   lightboxVideo.addEventListener('loadedmetadata', layoutLightboxVideo);
   window.addEventListener('resize', layoutLightboxVideo);
+  // Re-pin cues each time a caption appears (also covers the moment the viewer
+  // first enables a track, when its cues become available).
+  lightboxVideo.textTracks.addEventListener('addtrack', e => {
+    e.track.addEventListener('cuechange', () => positionCues(lightboxVideo));
+  });
   // Clear the fixed size in fullscreen (the browser sizes the element itself),
   // then recompute when returning to the windowed lightbox.
   function onLightboxFullscreenChange() {
     if ((document.fullscreenElement || document.webkitFullscreenElement) === lightboxVideo) {
       lightboxVideo.style.width = '';
       lightboxVideo.style.height = '';
+      positionCues(lightboxVideo);
     } else {
       layoutLightboxVideo();
     }

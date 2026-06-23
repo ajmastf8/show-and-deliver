@@ -1629,7 +1629,7 @@ AJ Mast`;
     { code: 'pt', label: 'Português' },
     { code: 'pt-br', label: 'Português (Brasil)' },
     { code: 'nl', label: 'Nederlands' },
-    { code: 'zh', label: '中文' },
+    { code: 'zh', label: '中文 (Mandarin)' },
     { code: 'ja', label: '日本語' },
     { code: 'ko', label: '한국어' },
     { code: 'ar', label: 'العربية' },

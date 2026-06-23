@@ -89,6 +89,32 @@ function openLightbox(videoSrc, captions) {
   const video = overlay.querySelector('video');
   const spinner = overlay.querySelector('.lightbox-spinner');
 
+  const CONTROL_BAR = 40;
+
+  // The element box is taller than the picture (picture + a control strip at the
+  // bottom — see layout() below), so native caption cues, which anchor to the
+  // bottom of the element, land in the strip behind the controls and vanish. Pin
+  // each cue just above the strip so captions sit over the picture. In fullscreen
+  // the browser sizes the element itself, so restore default anchoring.
+  const positionCues = () => {
+    const fs = (document.fullscreenElement || document.webkitFullscreenElement) === video;
+    const h = video.clientHeight;
+    for (const tt of video.textTracks) {
+      if (!tt.cues) continue;
+      for (const cue of tt.cues) {
+        if (fs || !h) {
+          cue.snapToLines = true;
+          cue.line = 'auto';
+          try { cue.lineAlign = 'start'; } catch (e) {}
+        } else {
+          cue.snapToLines = false;
+          try { cue.lineAlign = 'end'; } catch (e) {}
+          cue.line = Math.max(0, Math.min(100, ((h - CONTROL_BAR - 8) / h) * 100));
+        }
+      }
+    }
+  };
+
   // Caption tracks (off by default; viewer toggles via the player's CC menu)
   (captions || []).forEach(c => {
     if (!c.filename) return;
@@ -97,7 +123,13 @@ function openLightbox(videoSrc, captions) {
     track.src = '/captions/' + encodeURIComponent(c.filename);
     track.srclang = c.lang || '';
     track.label = c.label || (c.lang || '').toUpperCase();
+    // Cues load once the viewer enables this track; reposition them then.
+    track.addEventListener('load', positionCues);
     video.appendChild(track);
+  });
+  // Re-pin cues each time a caption appears (covers the moment a track is enabled).
+  video.textTracks.addEventListener('addtrack', e => {
+    e.track.addEventListener('cuechange', positionCues);
   });
 
   video.addEventListener('waiting', () => spinner.classList.add('active'));
@@ -112,7 +144,6 @@ function openLightbox(videoSrc, captions) {
   // the picture height plus a strip for the control bar (picture pinned to the
   // top via object-position) so the controls sit directly under the video
   // instead of covering the bottom of the picture.
-  const CONTROL_BAR = 40;
   const layout = () => {
     if (!video.videoWidth) return;
     if ((document.fullscreenElement || document.webkitFullscreenElement) === video) return;
@@ -121,11 +152,13 @@ function openLightbox(videoSrc, captions) {
     const scale = Math.min(availW / video.videoWidth, (availH - CONTROL_BAR) / video.videoHeight);
     video.style.width = (video.videoWidth * scale) + 'px';
     video.style.height = (video.videoHeight * scale + CONTROL_BAR) + 'px';
+    positionCues();
   };
   const onFullscreen = () => {
     if ((document.fullscreenElement || document.webkitFullscreenElement) === video) {
       video.style.width = '';
       video.style.height = '';
+      positionCues();
     } else {
       layout();
     }

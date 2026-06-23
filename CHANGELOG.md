@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.3 — 2026-06-22
+- Fix closed captions not appearing in the video player: the 1.2.2 controls-below-the-frame change pushed caption cues into the control strip; cues are now pinned over the picture (and restored to default placement in fullscreen), in both the client gallery and portfolio lightboxes
+- Label the Chinese caption language option as "中文 (Mandarin)" so it's recognizable in the caption manager dropdown
+
 ## 1.2.2 — 2026-06-14
 - Video player controls now sit directly under the video frame instead of overlapping the bottom of the picture, in both the client gallery and portfolio lightboxes
 

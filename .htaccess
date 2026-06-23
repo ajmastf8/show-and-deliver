@@ -25,6 +25,12 @@ RewriteRule ^(.*)$ public/$1 [L]
 # Default document
 DirectoryIndex public/index.html
 
+# Serve WebVTT caption files with the correct MIME type. Safari (and some
+# strict browsers) refuse to parse a <track> that arrives as octet-stream.
+<IfModule mod_mime.c>
+  AddType text/vtt .vtt
+</IfModule>
+
 # Upload limits
 php_value upload_max_filesize 500M
 php_value post_max_size 500M

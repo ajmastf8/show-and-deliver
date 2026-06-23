@@ -90,29 +90,47 @@ function openLightbox(videoSrc, captions) {
   const spinner = overlay.querySelector('.lightbox-spinner');
 
   const CONTROL_BAR = 40;
+  const isFullscreen = () =>
+    (document.fullscreenElement || document.webkitFullscreenElement) === video;
 
-  // The element box is taller than the picture (picture + a control strip at the
-  // bottom — see layout() below), so native caption cues, which anchor to the
-  // bottom of the element, land in the strip behind the controls and vanish. Pin
-  // each cue just above the strip so captions sit over the picture. In fullscreen
-  // the browser sizes the element itself, so restore default anchoring.
-  const positionCues = () => {
-    const fs = (document.fullscreenElement || document.webkitFullscreenElement) === video;
-    const h = video.clientHeight;
+  // Native controls and native caption cues both anchor to the bottom of the
+  // <video> box. layout() makes that box taller than the picture so the controls
+  // sit in a strip below it — which also drops the native cues into that strip,
+  // out of sight, and browsers honor manual cue repositioning too inconsistently
+  // to rely on. So we render captions ourselves into an overlay pinned over the
+  // picture, and leave the native cues hidden in the strip.
+  const captionOverlay = document.createElement('div');
+  captionOverlay.className = 'lightbox-caption-overlay';
+  video.parentElement.appendChild(captionOverlay);
+
+  const layoutCaptionOverlay = () => {
+    if (isFullscreen()) { captionOverlay.style.display = 'none'; return; }
+    captionOverlay.style.display = '';
+    const wrap = video.parentElement;
+    const v = video.getBoundingClientRect();
+    const w = wrap.getBoundingClientRect();
+    captionOverlay.style.left = (v.left - w.left) + 'px';
+    captionOverlay.style.top = (v.top - w.top) + 'px';
+    captionOverlay.style.width = v.width + 'px';
+    captionOverlay.style.height = Math.max(0, v.height - CONTROL_BAR) + 'px';
+  };
+
+  // Mirror the active cues of whichever track the viewer enabled into the overlay.
+  // In fullscreen the native cues land correctly at the screen bottom, so we keep
+  // our overlay empty there.
+  const renderCaptions = () => {
+    if (isFullscreen()) { captionOverlay.replaceChildren(); return; }
+    const frag = document.createDocumentFragment();
     for (const tt of video.textTracks) {
-      if (!tt.cues) continue;
-      for (const cue of tt.cues) {
-        if (fs || !h) {
-          cue.snapToLines = true;
-          cue.line = 'auto';
-          try { cue.lineAlign = 'start'; } catch (e) {}
-        } else {
-          cue.snapToLines = false;
-          try { cue.lineAlign = 'end'; } catch (e) {}
-          cue.line = Math.max(0, Math.min(100, ((h - CONTROL_BAR - 8) / h) * 100));
-        }
+      if (tt.mode !== 'showing' || !tt.activeCues) continue;
+      for (const cue of tt.activeCues) {
+        const line = document.createElement('div');
+        line.className = 'lightbox-caption-line';
+        line.appendChild(cue.getCueAsHTML());
+        frag.appendChild(line);
       }
     }
+    captionOverlay.replaceChildren(frag);
   };
 
   // Caption tracks (off by default; viewer toggles via the player's CC menu)
@@ -123,14 +141,14 @@ function openLightbox(videoSrc, captions) {
     track.src = '/captions/' + encodeURIComponent(c.filename);
     track.srclang = c.lang || '';
     track.label = c.label || (c.lang || '').toUpperCase();
-    // Cues load once the viewer enables this track; reposition them then.
-    track.addEventListener('load', positionCues);
     video.appendChild(track);
   });
-  // Re-pin cues each time a caption appears (covers the moment a track is enabled).
+  // Re-render when captions change or the viewer toggles a track on/off.
   video.textTracks.addEventListener('addtrack', e => {
-    e.track.addEventListener('cuechange', positionCues);
+    e.track.addEventListener('cuechange', renderCaptions);
   });
+  video.textTracks.addEventListener('change', renderCaptions);
+  video.addEventListener('timeupdate', renderCaptions);
 
   video.addEventListener('waiting', () => spinner.classList.add('active'));
   video.addEventListener('playing', () => spinner.classList.remove('active'));
@@ -146,22 +164,23 @@ function openLightbox(videoSrc, captions) {
   // instead of covering the bottom of the picture.
   const layout = () => {
     if (!video.videoWidth) return;
-    if ((document.fullscreenElement || document.webkitFullscreenElement) === video) return;
+    if (isFullscreen()) return;
     const availW = video.parentElement.clientWidth;
     const availH = window.innerHeight * 0.8;
     const scale = Math.min(availW / video.videoWidth, (availH - CONTROL_BAR) / video.videoHeight);
     video.style.width = (video.videoWidth * scale) + 'px';
     video.style.height = (video.videoHeight * scale + CONTROL_BAR) + 'px';
-    positionCues();
+    layoutCaptionOverlay();
   };
   const onFullscreen = () => {
-    if ((document.fullscreenElement || document.webkitFullscreenElement) === video) {
+    if (isFullscreen()) {
       video.style.width = '';
       video.style.height = '';
-      positionCues();
     } else {
       layout();
     }
+    layoutCaptionOverlay();
+    renderCaptions();
   };
   video.addEventListener('loadedmetadata', layout);
   window.addEventListener('resize', layout);

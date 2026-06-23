@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.2.4 — 2026-06-23
+- Captions now display reliably in Firefox (and other browsers): with controls sitting below the video frame, the browser parked native caption cues in the control strip out of sight. Captions are now rendered in a custom overlay pinned over the picture, and the browser's own (duplicate) cue painting is suppressed in the windowed player; fullscreen still uses native cues
+
 ## 1.2.3 — 2026-06-22
 - Fix closed captions not appearing in the video player: the 1.2.2 controls-below-the-frame change pushed caption cues into the control strip; cues are now pinned over the picture (and restored to default placement in fullscreen), in both the client gallery and portfolio lightboxes
 - Label the Chinese caption language option as "中文 (Mandarin)" so it's recognizable in the caption manager dropdown

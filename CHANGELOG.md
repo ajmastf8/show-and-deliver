@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.2 — 2026-06-24
+- Fixed captions appearing twice (once over the video, once lower down). Now that the caption MIME type and the timecode offset are fixed, the browser renders caption cues correctly over the video on its own, so the custom caption overlay added in 1.2.4 was a duplicate — removed it and reverted to native caption rendering in both the client and portfolio players
+
 ## 1.3.1 — 2026-06-24
 - Admin Settings → Update now has a "Video Tools" section that installs a self-contained static ffmpeg build into the server's home directory, enabling automatic extraction of captions embedded in uploaded MP4s on hosts (like cPanel) without a system ffmpeg. Shows current ffmpeg status and installs on one click.
 

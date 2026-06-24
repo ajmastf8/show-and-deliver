@@ -1612,42 +1612,6 @@ a { color: inherit; text-decoration: none; }
   background: var(--color-black);
 }
 
-/* Suppress the browser's own caption painting in the windowed lightbox: Chrome/
-   Safari float native cues over the controls (duplicating our overlay), while
-   Firefox drops them into the hidden control strip. We render captions ourselves
-   instead (below). In fullscreen the browser places native cues correctly, so
-   this is scoped to non-fullscreen. */
-.lightbox-content video:not(:-webkit-full-screen)::-webkit-media-text-track-container {
-  display: none !important;
-}
-
-/* Captions are rendered here (over the picture) rather than by the browser,
-   which would otherwise paint them in the control strip below the picture.
-   JS (layoutCaptionOverlay) positions this over the video's picture area. */
-.lightbox-caption-overlay {
-  position: absolute;
-  pointer-events: none;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  padding-bottom: 8px;
-  z-index: 2;
-}
-
-.lightbox-caption-line {
-  max-width: 92%;
-  margin-top: 3px;
-  padding: 2px 8px;
-  background: rgba(0, 0, 0, 0.78);
-  color: #fff;
-  font-size: clamp(14px, 2.4vw, 22px);
-  line-height: 1.3;
-  text-align: center;
-  border-radius: 3px;
-  white-space: pre-wrap;
-}
-
 .lightbox-content .lightbox-spinner {
   display: none;
   position: absolute;

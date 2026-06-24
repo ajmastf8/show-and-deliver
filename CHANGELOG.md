@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.4 — 2026-06-24
+- Fixed "Install Video Tools" failing with "No writable home directory" on LiteSpeed/cPanel hosts where PHP has no usable home directory. The static ffmpeg build now installs into the app's `site-data/` directory (always writable, and persists across deploys), and ffmpeg lookup searches there as well as the home directory.
+
 ## 1.3.3 — 2026-06-24
 - Fixed the duplicate caption properly: with the controls-below-frame layout the browser's native caption renders below the picture, so the player keeps its own styled caption over the video and now hides the native one using the standard `::cue` method (works in Firefox, Safari and Chrome — the previous attempt was Chrome-only). Reverts the 1.3.2 approach, which left only the mispositioned native caption.
 

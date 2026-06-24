@@ -219,16 +219,22 @@ function escHtml($str) {
     return htmlspecialchars($str ?? '', ENT_QUOTES, 'UTF-8');
 }
 
-// Find ffmpeg/ffprobe
+// Where a self-installed static ffmpeg build lives. SITE_DATA is always writable
+// (uploads/captions are written there) and survives git deploys; the home dir is
+// a fallback but isn't writable under some LiteSpeed/cPanel setups.
+function ffmpegSearchBases() {
+    $home = getenv('HOME') ?: ($_SERVER['HOME'] ?? '');
+    return array_values(array_filter([SITE_DATA, $home]));
+}
+
+// Find ffmpeg/ffprobe: system PATH first, then a static build we installed.
 function findBinary($name) {
     $which = trim(shell_exec("which $name 2>/dev/null") ?? '');
     if ($which) return $which;
-    $home = getenv('HOME') ?: ($_SERVER['HOME'] ?? '');
-    if ($home) {
-        $dirs = glob("$home/ffmpeg-*-static");
-        if ($dirs) {
-            $candidate = $dirs[0] . "/$name";
-            if (file_exists($candidate)) return $candidate;
+    foreach (ffmpegSearchBases() as $base) {
+        foreach (glob("$base/ffmpeg-*-static") ?: [] as $dir) {
+            $candidate = $dir . "/$name";
+            if (is_file($candidate)) return $candidate;
         }
     }
     return $name; // fallback to PATH
@@ -260,19 +266,23 @@ function videoToolsStatus() {
     ];
 }
 
-// Download + unpack a static ffmpeg/ffprobe build into $HOME so findBinary()
-// (which globs $HOME/ffmpeg-*-static) picks it up — for cPanel/shared hosts with
-// no system ffmpeg. This is what powers automatic embedded-caption extraction.
+// Download + unpack a static ffmpeg/ffprobe build into a writable base that
+// findBinary() searches (site-data, or the home dir) — for cPanel/shared hosts
+// with no system ffmpeg. This is what powers automatic embedded-caption extraction.
 function installStaticFfmpeg() {
+    // Prefer the home dir when it's actually writable; otherwise use site-data,
+    // which the app always writes to. Some LiteSpeed/cPanel setups give PHP no
+    // usable $HOME, so home-only would fail there.
     $home = getenv('HOME') ?: ($_SERVER['HOME'] ?? '');
-    if (!$home || !is_dir($home) || !is_writable($home)) {
-        return ['ok' => false, 'error' => 'No writable home directory on the server.'];
+    $base = ($home && is_dir($home) && is_writable($home)) ? $home : SITE_DATA;
+    if (!is_dir($base) || !is_writable($base)) {
+        return ['ok' => false, 'error' => 'No writable directory available to install into.'];
     }
     $arch = php_uname('m');
     $builds = ['x86_64' => 'amd64', 'amd64' => 'amd64', 'aarch64' => 'arm64', 'arm64' => 'arm64', 'armv7l' => 'armhf', 'i686' => 'i686'];
     if (!isset($builds[$arch])) return ['ok' => false, 'error' => "Unsupported CPU architecture: $arch"];
     $url = 'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-' . $builds[$arch] . '-static.tar.xz';
-    $tar = $home . '/.ffmpeg-static-download.tar.xz';
+    $tar = $base . '/.ffmpeg-static-download.tar.xz';
     @unlink($tar);
 
     // Download (curl, then wget fallback).
@@ -286,12 +296,12 @@ function installStaticFfmpeg() {
     }
 
     // Replace any prior install so versions don't accumulate, then extract.
-    foreach (glob("$home/ffmpeg-*-static") ?: [] as $old) {
+    foreach (glob("$base/ffmpeg-*-static") ?: [] as $old) {
         shell_exec('rm -rf ' . escapeshellarg($old));
     }
-    $extract = shell_exec('tar xf ' . escapeshellarg($tar) . ' -C ' . escapeshellarg($home) . ' 2>&1');
+    $extract = shell_exec('tar xf ' . escapeshellarg($tar) . ' -C ' . escapeshellarg($base) . ' 2>&1');
     @unlink($tar);
-    if (!glob("$home/ffmpeg-*-static")) {
+    if (!glob("$base/ffmpeg-*-static")) {
         return ['ok' => false, 'error' => 'Could not unpack the archive (xz/tar may be unavailable).', 'detail' => trim((string)$extract)];
     }
 

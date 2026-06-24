@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.1 — 2026-06-24
+- Admin Settings → Update now has a "Video Tools" section that installs a self-contained static ffmpeg build into the server's home directory, enabling automatic extraction of captions embedded in uploaded MP4s on hosts (like cPanel) without a system ffmpeg. Shows current ffmpeg status and installs on one click.
+
 ## 1.3.0 — 2026-06-24
 - Caption files whose cues all fall past the end of the video (an editor timeline that starts at 01:00:00 exports captions an hour ahead, so they never display) are now auto-shifted back into the timeline on upload — the upload response notes when this happened
 - Videos uploaded with captions baked into the MP4 (an in-container subtitle track, which browsers can't display) now have those captions auto-extracted to a WebVTT sidecar so they show in the player (requires ffmpeg on the server)

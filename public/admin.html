@@ -164,6 +164,16 @@
               </div>
               <div id="deploy-status" class="email-status"></div>
             </div>
+
+            <div class="setting-group" style="margin-top:24px;border-top:1px solid var(--color-gray-light);padding-top:20px;">
+              <label>Video Tools (ffmpeg)</label>
+              <p class="setting-hint">Lets the server auto-extract captions that are embedded inside uploaded MP4s. Installs a self-contained static ffmpeg build into the server's home directory — no system access needed.</p>
+              <p id="video-tools-status" style="font-size:13px;margin:10px 0;">Checking…</p>
+              <div class="settings-actions">
+                <button id="install-ffmpeg-btn" class="btn btn-secondary" disabled>Install Video Tools</button>
+              </div>
+              <div id="video-tools-result" class="email-status"></div>
+            </div>
           </div>
 
           <!-- Header Tab -->
@@ -612,6 +622,6 @@
 
   <script src="/js/header.js?v=2"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=41"></script>
+  <script src="/js/admin.js?v=42"></script>
 </body>
 </html>

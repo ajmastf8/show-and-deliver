@@ -269,6 +269,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (tab.dataset.settingsTab === 'update' && !updateChecked) {
         checkForUpdates();
       }
+      // Refresh ffmpeg/video-tools status each time the Update tab is opened
+      if (tab.dataset.settingsTab === 'update') {
+        loadVideoToolsStatus();
+      }
       // Load header config when Header tab is first opened
       if (tab.dataset.settingsTab === 'header' && !headerLoaded) {
         loadHeaderConfig();
@@ -466,6 +470,62 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.disabled = false;
       btn.textContent = 'Update to Latest Version';
     }
+  });
+
+  // ============ Video Tools (ffmpeg) ============
+
+  async function loadVideoToolsStatus() {
+    const statusEl = document.getElementById('video-tools-status');
+    const btn = document.getElementById('install-ffmpeg-btn');
+    if (!statusEl || !btn) return;
+    statusEl.textContent = 'Checking…';
+    statusEl.style.color = '';
+    try {
+      const res = await fetch('/api/admin/video-tools/status');
+      const data = await res.json();
+      if (data.ffmpeg && data.ffprobe) {
+        statusEl.innerHTML = '✅ Installed' + (data.version ? ' (ffmpeg ' + escapeHtml(data.version) + ')' : '') +
+          ' — captions embedded in uploaded MP4s are extracted automatically.';
+        statusEl.style.color = '#4caf50';
+        btn.textContent = 'Reinstall Video Tools';
+      } else {
+        statusEl.innerHTML = '⚠️ Not installed — captions baked into uploaded MP4s won\'t be extracted until this is installed.';
+        statusEl.style.color = '#e0a800';
+        btn.textContent = 'Install Video Tools';
+      }
+      btn.disabled = false;
+    } catch (err) {
+      statusEl.textContent = 'Could not check status: ' + err.message;
+      statusEl.style.color = '#e00';
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById('install-ffmpeg-btn').addEventListener('click', async () => {
+    const btn = document.getElementById('install-ffmpeg-btn');
+    const resultEl = document.getElementById('video-tools-result');
+    if (!confirm('Download and install a static ffmpeg build on the server? This can take a minute.')) return;
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Installing… (this can take a minute)';
+    resultEl.textContent = '';
+    try {
+      const res = await fetch('/api/admin/video-tools/install', { method: 'POST' });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        resultEl.innerHTML = '✅ Installed' + (data.status && data.status.version ? ' ffmpeg ' + escapeHtml(data.status.version) : '') +
+          '. Re-upload or replace a video to extract its embedded captions.';
+        resultEl.style.color = '#4caf50';
+      } else {
+        resultEl.textContent = (data && data.error) ? data.error : 'Install failed.';
+        resultEl.style.color = '#e00';
+      }
+    } catch (err) {
+      resultEl.textContent = 'Network error: ' + err.message;
+      resultEl.style.color = '#e00';
+    }
+    btn.textContent = original;
+    loadVideoToolsStatus();
   });
 
   // ============ Header Settings ============

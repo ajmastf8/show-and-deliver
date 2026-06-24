@@ -237,6 +237,75 @@ function findBinary($name) {
 $FFMPEG = findBinary('ffmpeg');
 $FFPROBE = findBinary('ffprobe');
 
+// Does a binary path actually run and report a version? findBinary() may hand
+// back a bare 'ffmpeg' that isn't really on PATH, so confirm before trusting it.
+function toolRuns($bin) {
+    if (!$bin) return false;
+    $out = shell_exec(escapeshellcmd($bin) . ' -version 2>/dev/null');
+    return is_string($out) && stripos($out, 'version') !== false;
+}
+
+function videoToolsStatus() {
+    global $FFMPEG, $FFPROBE;
+    $ffmpegOk = toolRuns($FFMPEG);
+    $version = '';
+    if ($ffmpegOk && preg_match('/ffmpeg version (\S+)/', (string)shell_exec(escapeshellcmd($FFMPEG) . ' -version 2>/dev/null'), $m)) {
+        $version = $m[1];
+    }
+    return [
+        'ffmpeg'  => $ffmpegOk,
+        'ffprobe' => toolRuns($FFPROBE),
+        'version' => $version,
+        'path'    => $ffmpegOk ? $FFMPEG : null,
+    ];
+}
+
+// Download + unpack a static ffmpeg/ffprobe build into $HOME so findBinary()
+// (which globs $HOME/ffmpeg-*-static) picks it up — for cPanel/shared hosts with
+// no system ffmpeg. This is what powers automatic embedded-caption extraction.
+function installStaticFfmpeg() {
+    $home = getenv('HOME') ?: ($_SERVER['HOME'] ?? '');
+    if (!$home || !is_dir($home) || !is_writable($home)) {
+        return ['ok' => false, 'error' => 'No writable home directory on the server.'];
+    }
+    $arch = php_uname('m');
+    $builds = ['x86_64' => 'amd64', 'amd64' => 'amd64', 'aarch64' => 'arm64', 'arm64' => 'arm64', 'armv7l' => 'armhf', 'i686' => 'i686'];
+    if (!isset($builds[$arch])) return ['ok' => false, 'error' => "Unsupported CPU architecture: $arch"];
+    $url = 'https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-' . $builds[$arch] . '-static.tar.xz';
+    $tar = $home . '/.ffmpeg-static-download.tar.xz';
+    @unlink($tar);
+
+    // Download (curl, then wget fallback).
+    shell_exec('curl -fsSL ' . escapeshellarg($url) . ' -o ' . escapeshellarg($tar) . ' 2>&1');
+    if (!is_file($tar) || filesize($tar) < 1000000) {
+        shell_exec('wget -q ' . escapeshellarg($url) . ' -O ' . escapeshellarg($tar) . ' 2>&1');
+    }
+    if (!is_file($tar) || filesize($tar) < 1000000) {
+        @unlink($tar);
+        return ['ok' => false, 'error' => 'Download failed — the server may block outbound HTTPS, or curl/wget is unavailable.'];
+    }
+
+    // Replace any prior install so versions don't accumulate, then extract.
+    foreach (glob("$home/ffmpeg-*-static") ?: [] as $old) {
+        shell_exec('rm -rf ' . escapeshellarg($old));
+    }
+    $extract = shell_exec('tar xf ' . escapeshellarg($tar) . ' -C ' . escapeshellarg($home) . ' 2>&1');
+    @unlink($tar);
+    if (!glob("$home/ffmpeg-*-static")) {
+        return ['ok' => false, 'error' => 'Could not unpack the archive (xz/tar may be unavailable).', 'detail' => trim((string)$extract)];
+    }
+
+    // Re-resolve binaries now that the static build is in place, and verify.
+    global $FFMPEG, $FFPROBE;
+    $FFMPEG = findBinary('ffmpeg');
+    $FFPROBE = findBinary('ffprobe');
+    $status = videoToolsStatus();
+    if (!$status['ffmpeg'] || !$status['ffprobe']) {
+        return ['ok' => false, 'error' => 'Installed the files but they will not run on this server.', 'status' => $status];
+    }
+    return ['ok' => true, 'status' => $status];
+}
+
 // Image extensions
 define('IMAGE_EXTS', ['jpg', 'jpeg', 'png', 'webp', 'gif']);
 define('VIDEO_EXTS', ['mp4', 'webm', 'mov', 'm4v']);
@@ -2347,6 +2416,20 @@ if ($method === 'POST' && $uri === '/api/settings/email/test') {
 }
 
 // Update check — compare local vs remote version
+// Report whether ffmpeg/ffprobe are available (drives the admin "Video Tools" UI).
+if ($method === 'GET' && $uri === '/api/admin/video-tools/status') {
+    requireAuth();
+    respond(videoToolsStatus());
+}
+
+// Install a static ffmpeg build into the server's home directory.
+if ($method === 'POST' && $uri === '/api/admin/video-tools/install') {
+    requireAuth();
+    @set_time_limit(300);
+    $res = installStaticFfmpeg();
+    respond($res, !empty($res['ok']) ? 200 : 500);
+}
+
 if ($method === 'GET' && $uri === '/api/settings/update') {
     requireAuth();
     $dir = __DIR__;

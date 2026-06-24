@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.3.3 — 2026-06-24
+- Fixed the duplicate caption properly: with the controls-below-frame layout the browser's native caption renders below the picture, so the player keeps its own styled caption over the video and now hides the native one using the standard `::cue` method (works in Firefox, Safari and Chrome — the previous attempt was Chrome-only). Reverts the 1.3.2 approach, which left only the mispositioned native caption.
+
 ## 1.3.2 — 2026-06-24
 - Fixed captions appearing twice (once over the video, once lower down). Now that the caption MIME type and the timecode offset are fixed, the browser renders caption cues correctly over the video on its own, so the custom caption overlay added in 1.2.4 was a duplicate — removed it and reverted to native caption rendering in both the client and portfolio players
 

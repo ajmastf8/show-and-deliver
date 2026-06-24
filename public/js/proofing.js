@@ -262,6 +262,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // off by default — the browser's CC menu lets the viewer pick a language.
   function setCaptionTracks(video, captions) {
     video.querySelectorAll('track').forEach(t => t.remove());
+    captionOverlay.replaceChildren();
     (captions || []).forEach(c => {
       if (!c.filename) return;
       const track = document.createElement('track');
@@ -278,16 +279,57 @@ document.addEventListener('DOMContentLoaded', () => {
   lightboxVideo.addEventListener('playing', hideSpinner);
   lightboxVideo.addEventListener('canplay', hideSpinner);
 
+  // Native controls and native caption cues both anchor to the bottom of the
+  // <video> box. layoutLightboxVideo makes that box taller than the picture so
+  // the controls sit in a strip below it — which also drops the native cues into
+  // that strip, out of sight, and browsers honor manual cue repositioning too
+  // inconsistently to rely on. So we render captions ourselves into an overlay
+  // pinned over the picture, and leave the native cues hidden in the strip.
+  const VIDEO_CONTROL_BAR = 40;
+  const captionOverlay = document.createElement('div');
+  captionOverlay.className = 'lightbox-caption-overlay';
+  lightboxVideo.parentElement.appendChild(captionOverlay);
+
   function isLightboxFullscreen() {
     return (document.fullscreenElement || document.webkitFullscreenElement) === lightboxVideo;
+  }
+
+  // Pin the overlay over the picture area (the element box minus the control
+  // strip), matching the centered video's current on-screen rect.
+  function layoutCaptionOverlay() {
+    if (isLightboxFullscreen()) { captionOverlay.style.display = 'none'; return; }
+    captionOverlay.style.display = '';
+    const wrap = lightboxVideo.parentElement;
+    const v = lightboxVideo.getBoundingClientRect();
+    const w = wrap.getBoundingClientRect();
+    captionOverlay.style.left = (v.left - w.left) + 'px';
+    captionOverlay.style.top = (v.top - w.top) + 'px';
+    captionOverlay.style.width = v.width + 'px';
+    captionOverlay.style.height = Math.max(0, v.height - VIDEO_CONTROL_BAR) + 'px';
+  }
+
+  // Mirror the active cues of whichever track the viewer enabled into the overlay.
+  // In fullscreen the browser sizes the element itself and the native cues land
+  // correctly at the screen bottom, so we keep our overlay empty there.
+  function renderCaptions() {
+    if (isLightboxFullscreen()) { captionOverlay.replaceChildren(); return; }
+    const frag = document.createDocumentFragment();
+    for (const tt of lightboxVideo.textTracks) {
+      if (tt.mode !== 'showing' || !tt.activeCues) continue;
+      for (const cue of tt.activeCues) {
+        const line = document.createElement('div');
+        line.className = 'lightbox-caption-line';
+        line.appendChild(cue.getCueAsHTML());
+        frag.appendChild(line);
+      }
+    }
+    captionOverlay.replaceChildren(frag);
   }
 
   // Native video controls paint at the bottom of the element box. Size the
   // element to the picture height plus a strip for the control bar (with the
   // picture pinned to the top via object-position), so the controls sit
   // directly under the video instead of covering the bottom of the picture.
-  // Caption cues are rendered by the browser, over the picture.
-  const VIDEO_CONTROL_BAR = 40;
   function layoutLightboxVideo() {
     if (currentItemIsPhoto || !lightboxVideo.videoWidth) return;
     if (isLightboxFullscreen()) return;
@@ -298,9 +340,16 @@ document.addEventListener('DOMContentLoaded', () => {
     );
     lightboxVideo.style.width = (lightboxVideo.videoWidth * scale) + 'px';
     lightboxVideo.style.height = (lightboxVideo.videoHeight * scale + VIDEO_CONTROL_BAR) + 'px';
+    layoutCaptionOverlay();
   }
   lightboxVideo.addEventListener('loadedmetadata', layoutLightboxVideo);
   window.addEventListener('resize', layoutLightboxVideo);
+  lightboxVideo.addEventListener('timeupdate', renderCaptions);
+  // Re-render when captions change or the viewer toggles a track on/off.
+  lightboxVideo.textTracks.addEventListener('addtrack', e => {
+    e.track.addEventListener('cuechange', renderCaptions);
+  });
+  lightboxVideo.textTracks.addEventListener('change', renderCaptions);
   // Clear the fixed size in fullscreen (the browser sizes the element itself),
   // then recompute when returning to the windowed lightbox.
   function onLightboxFullscreenChange() {
@@ -310,6 +359,8 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       layoutLightboxVideo();
     }
+    layoutCaptionOverlay();
+    renderCaptions();
   }
   document.addEventListener('fullscreenchange', onLightboxFullscreenChange);
   document.addEventListener('webkitfullscreenchange', onLightboxFullscreenChange);

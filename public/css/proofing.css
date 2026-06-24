@@ -453,6 +453,50 @@ a { color: inherit; text-decoration: none; }
   background: var(--color-black);
 }
 
+/* Hide the browser's own caption painting in the windowed lightbox. With the
+   controls-below-frame layout the <video> box is taller than the picture, so
+   native cues anchor below the picture; we render them ourselves in
+   .lightbox-caption-overlay (below) instead. ::cue is the cross-browser way to
+   restyle native cues (Chrome, Firefox, Safari) — transparent text + background
+   makes them invisible. Scoped to non-fullscreen, where our overlay can paint;
+   in fullscreen the browser positions native cues correctly and we let them show.
+   The two rules differ only in the fullscreen pseudo so each engine keeps its own. */
+.lightbox-video-wrapper video:not(:fullscreen)::cue {
+  color: transparent;
+  background-color: transparent;
+}
+.lightbox-video-wrapper video:not(:-webkit-full-screen)::cue {
+  color: transparent;
+  background-color: transparent;
+}
+
+/* Captions are rendered here (over the picture) rather than by the browser,
+   which would otherwise paint them in the control strip below the picture.
+   JS (layoutCaptionOverlay) positions this over the video's picture area. */
+.lightbox-caption-overlay {
+  position: absolute;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding-bottom: 8px;
+  z-index: 2;
+}
+
+.lightbox-caption-line {
+  max-width: 92%;
+  margin-top: 3px;
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.78);
+  color: #fff;
+  font-size: clamp(14px, 2.4vw, 22px);
+  line-height: 1.3;
+  text-align: center;
+  border-radius: 3px;
+  white-space: pre-wrap;
+}
+
 .lightbox-photo {
   flex: 1;
   width: 100%;

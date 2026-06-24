@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.0 — 2026-06-24
+- Caption files whose cues all fall past the end of the video (an editor timeline that starts at 01:00:00 exports captions an hour ahead, so they never display) are now auto-shifted back into the timeline on upload — the upload response notes when this happened
+- Videos uploaded with captions baked into the MP4 (an in-container subtitle track, which browsers can't display) now have those captions auto-extracted to a WebVTT sidecar so they show in the player (requires ffmpeg on the server)
+- Video duration is now read on upload even without ffmpeg, via a built-in MP4 parser — this is what lets the caption auto-shift work on hosts that don't have ffprobe
+
 ## 1.2.4 — 2026-06-23
 - Captions now display reliably in Firefox (and other browsers): with controls sitting below the video frame, the browser parked native caption cues in the control strip out of sight. Captions are now rendered in a custom overlay pinned over the picture, and the browser's own (duplicate) cue painting is suppressed in the windowed player; fullscreen still uses native cues
 

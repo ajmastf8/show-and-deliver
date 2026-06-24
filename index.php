@@ -267,6 +267,201 @@ function probeVideo($filePath) {
     ];
 }
 
+// Duration (seconds) straight from the MP4/MOV `mvhd` box — no ffmpeg needed, so
+// it works on hosts without ffprobe (where probeVideo() returns nothing). Seeks
+// past `mdat`, so it's cheap even on multi-hundred-MB files. Returns 0 on failure.
+function mp4DurationSeconds($path) {
+    $fh = @fopen($path, 'rb');
+    if (!$fh) return 0.0;
+    try {
+        return mp4FindMvhd($fh, @filesize($path) ?: 0, 0) ?: 0.0;
+    } finally {
+        fclose($fh);
+    }
+}
+function mp4FindMvhd($fh, $end, $start) {
+    $pos = $start;
+    while ($pos + 8 <= $end) {
+        fseek($fh, $pos);
+        $hdr = fread($fh, 8);
+        if (strlen($hdr) < 8) break;
+        $size = unpack('N', substr($hdr, 0, 4))[1];
+        $type = substr($hdr, 4, 4);
+        $headerLen = 8;
+        if ($size === 1) {                      // 64-bit largesize
+            $p = unpack('Nhi/Nlo', fread($fh, 8));
+            $size = $p['hi'] * 4294967296 + $p['lo'];
+            $headerLen = 16;
+        } elseif ($size === 0) {
+            $size = $end - $pos;                 // box runs to end of file
+        }
+        if ($size < $headerLen) break;
+        $contentStart = $pos + $headerLen;
+        $contentEnd = $pos + $size;
+        if ($type === 'moov' || $type === 'trak' || $type === 'mdia') {
+            $d = mp4FindMvhd($fh, min($contentEnd, $end), $contentStart);
+            if ($d) return $d;
+        } elseif ($type === 'mvhd') {
+            fseek($fh, $contentStart);
+            $ver = ord(fread($fh, 1));
+            fread($fh, 3);                       // flags
+            if ($ver === 1) {
+                fread($fh, 16);                  // creation + modification times
+                $timescale = unpack('N', fread($fh, 4))[1];
+                $p = unpack('Nhi/Nlo', fread($fh, 8));
+                $duration = $p['hi'] * 4294967296 + $p['lo'];
+            } else {
+                fread($fh, 8);
+                $timescale = unpack('N', fread($fh, 4))[1];
+                $duration = unpack('N', fread($fh, 4))[1];
+            }
+            return $timescale > 0 ? $duration / $timescale : 0.0;
+        }
+        $pos = $contentEnd;
+    }
+    return 0.0;
+}
+
+// Best-available duration: a stored value, else ffprobe, else the pure-PHP MP4
+// reader — so callers get a usable number whether or not ffmpeg is installed.
+function resolveVideoDuration($path, $stored = 0) {
+    $d = (float)$stored;
+    if ($d > 0) return $d;
+    $meta = probeVideo($path);
+    if ($meta && ($meta['duration'] ?? 0) > 0) return (float)$meta['duration'];
+    return mp4DurationSeconds($path);
+}
+
+// ---- WebVTT timecode helpers -------------------------------------------------
+
+function vttTsToSeconds($ts) {
+    $p = explode(':', $ts);
+    if (count($p) === 3) return $p[0] * 3600 + $p[1] * 60 + (float)$p[2];
+    return $p[0] * 60 + (float)$p[1];
+}
+
+function secondsToVttTs($total) {
+    if ($total < 0) $total = 0;
+    $h = floor($total / 3600);
+    $rem = $total - $h * 3600;
+    $m = floor($rem / 60);
+    $s = $rem - $m * 60;
+    return sprintf('%02d:%02d:%06.3f', $h, $m, $s);
+}
+
+// Earliest start / latest end (seconds) across all cue timing lines, or null.
+function vttTimeBounds($content) {
+    $re = '/((?:\d{2,}:)?\d{2}:\d{2}\.\d{3})\s*-->\s*((?:\d{2,}:)?\d{2}:\d{2}\.\d{3})/';
+    if (!preg_match_all($re, $content, $rows, PREG_SET_ORDER)) return null;
+    $min = INF; $max = -INF;
+    foreach ($rows as $r) {
+        $s = vttTsToSeconds($r[1]); $e = vttTsToSeconds($r[2]);
+        if ($s < $min) $min = $s;
+        if ($e > $max) $max = $e;
+    }
+    return [$min, $max];
+}
+
+// Editors whose timeline starts at a non-zero timecode base (commonly 01:00:00)
+// export captions an hour-plus ahead of the footage, so every cue lands past the
+// end of the clip and nothing ever displays. When the WHOLE track sits beyond the
+// video's duration, shift every cue back by whole hours so it lands in range.
+// Conservative by design: only fires when all cues are out of range, and only
+// when the shift brings the first cue back inside [0, duration).
+// Returns [content, shiftedHours]; shiftedHours 0 means untouched.
+function vttAutoShift($content, $duration) {
+    if ($duration <= 0) return [$content, 0];
+    $bounds = vttTimeBounds($content);
+    if (!$bounds) return [$content, 0];
+    [$min, $max] = $bounds;
+    if ($min < $duration) return [$content, 0];
+    $hours = (int)floor($min / 3600);
+    if ($hours < 1) return [$content, 0];
+    $shift = $hours * 3600;
+    if (($min - $shift) < 0 || ($min - $shift) >= $duration) return [$content, 0];
+    $re = '/((?:\d{2,}:)?\d{2}:\d{2}\.\d{3})(\s*-->\s*)((?:\d{2,}:)?\d{2}:\d{2}\.\d{3})/';
+    $out = preg_replace_callback($re, function ($m) use ($shift) {
+        return secondsToVttTs(vttTsToSeconds($m[1]) - $shift) . $m[2]
+             . secondsToVttTs(vttTsToSeconds($m[3]) - $shift);
+    }, $content);
+    return [$out, $hours];
+}
+
+// ---- Embedded subtitle extraction -------------------------------------------
+
+// Common ISO 639-2/B (3-letter) -> BCP-47 (2-letter) so srclang is browser-friendly.
+function normalizeCaptionLang($lang) {
+    $lang = strtolower(trim($lang));
+    $map = [
+        'eng' => 'en', 'ita' => 'it', 'spa' => 'es', 'fra' => 'fr', 'fre' => 'fr',
+        'deu' => 'de', 'ger' => 'de', 'por' => 'pt', 'nld' => 'nl', 'dut' => 'nl',
+        'jpn' => 'ja', 'kor' => 'ko', 'zho' => 'zh', 'chi' => 'zh', 'ara' => 'ar',
+        'hin' => 'hi', 'rus' => 'ru',
+    ];
+    if (isset($map[$lang])) return $map[$lang];
+    if (preg_match('/^[a-z]{2,3}(-[a-z]{2,4})?$/', $lang)) return $lang;
+    return '';
+}
+
+function captionLangLabel($lang) {
+    $names = [
+        'en' => 'English', 'it' => 'Italiano', 'es' => 'Español', 'fr' => 'Français',
+        'de' => 'Deutsch', 'pt' => 'Português', 'nl' => 'Nederlands', 'ja' => '日本語',
+        'ko' => '한국어', 'zh' => '中文 (Mandarin)', 'ar' => 'العربية', 'hi' => 'हिन्दी',
+        'ru' => 'Русский',
+    ];
+    return $names[$lang] ?? strtoupper($lang);
+}
+
+// Text-based subtitle codecs that convert cleanly to WebVTT via ffmpeg.
+function videoSubtitleStreams($filePath) {
+    global $FFPROBE;
+    $cmd = escapeshellcmd($FFPROBE) . ' -v quiet -print_format json -show_streams -select_streams s ' . escapeshellarg($filePath);
+    $output = shell_exec($cmd);
+    if (!$output) return [];
+    $info = json_decode($output, true);
+    if (!$info || empty($info['streams'])) return [];
+    $streams = [];
+    foreach ($info['streams'] as $s) {
+        if (!in_array($s['codec_name'] ?? '', ['mov_text', 'subrip', 'srt', 'webvtt', 'text', 'ass', 'ssa'], true)) continue;
+        $streams[] = ['index' => (int)($s['index'] ?? 0), 'lang' => strtolower($s['tags']['language'] ?? '')];
+    }
+    return $streams;
+}
+
+// Browsers ignore subtitle tracks muxed inside the MP4 — only external WebVTT
+// loaded via <track> renders. Extract each embedded text subtitle stream to a
+// .vtt sidecar (auto-shifted to the timeline) and return caption records to
+// attach to the item. Best-effort: returns [] when ffmpeg/ffprobe are absent or
+// the file has no convertible subtitle streams.
+function extractEmbeddedCaptions($videoPath, $itemId, $duration) {
+    $streams = videoSubtitleStreams($videoPath);
+    if (!$streams) return [];
+    global $FFMPEG;
+    $captions = [];
+    $usedLangs = [];
+    foreach ($streams as $st) {
+        $lang = normalizeCaptionLang($st['lang']);
+        if ($lang === '') $lang = 'und';
+        if (isset($usedLangs[$lang])) continue;        // one track per language
+        $tmp = sys_get_temp_dir() . '/cap_' . $itemId . '_' . $st['index'] . '.vtt';
+        $cmd = escapeshellcmd($FFMPEG) . ' -y -v quiet -i ' . escapeshellarg($videoPath)
+             . ' -map 0:' . (int)$st['index'] . ' -c:s webvtt ' . escapeshellarg($tmp) . ' 2>/dev/null';
+        shell_exec($cmd);
+        $valid = is_file($tmp) && filesize($tmp) > 0
+            && strncmp(ltrim((string)file_get_contents($tmp, false, null, 0, 16), "\xEF\xBB\xBF"), 'WEBVTT', 6) === 0;
+        if (!$valid) { @unlink($tmp); continue; }
+        $content = (string)file_get_contents($tmp);
+        @unlink($tmp);
+        [$content] = vttAutoShift($content, $duration);
+        $destName = $itemId . '-' . $lang . '-' . time() . '-' . $st['index'] . '.vtt';
+        if (file_put_contents(CAPTIONS_DIR . '/' . $destName, $content) === false) continue;
+        $captions[] = ['lang' => $lang, 'label' => captionLangLabel($lang), 'filename' => $destName];
+        $usedLangs[$lang] = true;
+    }
+    return $captions;
+}
+
 // EXIF orientation flag (1–8); 1 means no transform needed.
 function imageOrientation($filePath) {
     if (!function_exists('exif_read_data')) return 1;
@@ -996,10 +1191,18 @@ function registerGalleryItem(string $gid, string $destName, string $title): arra
     } else {
         $meta = probeVideo($destPath);
         if ($meta) {
-            $item['duration'] = $meta['duration'];
             $item['width'] = $meta['width'];
             $item['height'] = $meta['height'];
         }
+        // Store duration even without ffmpeg (pure-PHP MP4 fallback), so the
+        // caption auto-shift has a timeline to check against later.
+        $duration = (float)($meta['duration'] ?? 0);
+        if ($duration <= 0) $duration = mp4DurationSeconds($destPath);
+        if ($duration > 0) $item['duration'] = $duration;
+        // Pull any captions baked into the MP4 out into WebVTT sidecars so they
+        // actually display (the browser player ignores in-container subtitles).
+        $caps = extractEmbeddedCaptions($destPath, $item['id'], $duration);
+        if ($caps) $item['captions'] = $caps;
     }
     // Atomic append: concurrent uploads to the same gallery must not clobber
     // each other's additions to videos.json.
@@ -1271,13 +1474,22 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/ca
     }
     $captions = array_values(array_filter($captions, fn($c) => ($c['lang'] ?? '') !== $lang));
 
+    // If the file's cues all sit past the end of the video (an editor timecode
+    // base, e.g. captions starting at 01:00:00 on an 8-minute clip), shift them
+    // back into the timeline so they actually display. No-op for normal files.
+    $duration = resolveVideoDuration(UPLOADS_DIR . '/' . ($video['filename'] ?? ''), $video['duration'] ?? 0);
+    if (!is_uploaded_file($file['tmp_name'])) respondError('Invalid upload', 400);
+    $content = (string)file_get_contents($file['tmp_name']);
+    [$content, $shiftedHours] = vttAutoShift($content, $duration);
+
     $destName = $video['id'] . '-' . $lang . '-' . time() . '.vtt';
-    move_uploaded_file($file['tmp_name'], CAPTIONS_DIR . '/' . $destName);
+    file_put_contents(CAPTIONS_DIR . '/' . $destName, $content);
 
     $captions[] = ['lang' => $lang, 'label' => $label, 'filename' => $destName];
     $video['captions'] = $captions;
     writeGalleryVideos($params['gid'], $videos);
-    respond($video);
+    // Surface the shift so the admin UI can note it (transient; not persisted).
+    respond($shiftedHours ? array_merge($video, ['captionShiftedHours' => $shiftedHours]) : $video);
 }
 
 // Remove a caption track by language code.
@@ -1403,6 +1615,17 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/rep
         generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename);
         $video['thumbnail'] = $thumbFilename;
         $video['proxy'] = $proxyFilename;
+    } else {
+        $meta = probeVideo($destPath);
+        if ($meta) {
+            $video['width'] = $meta['width'];
+            $video['height'] = $meta['height'];
+        }
+        $duration = (float)($meta['duration'] ?? 0);
+        if ($duration <= 0) $duration = mp4DurationSeconds($destPath);
+        if ($duration > 0) $video['duration'] = $duration;
+        $caps = extractEmbeddedCaptions($destPath, $video['id'], $duration);
+        if ($caps) $video['captions'] = $caps;
     }
 
     writeGalleryVideos($params['gid'], $videos);
@@ -1588,15 +1811,19 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/import', $uri, 
         } else {
             $meta = probeVideo($destPath);
             if ($meta) {
-                $item['duration'] = $meta['duration'];
                 $item['width'] = $meta['width'];
                 $item['height'] = $meta['height'];
             }
+            $duration = (float)($meta['duration'] ?? 0);
+            if ($duration <= 0) $duration = mp4DurationSeconds($destPath);
+            if ($duration > 0) $item['duration'] = $duration;
             // Generate video thumbnail
             $thumbFilename = $itemId . '.jpg';
             if (generateVideoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename)) {
                 $item['thumbnail'] = $thumbFilename;
             }
+            $caps = extractEmbeddedCaptions($destPath, $itemId, $duration);
+            if ($caps) $item['captions'] = $caps;
         }
 
         $videos[] = $item;

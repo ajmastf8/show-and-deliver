@@ -2106,10 +2106,24 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download/{videoId}', 
     $ext = pathinfo($video['filename'], PATHINFO_EXTENSION);
     $downloadName = preg_replace('/[^a-zA-Z0-9 .\-]/', '', $video['title']) . '.' . $ext;
 
+    // Stream large files manually: kill any output buffering / compression so the
+    // whole file isn't loaded into memory (which 500s on big videos under the
+    // 512M memory_limit), and lift the execution-time cap for slow transfers.
+    @set_time_limit(0);
+    @ini_set('zlib.output_compression', '0');
+    while (ob_get_level() > 0) { ob_end_clean(); }
+
     header('Content-Type: application/octet-stream');
     header('Content-Disposition: attachment; filename="' . $downloadName . '"');
     header('Content-Length: ' . filesize($filePath));
-    readfile($filePath);
+
+    $fp = fopen($filePath, 'rb');
+    if ($fp === false) respondError('File not found', 404);
+    while (!feof($fp)) {
+        echo fread($fp, 8192);
+        flush();
+    }
+    fclose($fp);
     exit;
 }
 

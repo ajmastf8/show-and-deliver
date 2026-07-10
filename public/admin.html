@@ -86,7 +86,7 @@
             <div class="setting-group">
               <label>Resend API Key</label>
               <input type="password" id="resend-api-key" class="setting-input" placeholder="re_xxxxxxxxx">
-              <p class="setting-hint">Get a free API key at <a href="https://resend.com" target="_blank" style="color:var(--color-primary);">resend.com</a>. If set, SMTP fields below are ignored.</p>
+              <p class="setting-hint">Get a free API key at <a href="https://resend.com" target="_blank" style="color:var(--color-primary);">resend.com</a>. If set, the SMTP connection fields below are ignored — but the sender settings at the bottom still apply.</p>
             </div>
             <hr style="border:none;border-top:1px solid var(--color-gray-mid);margin:16px 0;">
             <p class="setting-hint" style="margin-bottom:12px;font-weight:600;color:var(--color-gray-text);">SMTP (alternative to Resend)</p>
@@ -113,9 +113,12 @@
               <label>SMTP Password</label>
               <input type="password" id="smtp-pass" class="setting-input" placeholder="SMTP password">
             </div>
+            <hr style="border:none;border-top:1px solid var(--color-gray-mid);margin:16px 0;">
+            <p class="setting-hint" style="margin-bottom:12px;font-weight:600;color:var(--color-gray-text);">Sender &amp; delivery (used by both Resend and SMTP)</p>
             <div class="setting-group">
               <label>From Address</label>
-              <input type="text" id="smtp-from" class="setting-input" placeholder='"My Gallery" <notifications@example.com>'>
+              <input type="text" id="smtp-from" class="setting-input" placeholder='"Deadline Workflow" <support@deadlineworkflow.com>'>
+              <p class="setting-hint">The address notifications are sent from, whichever method is active above. With Resend, the domain must be verified in your Resend account.</p>
             </div>
             <div class="setting-group">
               <label>Notification Email (To)</label>

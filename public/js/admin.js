@@ -1,2531 +1,1979 @@
+/* ==========================================================================
+   AJ Mast Delivery — Admin (redesign)
+   State-driven, one render function per region. Vanilla JS, no build step.
+   Backend /api/* is unchanged; the proven upload/thumbnail/content/comments
+   engines are ported from the previous admin and re-pointed at new DOM.
+   ========================================================================== */
 document.addEventListener('DOMContentLoaded', () => {
-  const setupSection = document.getElementById('setup-section');
-  const loginSection = document.getElementById('login-section');
-  const dashboardSection = document.getElementById('dashboard-section');
-  const setupForm = document.getElementById('setup-form');
-  const setupError = document.getElementById('setup-error');
-  const loginForm = document.getElementById('login-form');
-  const loginError = document.getElementById('login-error');
-  const logoutBtn = document.getElementById('logout-btn');
+  const $ = (id) => document.getElementById(id);
 
-  // Panels
-  const noGallery = document.getElementById('no-gallery');
-  const videosPanel = document.getElementById('videos-panel');
-  const galleryTitle = document.getElementById('gallery-title');
-  const galleryListEl = document.getElementById('gallery-list');
-  const videoList = document.getElementById('admin-video-list');
+  // ---------- State ----------
+  const state = {
+    galleries: [],
+    collections: [],
+    screen: 'library',                 // library | upload | settings
+    view: 'list',                      // list | grid
+    groupBy: 'collection',             // collection | none
+    sort: { key: 'name', dir: 'asc' }, // key: name|items|views|access|expires
+    filter: { type: 'all', hasPassword: false, expiringDays: 0 },
+    search: '',
+    rail: 'all',                       // all | ungrouped | archive | <collectionId>
+    collapsed: new Set(),              // collapsed collection ids
+    selection: new Set(),              // selected gallery ids
+    drawer: { galleryId: null, tab: 'settings', draft: null, dirty: false },
+    centreGalleryId: null,             // when set, the centre pane shows this gallery's content
+    upload: { destination: { collectionId: '', galleryId: '' }, queue: [] },
+    _rowOrder: [],                     // flattened gallery ids in display order (for shift-select)
+    _lastClicked: null,
+  };
 
-  // Upload
-  const dropZone = document.getElementById('drop-zone');
-  const fileInput = document.getElementById('file-input');
-  const uploadQueue = document.getElementById('upload-queue');
-
-  // Tabs
-  const tabBtns = document.querySelectorAll('.tab-btn');
-  const tabContents = document.querySelectorAll('.tab-content');
-
-  // Thumbnail picker
-  const thumbPicker = document.getElementById('thumb-picker');
-  const thumbVideo = document.getElementById('thumb-video');
-  const thumbScrubber = document.getElementById('thumb-scrubber');
-  const thumbTime = document.getElementById('thumb-time');
-  const thumbCanvas = document.getElementById('thumb-canvas');
-  const thumbCaptureBtn = document.getElementById('thumb-capture-btn');
-  const thumbCancelBtn = document.getElementById('thumb-cancel-btn');
-  const thumbCtx = thumbCanvas.getContext('2d', { willReadFrequently: true });
-  let thumbVideoId = null;
-
-  // Collection panel
-  const collectionPanel = document.getElementById('collection-panel');
-
-  // State
-  let galleries = [];
-  let collections = [];
-  let currentGalleryId = null;
-  let currentGallery = null;
-  let currentGalleryItems = [];
-  let currentCollectionId = null;
-
-  // ============ Auth ============
-
-  async function checkAuth() {
-    const res = await fetch('/api/auth/check');
-    const data = await res.json();
-
-    // First-run setup needed
-    if (data.setupRequired) {
-      setupSection.style.display = 'flex';
-      loginSection.style.display = 'none';
-      dashboardSection.style.display = 'none';
-      return;
-    }
-
-    setupSection.style.display = 'none';
-    loginSection.style.display = data.authenticated ? 'none' : 'flex';
-    dashboardSection.style.display = data.authenticated ? '' : 'none';
-    if (data.authenticated) {
-      await loadGalleries();
-      handleHash();
-    }
+  // ---------- localStorage persistence ----------
+  const LS = 'admin2:prefs';
+  function loadPrefs() {
+    try {
+      const p = JSON.parse(localStorage.getItem(LS) || '{}');
+      if (p.view) state.view = p.view;
+      if (p.groupBy) state.groupBy = p.groupBy;
+      if (p.sort) state.sort = p.sort;
+      if (Array.isArray(p.collapsed)) state.collapsed = new Set(p.collapsed);
+      if (p.destination) state.upload.destination = p.destination;
+    } catch (_) {}
+  }
+  function savePrefs() {
+    try {
+      localStorage.setItem(LS, JSON.stringify({
+        view: state.view, groupBy: state.groupBy, sort: state.sort,
+        collapsed: [...state.collapsed], destination: state.upload.destination,
+      }));
+    } catch (_) {}
   }
 
-  // First-run setup form
-  setupForm.addEventListener('submit', async e => {
-    e.preventDefault();
-    setupError.textContent = '';
-    const email = setupForm.email.value.trim();
-    const password = setupForm.password.value;
-    const confirm = setupForm.confirmPassword.value;
+  // ---------- Theme ----------
+  const THEME_KEY = 'admin2:theme';
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+    const btn = $('account-theme');
+    if (btn) btn.textContent = theme === 'light' ? 'Dark theme' : 'Light theme';
+  }
+  function currentTheme() { return document.documentElement.dataset.theme === 'light' ? 'light' : 'dark'; }
+  function toggleTheme() {
+    const next = currentTheme() === 'light' ? 'dark' : 'light';
+    try { localStorage.setItem(THEME_KEY, next); } catch (_) {}
+    applyTheme(next);
+  }
 
-    if (password !== confirm) {
-      setupError.textContent = 'Passwords do not match';
+  // ---------- Helpers ----------
+  function escapeHtml(str) {
+    const div = document.createElement('div');
+    div.textContent = str == null ? '' : String(str);
+    return div.innerHTML;
+  }
+  function formatDate(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    if (isNaN(d)) return '—';
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  function shortDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+  function fmtBytes(n) {
+    if (!n && n !== 0) return '';
+    if (n >= 1024 * 1024 * 1024) return (n / (1024 ** 3)).toFixed(1) + ' GB';
+    if (n >= 1024 * 1024) return (n / (1024 ** 2)).toFixed(0) + ' MB';
+    if (n >= 1024) return (n / 1024).toFixed(0) + ' KB';
+    return n + ' B';
+  }
+  function titleCase(s) {
+    return String(s || '');
+  }
+  const TICK = '<svg viewBox="0 0 10 10"><path d="M1 5l2.5 3L9 1.5" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  function parentCollection(g) {
+    return g.collectionId ? state.collections.find(c => c.id === g.collectionId) : null;
+  }
+  function isInherited(g) {
+    return g.type === 'proofing' && g.collectionId && !g.overrideCollectionSettings;
+  }
+  function effective(g) {
+    if (isInherited(g)) {
+      const c = parentCollection(g) || {};
+      return {
+        hasPassword: !!c.hasPassword,
+        downloadsEnabled: !!c.downloadsEnabled,
+        commentingEnabled: !!c.commentingEnabled,
+        expiresAt: c.expiresAt || null,
+        active: c.active !== false && g.active !== false,
+      };
+    }
+    return {
+      hasPassword: !!g.hasPassword,
+      downloadsEnabled: !!g.downloadsEnabled,
+      commentingEnabled: !!g.commentingEnabled,
+      expiresAt: g.expiresAt || null,
+      active: g.active !== false,
+    };
+  }
+  function accessLabel(g) {
+    if (g.type === 'reels') return 'Public';
+    if (isInherited(g)) return 'Inherited';
+    if (g.hasPassword) return 'Password';
+    return 'Open link';
+  }
+  function collectionHasShared(c) {
+    return !!(c.hasPassword || c.downloadsEnabled || c.commentingEnabled || c.expiresAt);
+  }
+  function toast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => t.classList.remove('show'), 2600);
+  }
+  async function api(url, opts) {
+    const res = await fetch(url, opts);
+    if (res.status === 401) { checkAuth(); throw new Error('unauthorized'); }
+    return res;
+  }
+
+  // ==========================================================================
+  // Auth
+  // ==========================================================================
+  async function checkAuth() {
+    let data;
+    try { data = await (await fetch('/api/auth/check')).json(); }
+    catch (_) { return; }
+    if (data.setupRequired) {
+      show($('auth-setup')); hide($('auth-login')); hide($('app'));
       return;
     }
-
-    const res = await fetch('/api/auth/setup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password })
-    });
-
-    if (res.ok) {
-      checkAuth();
+    if (data.authenticated) {
+      hide($('auth-setup')); hide($('auth-login')); show($('app'));
+      await loadData();
+      renderAll();
     } else {
-      const data = await res.json().catch(() => ({}));
-      setupError.textContent = data.error || 'Setup failed';
+      hide($('auth-setup')); show($('auth-login')); hide($('app'));
     }
-  });
+  }
+  function show(el) { el.hidden = false; }
+  function hide(el) { el.hidden = true; }
 
-  loginForm.addEventListener('submit', async e => {
+  $('setup-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    loginError.textContent = '';
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: loginForm.username.value,
-        password: loginForm.password.value
-      })
+    const f = e.target;
+    $('setup-error').textContent = '';
+    if (f.password.value !== f.confirmPassword.value) { $('setup-error').textContent = 'Passwords do not match'; return; }
+    const res = await fetch('/api/auth/setup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: f.email.value.trim(), password: f.password.value }),
     });
-    if (res.ok) {
-      checkAuth();
-    } else {
-      loginError.textContent = 'Invalid credentials';
-    }
+    if (res.ok) checkAuth();
+    else { const d = await res.json().catch(() => ({})); $('setup-error').textContent = d.error || 'Setup failed'; }
   });
 
-  logoutBtn.addEventListener('click', async () => {
+  $('login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('login-error').textContent = '';
+    const f = e.target;
+    const res = await fetch('/api/auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: f.username.value, password: f.password.value }),
+    });
+    if (res.ok) checkAuth();
+    else $('login-error').textContent = 'Invalid credentials';
+  });
+
+  // ==========================================================================
+  // Data load
+  // ==========================================================================
+  async function loadData() {
+    let gRes, cRes;
+    try {
+      [gRes, cRes] = await Promise.all([fetch('/api/galleries'), fetch('/api/collections')]);
+    } catch (err) {
+      toast('Could not reach the server — check your connection and reload.');
+      return;
+    }
+    if (!gRes.ok) {
+      if (gRes.status === 401) { checkAuth(); return; }
+      toast(`Failed to load galleries (HTTP ${gRes.status}). Reload to try again.`);
+      return;
+    }
+    state.galleries = await gRes.json();
+    state.collections = cRes.ok ? await cRes.json() : [];
+  }
+
+  // ==========================================================================
+  // Screen switching
+  // ==========================================================================
+  function setScreen(screen) {
+    state.screen = screen;
+    $('screen-library').hidden = screen !== 'library';
+    $('screen-upload').hidden = screen !== 'upload';
+    $('screen-settings').hidden = screen !== 'settings';
+    if (screen === 'upload') renderUpload();
+    if (screen === 'settings') openSettings();
+  }
+  function renderAll() {
+    updateUploadsCount();
+    renderRail();
+    renderCentre();
+    renderDrawer();
+    if (state.screen === 'upload') renderUpload();
+  }
+
+  // ==========================================================================
+  // Top bar
+  // ==========================================================================
+  $('brand-home').addEventListener('click', () => { state.rail = 'all'; state.centreGalleryId = null; contentGid = null; closeDrawerForce(); setScreen('library'); renderAll(); });
+  $('nav-uploads').addEventListener('click', () => setScreen('upload'));
+
+  function setupMenu(btnId, menuId, onPick, pickAttr) {
+    const btn = $(btnId), menu = $(menuId);
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = !menu.hidden;
+      closeAllMenus();
+      if (!open) menu.hidden = false;
+    });
+    menu.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      menu.hidden = true;
+      onPick(b.getAttribute(pickAttr));
+    });
+  }
+  function closeAllMenus() {
+    $('account-menu').hidden = true;
+    $('new-menu').hidden = true;
+    document.querySelectorAll('.filter-pop').forEach(p => p.remove());
+  }
+  document.addEventListener('click', closeAllMenus);
+
+  setupMenu('account-btn', 'account-menu', (v) => {
+    if (v === 'settings') setScreen('settings');
+    else if (v === 'theme') toggleTheme();
+    else if (v === 'logout') logout();
+  }, 'data-account');
+
+  $('upload-back').addEventListener('click', () => setScreen('library'));
+  $('settings-back').addEventListener('click', () => setScreen('library'));
+
+  setupMenu('new-btn', 'new-menu', (v) => {
+    if (v === 'gallery') openNewGallery();
+    else if (v === 'collection') openNewCollection();
+    else if (v === 'upload') setScreen('upload');
+  }, 'data-new');
+
+  async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' });
     checkAuth();
+  }
+
+  function updateUploadsCount() {
+    const active = state.upload.queue.filter(i => i.status === 'uploading' || i.status === 'waiting').length;
+    $('uploads-count').textContent = active;
+  }
+
+  // Global search
+  $('global-search').addEventListener('input', (e) => {
+    state.search = e.target.value.trim().toLowerCase();
+    if (state.centreGalleryId) { state.centreGalleryId = null; contentGid = null; closeDrawerForce(); }
+    if (state.screen !== 'library') setScreen('library');
+    renderCentre();
   });
 
-  // ============ Gallery List (Sidebar) ============
+  // ==========================================================================
+  // Data pipeline (filter / group / sort)
+  // ==========================================================================
+  function railGalleries() {
+    let list = state.galleries.slice();
+    if (state.rail === 'archive') {
+      list = list.filter(g => g.active === false);
+    } else {
+      list = list.filter(g => g.active !== false);
+      if (state.rail === 'ungrouped') list = list.filter(g => !g.collectionId);
+      else if (state.rail !== 'all') list = list.filter(g => g.collectionId === state.rail);
+    }
+    // filter facet
+    if (state.filter.type === 'client') list = list.filter(g => g.type === 'proofing');
+    else if (state.filter.type === 'portfolio') list = list.filter(g => g.type === 'reels');
+    if (state.filter.hasPassword) list = list.filter(g => effective(g).hasPassword);
+    if (state.filter.expiringDays) {
+      const cutoff = Date.now() + state.filter.expiringDays * 86400000;
+      list = list.filter(g => { const e = effective(g).expiresAt; return e && new Date(e).getTime() <= cutoff; });
+    }
+    if (state.search) list = list.filter(g => g.name.toLowerCase().includes(state.search));
+    return list;
+  }
+  function sortGalleries(list) {
+    const { key, dir } = state.sort;
+    const mul = dir === 'asc' ? 1 : -1;
+    const val = (g) => {
+      switch (key) {
+        case 'items': return g.videoCount || 0;
+        case 'views': return g.viewCount || 0;
+        case 'access': return accessLabel(g);
+        case 'expires': { const e = effective(g).expiresAt; return e ? new Date(e).getTime() : Infinity; }
+        default: return g.name.toLowerCase();
+      }
+    };
+    return list.slice().sort((a, b) => {
+      const va = val(a), vb = val(b);
+      if (va < vb) return -1 * mul;
+      if (va > vb) return 1 * mul;
+      return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1;
+    });
+  }
 
-  async function loadGalleries() {
-    const [gRes, cRes] = await Promise.all([
-      fetch('/api/galleries'),
-      fetch('/api/collections')
-    ]);
-    if (!gRes.ok) {
-      if (gRes.status === 401) checkAuth();
+  // ==========================================================================
+  // Rail
+  // ==========================================================================
+  function renderRail() {
+    const rail = $('rail');
+    const all = state.galleries.filter(g => g.active !== false);
+    const ungrouped = all.filter(g => !g.collectionId).length;
+    const archived = state.galleries.filter(g => g.active === false).length;
+
+    const railRow = (id, label, count) =>
+      `<div class="rail-row${state.rail === id ? ' active' : ''}" data-rail="${id}">
+        <span class="rail-name">${escapeHtml(label)}</span>
+        ${count != null ? `<span class="rail-count">${count}</span>` : ''}
+      </div>`;
+
+    let html = `<div class="rail-section-label">Library</div>`;
+    html += railRow('all', 'All galleries', all.length);
+    html += railRow('ungrouped', 'Ungrouped', ungrouped);
+    html += railRow('archive', 'Archive', archived);
+
+    html += `<div class="rail-section-label">Collections</div>`;
+    state.collections.forEach(c => {
+      const count = all.filter(g => g.collectionId === c.id).length;
+      html += `<div class="rail-row compact${state.rail === c.id ? ' active' : ''}" data-rail="${c.id}">
+        <span class="rail-name">${escapeHtml(titleCase(c.name))}</span>
+        <span class="rail-count">${count}</span>
+      </div>`;
+    });
+    html += `<div class="rail-row compact new-collection" data-new-collection>+ New collection</div>`;
+    rail.innerHTML = html;
+
+    rail.querySelectorAll('[data-rail]').forEach(el => {
+      el.addEventListener('click', () => {
+        state.rail = el.getAttribute('data-rail');
+        state.centreGalleryId = null; contentGid = null; closeDrawerForce();
+        setScreen('library');
+        clearSelection();
+        renderRail(); renderCentre();
+        if (window.innerWidth < 1100) rail.classList.remove('open');
+      });
+    });
+    rail.querySelector('[data-new-collection]').addEventListener('click', openNewCollection);
+  }
+
+  // ==========================================================================
+  // Centre (header + table/grid + bulk bar)
+  // ==========================================================================
+  function centreTitle() {
+    if (state.rail === 'all') return 'ALL GALLERIES';
+    if (state.rail === 'ungrouped') return 'UNGROUPED';
+    if (state.rail === 'archive') return 'ARCHIVE';
+    const c = state.collections.find(x => x.id === state.rail);
+    return c ? c.name.toUpperCase() : 'GALLERIES';
+  }
+  function renderCentre() {
+    const header = document.querySelector('.centre-header');
+    if (state.centreGalleryId) {
+      header.style.display = 'none';
+      $('bulk-bar').hidden = true;
+      $('bulk-bar').classList.remove('show');
+      renderGalleryView();
       return;
     }
-    galleries = await gRes.json();
-    collections = cRes.ok ? await cRes.json() : [];
-    renderGalleryList();
+    header.style.display = '';
+    const list = railGalleries();
+    $('centre-title').textContent = centreTitle();
+    $('centre-subtitle').textContent =
+      `${list.length} galler${list.length === 1 ? 'y' : 'ies'} · ${state.collections.length} collection${state.collections.length === 1 ? '' : 's'}`;
+    $('ctrl-group').textContent = 'Group: ' + (state.groupBy === 'collection' ? 'Collection' : 'None');
+    $('ctrl-list').classList.toggle('active', state.view === 'list');
+    $('ctrl-grid').classList.toggle('active', state.view === 'grid');
+
+    if (state.view === 'grid') renderGrid(list);
+    else renderTable(list);
+    renderBulkBar();
   }
 
-  const EXPANDED_COLLECTIONS_KEY = 'admin-expanded-collections';
-
-  function getExpandedCollections() {
-    try {
-      return new Set(JSON.parse(localStorage.getItem(EXPANDED_COLLECTIONS_KEY) || '[]'));
-    } catch (_) { return new Set(); }
-  }
-
-  function setCollectionExpanded(colId, expanded) {
-    const ids = getExpandedCollections();
-    if (expanded) ids.add(colId); else ids.delete(colId);
-    try { localStorage.setItem(EXPANDED_COLLECTIONS_KEY, JSON.stringify([...ids])); }
-    catch (_) { /* storage full / disabled */ }
-  }
-
-  function renderGalleryList() {
-    galleryListEl.innerHTML = '';
-
-    // Build set of gallery IDs that belong to a collection
-    const groupedIds = new Set();
-    collections.forEach(col => {
-      (col.galleryIds || []).forEach(gid => groupedIds.add(gid));
+  // ---------- Grouping ----------
+  // For the "all" scope with Group: Collection we render per-collection groups
+  // plus an Ungrouped group. Any other rail scope is a single flat list.
+  function buildGroups(list) {
+    const grouped = state.rail === 'all' && state.groupBy === 'collection';
+    if (!grouped) return [{ col: null, galleries: sortGalleries(list) }];
+    const groups = [];
+    state.collections.forEach(c => {
+      const members = list.filter(g => g.collectionId === c.id);
+      if (members.length) groups.push({ col: c, galleries: sortGalleries(members) });
     });
+    const ungrouped = list.filter(g => !g.collectionId);
+    if (ungrouped.length) groups.push({ col: { id: '__ungrouped__', name: 'Ungrouped' }, galleries: sortGalleries(ungrouped) });
+    return groups;
+  }
 
-    // Render collections as groups. Default to collapsed — expand only if
-    // the user is currently viewing a gallery inside this collection, or if
-    // they've manually expanded it earlier in this browser (remembered in
-    // localStorage so clicks survive page reloads).
-    const expandedIds = getExpandedCollections();
-    collections.forEach(col => {
-      const group = document.createElement('div');
-      group.className = 'collection-group';
-      group.dataset.colId = col.id;
+  // ---------- Table ----------
+  const COLS = [
+    { key: 'name', label: 'Name' },
+    { key: 'items', label: 'Items' },
+    { key: 'views', label: 'Views' },
+    { key: 'access', label: 'Access' },
+    { key: 'expires', label: 'Expires' },
+  ];
+  function renderTable(list) {
+    const scroll = $('table-scroll');
+    state._rowOrder = [];
+    const arrow = state.sort.dir === 'asc' ? ' ↑' : ' ↓';
+    let html = `<div class="col-head">` + COLS.map(c =>
+      `<button class="ch${state.sort.key === c.key ? ' sorted' : ''}" data-sort="${c.key}">${c.label}${state.sort.key === c.key ? arrow : ''}</button>`
+    ).join('') + `</div>`;
 
-      const colGalleries = (col.galleryIds || [])
-        .map(gid => galleries.find(g => g.id === gid))
-        .filter(Boolean);
-
-      const containsCurrentGallery = currentGalleryId && colGalleries.some(g => g.id === currentGalleryId);
-      const shouldExpand = containsCurrentGallery || expandedIds.has(col.id);
-      if (!shouldExpand) group.classList.add('collapsed');
-
-      const header = document.createElement('div');
-      header.className = 'collection-group-header' + (col.id === currentCollectionId ? ' active' : '');
-      header.innerHTML = `
-        <span class="collection-group-toggle">&#9660;</span>
-        <span class="collection-group-name">${escapeHtml(col.name)}</span>
-        <span class="collection-group-count">${colGalleries.length}</span>
-      `;
-
-      // Click header to open collection settings
-      header.addEventListener('click', (e) => {
-        if (e.target.closest('.collection-group-toggle')) {
-          // Toggle collapse and persist the new state
-          group.classList.toggle('collapsed');
-          setCollectionExpanded(col.id, !group.classList.contains('collapsed'));
-          e.stopPropagation();
-          return;
-        }
-        window.location.hash = `collection/${col.id}/settings`;
-      });
-
-      group.appendChild(header);
-
-      const galleriesContainer = document.createElement('div');
-      galleriesContainer.className = 'collection-group-galleries';
-
-      colGalleries.forEach(g => {
-        galleriesContainer.appendChild(createGalleryItem(g));
-      });
-
-      group.appendChild(galleriesContainer);
-      galleryListEl.appendChild(group);
-    });
-
-    // Ungrouped galleries
-    const ungrouped = galleries.filter(g => !groupedIds.has(g.id));
-    if (ungrouped.length && collections.length) {
-      const label = document.createElement('div');
-      label.className = 'sidebar-ungrouped-label';
-      label.textContent = 'Ungrouped';
-      galleryListEl.appendChild(label);
+    const groups = buildGroups(list);
+    if (!groups.length || groups.every(g => !g.galleries.length)) {
+      html += `<div class="empty-note">No galleries here yet.</div>`;
+      scroll.innerHTML = html;
+      wireTableHeader();
+      return;
     }
 
-    ungrouped.forEach(g => {
-      galleryListEl.appendChild(createGalleryItem(g));
-    });
-  }
-
-  function createGalleryItem(g) {
-    const item = document.createElement('div');
-    item.className = 'gallery-item' + (g.id === currentGalleryId ? ' active' : '');
-    if (g.type === 'proofing') item.classList.add('proofing');
-    item.dataset.id = g.id;
-
-    const badge = g.type === 'proofing'
-      ? `<span class="gallery-badge proofing">Client</span>`
-      : `<span class="gallery-badge reels">Portfolio</span>`;
-
-    const count = g.type === 'proofing'
-      ? `${g.videoCount} item${g.videoCount !== 1 ? 's' : ''} &middot; ${g.commentCount} comment${g.commentCount !== 1 ? 's' : ''} &middot; ${g.viewCount || 0} view${(g.viewCount || 0) !== 1 ? 's' : ''}`
-      : `${g.videoCount} item${g.videoCount !== 1 ? 's' : ''}`;
-
-    item.innerHTML = `
-      <div class="gallery-item-name">${escapeHtml(g.name)}</div>
-      <div class="gallery-item-meta">${badge} ${count}</div>
-    `;
-
-    item.addEventListener('click', () => {
-      window.location.hash = `gallery/${g.id}/videos`;
-    });
-
-    return item;
-  }
-
-  // Email settings panel
-  const emailSettingsPanel = document.getElementById('email-settings-panel');
-
-  document.getElementById('site-settings-btn').addEventListener('click', () => {
-    window.location.hash = 'settings';
-  });
-
-  // ============ Settings Tabs ============
-
-  document.querySelectorAll('.settings-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-      document.querySelectorAll('.settings-tab-content').forEach(c => c.style.display = 'none');
-      tab.classList.add('active');
-      document.getElementById('settings-tab-' + tab.dataset.settingsTab).style.display = '';
-      // Check for updates when Update tab is first opened
-      if (tab.dataset.settingsTab === 'update' && !updateChecked) {
-        checkForUpdates();
-      }
-      // Refresh ffmpeg/video-tools status each time the Update tab is opened
-      if (tab.dataset.settingsTab === 'update') {
-        loadVideoToolsStatus();
-      }
-      // Load header config when Header tab is first opened
-      if (tab.dataset.settingsTab === 'header' && !headerLoaded) {
-        loadHeaderConfig();
-      }
-      // Refresh API token state whenever the API tab is opened, so it
-      // reflects a token generated/revoked in another tab.
-      if (tab.dataset.settingsTab === 'api') {
-        loadApiTokenState();
-      }
-    });
-  });
-
-  // ============ API Token Management ============
-
-  const apiTokenLoadingEl = document.getElementById('api-token-loading');
-  const apiTokenEnvEl = document.getElementById('api-token-env-state');
-  const apiTokenStateEl = document.getElementById('api-token-state');
-  const apiTokenStatusText = document.getElementById('api-token-status-text');
-  const apiTokenStatus = document.getElementById('api-token-status');
-  const apiTokenGenerateBtn = document.getElementById('api-token-generate-btn');
-  const apiTokenRegenerateBtn = document.getElementById('api-token-regenerate-btn');
-  const apiTokenRevokeBtn = document.getElementById('api-token-revoke-btn');
-  const apiTokenModal = document.getElementById('api-token-modal');
-  const apiTokenRevealInput = document.getElementById('api-token-reveal-input');
-  const apiTokenCopyBtn = document.getElementById('api-token-copy-btn');
-  const apiTokenModalDoneBtn = document.getElementById('api-token-modal-done-btn');
-
-  async function loadApiTokenState() {
-    apiTokenLoadingEl.style.display = '';
-    apiTokenEnvEl.style.display = 'none';
-    apiTokenStateEl.style.display = 'none';
-    apiTokenStatus.textContent = '';
-    try {
-      const res = await fetch('/api/settings/api-token');
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const info = await res.json();
-      apiTokenLoadingEl.style.display = 'none';
-      if (info.envManaged) {
-        apiTokenEnvEl.style.display = '';
-        return;
-      }
-      apiTokenStateEl.style.display = '';
-      if (info.hasToken) {
-        apiTokenStatusText.textContent = 'An API token is active.';
-        apiTokenGenerateBtn.style.display = 'none';
-        apiTokenRegenerateBtn.style.display = '';
-        apiTokenRevokeBtn.style.display = '';
+    groups.forEach(grp => {
+      const showHead = !!grp.col && grp.col.id !== null;
+      const groupedScope = state.rail === 'all' && state.groupBy === 'collection';
+      if (groupedScope && grp.col) {
+        const collapsed = state.collapsed.has(grp.col.id);
+        const shared = grp.col.id !== '__ungrouped__' && collectionHasShared(grp.col) ? `<span class="g-shared">· shared settings</span>` : '';
+        html += `<div class="group${collapsed ? ' collapsed' : ''}" data-group="${escapeHtml(grp.col.id)}">
+          <div class="group-head" data-toggle="${escapeHtml(grp.col.id)}">
+            <span class="g-caret">▼</span>
+            <span class="g-name">${escapeHtml(grp.col.name)}</span>
+            <span class="g-count">${grp.galleries.length}</span>
+            ${shared}
+          </div>` + grp.galleries.map(rowHtml).join('') + `</div>`;
       } else {
-        apiTokenStatusText.textContent = 'No API token is set.';
-        apiTokenGenerateBtn.style.display = '';
-        apiTokenRegenerateBtn.style.display = 'none';
-        apiTokenRevokeBtn.style.display = 'none';
+        html += grp.galleries.map(rowHtml).join('');
       }
-    } catch (err) {
-      apiTokenLoadingEl.textContent = 'Could not load API token state: ' + err.message;
+      grp.galleries.forEach(g => state._rowOrder.push(g.id));
+    });
+
+    scroll.innerHTML = html;
+    wireTableHeader();
+    wireRows(scroll);
+  }
+
+  function rowHtml(g) {
+    const eff = effective(g);
+    const selected = state.selection.has(g.id);
+    const open = state.drawer.galleryId === g.id;
+    const tag = g.type === 'reels' ? `<span class="g-tag">Portfolio</span>` : '';
+    return `<div class="gallery-row${selected ? ' selected' : ''}${open ? ' open' : ''}" data-id="${g.id}" role="row">
+      <div class="g-name-cell">
+        <button class="row-check" data-check="${g.id}" title="Select">${TICK}</button>
+        <span class="g-thumb"></span>
+        <span class="g-name">${escapeHtml(g.name)}</span>${tag}
+      </div>
+      <div class="cell">${g.videoCount || 0}</div>
+      <div class="cell views">${g.viewCount || 0}</div>
+      <div class="cell">${accessLabel(g)}</div>
+      <div class="cell">${formatDate(eff.expiresAt)}</div>
+    </div>`;
+  }
+
+  function wireTableHeader() {
+    $('table-scroll').querySelectorAll('.col-head .ch').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.getAttribute('data-sort');
+        if (state.sort.key === key) state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc';
+        else state.sort = { key, dir: key === 'name' ? 'asc' : 'desc' };
+        savePrefs();
+        renderCentre();
+      });
+    });
+    $('table-scroll').querySelectorAll('.group-head[data-toggle]').forEach(h => {
+      h.addEventListener('click', () => {
+        const id = h.getAttribute('data-toggle');
+        if (state.collapsed.has(id)) state.collapsed.delete(id); else state.collapsed.add(id);
+        savePrefs();
+        renderCentre();
+      });
+    });
+  }
+
+  function wireRows(scope) {
+    scope.querySelectorAll('.gallery-row').forEach(row => {
+      const id = row.dataset.id;
+      row.querySelector('[data-check]').addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleSelect(id, e);
+      });
+      row.addEventListener('click', (e) => {
+        if (e.metaKey || e.ctrlKey) { toggleSelect(id, e); return; }
+        if (e.shiftKey) { rangeSelect(id); return; }
+        openGallery(id);
+      });
+    });
+  }
+
+  // ---------- Grid ----------
+  function renderGrid(list) {
+    const scroll = $('table-scroll');
+    state._rowOrder = [];
+    const groups = buildGroups(list);
+    let html = `<div class="grid-wrap">`;
+    const groupedScope = state.rail === 'all' && state.groupBy === 'collection';
+    groups.forEach(grp => {
+      if (groupedScope && grp.col) {
+        const isCol = grp.col.id !== '__ungrouped__';
+        html += `<div class="grid-block"><div class="grid-block-head">
+          <span class="gb-name">${escapeHtml(grp.col.name)}</span>
+          <span class="gb-count">${grp.galleries.length}</span>
+          ${isCol ? `<span class="gb-actions">
+            <button class="link-btn muted" data-col-copy="${escapeHtml(grp.col.id)}">Copy link</button>
+            <button class="link-btn muted" data-col-open="${escapeHtml(grp.col.id)}">Collection settings</button>
+          </span>` : ''}
+        </div><div class="grid-cards">`;
+        html += grp.galleries.map(cardHtml).join('');
+        html += `<div class="grid-add" data-add-gallery="${isCol ? escapeHtml(grp.col.id) : ''}">+ Gallery</div>`;
+        html += `</div></div>`;
+      } else {
+        html += `<div class="grid-block"><div class="grid-cards">` + grp.galleries.map(cardHtml).join('') + `</div></div>`;
+      }
+      grp.galleries.forEach(g => state._rowOrder.push(g.id));
+    });
+    html += `</div>`;
+    scroll.innerHTML = html;
+
+    scroll.querySelectorAll('.grid-card').forEach(card => {
+      const id = card.dataset.id;
+      card.querySelector('.gc-check').addEventListener('click', (e) => { e.stopPropagation(); toggleSelect(id, e); });
+      card.addEventListener('click', (e) => {
+        if (e.metaKey || e.ctrlKey) { toggleSelect(id, e); return; }
+        if (e.shiftKey) { rangeSelect(id); return; }
+        openGallery(id);
+      });
+    });
+    scroll.querySelectorAll('[data-add-gallery]').forEach(el =>
+      el.addEventListener('click', () => openNewGallery(el.getAttribute('data-add-gallery') || '')));
+    scroll.querySelectorAll('[data-col-copy]').forEach(el =>
+      el.addEventListener('click', (e) => { e.stopPropagation(); copyCollectionLink(el.getAttribute('data-col-copy')); }));
+    scroll.querySelectorAll('[data-col-open]').forEach(el =>
+      el.addEventListener('click', (e) => { e.stopPropagation(); state.rail = el.getAttribute('data-col-open'); renderRail(); renderCentre(); }));
+  }
+  function cardHtml(g) {
+    const eff = effective(g);
+    const selected = state.selection.has(g.id);
+    const meta = `${g.videoCount || 0} items · ${g.viewCount || 0} views`;
+    const stateLine = g.type === 'reels' ? 'Public' : `${accessLabel(g)} · ${formatDate(eff.expiresAt)}`;
+    return `<div class="grid-card${selected ? ' selected' : ''}" data-id="${g.id}">
+      <div class="gc-cover"></div>
+      <button class="gc-check">${TICK}</button>
+      <div class="gc-name">${escapeHtml(g.name)}</div>
+      <div class="gc-meta">${meta}</div>
+      <div class="gc-state">${stateLine}</div>
+    </div>`;
+  }
+
+  // ---------- Centre controls ----------
+  $('ctrl-list').addEventListener('click', () => { state.view = 'list'; savePrefs(); renderCentre(); });
+  $('ctrl-grid').addEventListener('click', () => { state.view = 'grid'; savePrefs(); renderCentre(); });
+  $('ctrl-group').addEventListener('click', () => {
+    state.groupBy = state.groupBy === 'collection' ? 'none' : 'collection';
+    savePrefs(); renderCentre();
+  });
+  $('ctrl-filter').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeAllMenus();
+    openFilterPop(e.currentTarget);
+  });
+  function openFilterPop(anchor) {
+    const pop = document.createElement('div');
+    pop.className = 'menu filter-pop';
+    pop.style.position = 'fixed';
+    const r = anchor.getBoundingClientRect();
+    pop.style.top = (r.bottom + 8) + 'px';
+    pop.style.left = Math.max(12, r.right - 220) + 'px';
+    const opt = (v, label, on) => `<button data-f="${v}">${on ? '● ' : '○ '}${label}</button>`;
+    pop.innerHTML =
+      opt('type:all', 'All types', state.filter.type === 'all') +
+      opt('type:client', 'Client galleries', state.filter.type === 'client') +
+      opt('type:portfolio', 'Portfolio', state.filter.type === 'portfolio') +
+      opt('pw', 'Has password', state.filter.hasPassword) +
+      opt('exp', 'Expiring ≤ 30 days', state.filter.expiringDays === 30);
+    pop.addEventListener('click', (ev) => {
+      const b = ev.target.closest('button'); if (!b) return;
+      ev.stopPropagation();
+      const f = b.getAttribute('data-f');
+      if (f.startsWith('type:')) state.filter.type = f.split(':')[1];
+      else if (f === 'pw') state.filter.hasPassword = !state.filter.hasPassword;
+      else if (f === 'exp') state.filter.expiringDays = state.filter.expiringDays === 30 ? 0 : 30;
+      openFilterPop(anchor);
+      renderCentre();
+    });
+    document.querySelectorAll('.filter-pop').forEach(p => p.remove());
+    document.body.appendChild(pop);
+  }
+
+  // ==========================================================================
+  // Selection + bulk bar
+  // ==========================================================================
+  function toggleSelect(id) {
+    if (state.selection.has(id)) state.selection.delete(id);
+    else state.selection.add(id);
+    state._lastClicked = id;
+    renderCentre();
+  }
+  function rangeSelect(id) {
+    const order = state._rowOrder;
+    const from = order.indexOf(state._lastClicked);
+    const to = order.indexOf(id);
+    if (from === -1 || to === -1) { toggleSelect(id); return; }
+    const [a, b] = from < to ? [from, to] : [to, from];
+    for (let i = a; i <= b; i++) state.selection.add(order[i]);
+    renderCentre();
+  }
+  function clearSelection() {
+    if (state.selection.size) { state.selection.clear(); renderCentre(); }
+  }
+  function renderBulkBar() {
+    const bar = $('bulk-bar');
+    const n = state.selection.size;
+    if (!n) { bar.classList.remove('show'); bar.hidden = true; return; }
+    bar.hidden = false;
+    bar.innerHTML =
+      `<span class="bulk-count">${n} selected</span>
+       <span class="bulk-divider"></span>
+       <button data-bulk="collection">Add to collection</button>
+       <button data-bulk="expiration">Expiration</button>
+       <button data-bulk="password">Password</button>
+       <button data-bulk="downloads">Downloads</button>
+       <button data-bulk="archive">Archive</button>
+       <button data-bulk="delete" class="danger">Delete</button>`;
+    bar.querySelectorAll('[data-bulk]').forEach(b =>
+      b.addEventListener('click', () => bulkAction(b.getAttribute('data-bulk'))));
+    requestAnimationFrame(() => bar.classList.add('show'));
+  }
+
+  async function runBulk(fn) {
+    const ids = [...state.selection];
+    let done = 0;
+    for (const id of ids) {
+      try { await fn(id); } catch (_) {}
+      done++;
+      toast(`Working… ${done}/${ids.length}`);
+    }
+    state.selection.clear();
+    await loadData();
+    renderAll();
+    toast(`Done — ${ids.length} galler${ids.length === 1 ? 'y' : 'ies'} updated`);
+  }
+
+  async function bulkAction(kind) {
+    const ids = [...state.selection];
+    if (!ids.length) return;
+    if (kind === 'collection') {
+      if (!state.collections.length) { toast('No collections yet — create one first'); return; }
+      const colId = await promptModal({
+        title: 'Add to collection', okText: 'Add',
+        field: { type: 'select', label: 'Collection', options: state.collections.map(c => ({ value: c.id, label: c.name })) },
+      });
+      if (!colId) return;
+      const col = state.collections.find(c => c.id === colId);
+      const merged = [...new Set([...(col.galleryIds || []), ...ids])];
+      await fetch(`/api/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: merged }) });
+      state.selection.clear();
+      await loadData(); renderAll();
+      toast(`Added ${ids.length} to ${col.name}`);
+    } else if (kind === 'expiration') {
+      const date = await promptModal({ title: 'Set expiration', okText: 'Set', field: { type: 'date', label: 'Expiration date (leave blank to clear)' } });
+      if (date === null) return;
+      const expiresAt = date ? new Date(date + 'T23:59:59').toISOString() : null;
+      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt }) }));
+    } else if (kind === 'password') {
+      const pw = await promptModal({ title: 'Set / clear password', okText: 'Apply', sub: 'Leave blank to remove the password.', field: { type: 'text', label: 'Password' } });
+      if (pw === null) return;
+      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) }));
+    } else if (kind === 'downloads') {
+      const val = await promptModal({ title: 'Downloads', okText: 'Apply', field: { type: 'select', label: 'Allow client downloads', options: [{ value: '1', label: 'On' }, { value: '0', label: 'Off' }] } });
+      if (val === null) return;
+      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ downloadsEnabled: val === '1' }) }));
+    } else if (kind === 'archive') {
+      if (!await confirmModal({ title: 'Archive galleries', message: `Archive ${ids.length} galler${ids.length === 1 ? 'y' : 'ies'}? They become inactive and move to Archive.` })) return;
+      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: false }) }));
+    } else if (kind === 'delete') {
+      if (!await confirmModal({ title: 'Delete galleries', message: `Permanently delete ${ids.length} galler${ids.length === 1 ? 'y' : 'ies'}? This cannot be undone.`, okText: 'Delete', danger: true })) return;
+      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'DELETE' }));
     }
   }
 
-  async function generateApiToken(isRotate) {
-    if (isRotate && !confirm('Rotate the API token? Any client using the old token will start getting 401 errors.')) return;
-    apiTokenStatus.textContent = 'Generating\u2026';
-    try {
-      const res = await fetch('/api/settings/api-token', { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) {
-        apiTokenStatus.textContent = data.error || ('HTTP ' + res.status);
-        return;
-      }
-      apiTokenStatus.textContent = '';
-      apiTokenRevealInput.value = data.token;
-      apiTokenModal.style.display = 'flex';
-      apiTokenRevealInput.focus();
-      apiTokenRevealInput.select();
-      loadApiTokenState();
-    } catch (err) {
-      apiTokenStatus.textContent = 'Network error: ' + err.message;
-    }
+  // ==========================================================================
+  // Gallery content view (centre pane)
+  // ==========================================================================
+  function renderGalleryView() {
+    const g = state.galleries.find(x => x.id === state.centreGalleryId);
+    if (!g) { backToLibrary(); return; }
+    contentGid = g.id;
+    const isProofing = g.type === 'proofing';
+    const badge = isProofing ? 'Client gallery' : 'Portfolio';
+    const link = isProofing && g.token ? window.location.origin + '/gallery/' + g.token : '';
+    const meta = [`${g.videoCount || 0} items`, `${g.viewCount || 0} views`];
+    if (g.lastViewedAt) meta.push('last viewed ' + shortDate(g.lastViewedAt));
+
+    const scroll = $('table-scroll');
+    scroll.innerHTML = `
+      <div class="gallery-view">
+        <div class="gallery-view-head">
+          <button class="back-link" id="gv-back">&larr; ${escapeHtml(centreTitle())}</button>
+          <div class="gv-title-row">
+            <h1 class="gv-title">${escapeHtml(g.name)}</h1>
+            <span class="gv-badge">${badge}</span>
+            <div class="gv-actions">
+              <button class="link-btn accent" data-gv="settings">Settings</button>
+              ${isProofing ? `<button class="link-btn accent" data-gv="comments">Comments</button>` : ''}
+            </div>
+          </div>
+          <div class="gv-sub">${meta.join(' · ')}${link ? ` · <span class="gv-link">${escapeHtml(link)}</span>` : ''}</div>
+          <div class="gv-add">
+            <div class="gv-drop" id="gv-drop">
+              <span>Drop files here or</span>
+              <label class="btn-primary small">Add files<input type="file" id="gv-file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v,image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden></label>
+              <button class="link-btn accent" data-gv="header">Add section header</button>
+              <button class="link-btn accent" data-gv="import">Import from server</button>
+              <button class="link-btn muted" data-gv="refresh">Refresh metadata</button>
+            </div>
+          </div>
+          <div id="gv-queue"></div>
+        </div>
+        <div class="item-list" id="content-list"><div class="drawer-empty">Loading…</div></div>
+      </div>`;
+
+    $('gv-back').addEventListener('click', backToLibrary);
+    scroll.querySelectorAll('[data-gv]').forEach(b => b.addEventListener('click', () => gvAction(g, b.getAttribute('data-gv'))));
+    const dz = $('gv-drop');
+    dz.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag-over'); });
+    dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+    dz.addEventListener('drop', (e) => { e.preventDefault(); dz.classList.remove('drag-over'); const files = filterMediaFiles(e.dataTransfer.files); if (files.length) enqueueFiles(files, g.id); });
+    $('gv-file').addEventListener('change', (e) => { const files = Array.from(e.target.files); if (files.length) enqueueFiles(files, g.id); e.target.value = ''; });
+    loadContent();
+    renderInlineQueue();
   }
 
-  apiTokenGenerateBtn.addEventListener('click', () => generateApiToken(false));
-  apiTokenRegenerateBtn.addEventListener('click', () => generateApiToken(true));
-
-  apiTokenRevokeBtn.addEventListener('click', async () => {
-    if (!confirm('Revoke the current API token? Any client using it will immediately start getting 401 errors.')) return;
-    apiTokenStatus.textContent = 'Revoking\u2026';
-    try {
-      const res = await fetch('/api/settings/api-token', { method: 'DELETE' });
+  async function gvAction(g, act) {
+    if (act === 'settings') openDrawer('settings');
+    else if (act === 'comments') openDrawer('comments');
+    else if (act === 'import') { contentGid = g.id; openImportModal(); }
+    else if (act === 'refresh') {
+      const res = await fetch(`/api/admin/galleries/${g.id}/probe`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        apiTokenStatus.textContent = data.error || ('HTTP ' + res.status);
-        return;
-      }
-      apiTokenStatus.textContent = 'Token revoked.';
-      loadApiTokenState();
-    } catch (err) {
-      apiTokenStatus.textContent = 'Network error: ' + err.message;
+      toast(data.updated > 0 ? `Updated ${data.updated} item${data.updated !== 1 ? 's' : ''}` : 'All up to date');
+      if (data.updated > 0) loadContent();
+    } else if (act === 'header') {
+      const text = await promptModal({ title: 'Section header', okText: 'Add', field: { type: 'text', label: 'Header text' } });
+      if (!text) return;
+      await fetch(`/api/admin/galleries/${g.id}/headers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+      loadContent();
+    }
+  }
+
+  // ==========================================================================
+  // Drawer
+  // ==========================================================================
+  // Clicking a gallery enters its content view in the centre pane. The drawer
+  // (Settings / Comments) is opened on demand from that view, not automatically.
+  function openGallery(id) {
+    state.selection.clear();
+    state.centreGalleryId = id;
+    contentGid = id;
+    closeDrawerForce();
+    setScreen('library');
+    renderCentre();
+  }
+  function backToLibrary() {
+    if (state.drawer.galleryId && state.drawer.dirty && !confirm('Discard unsaved changes?')) return;
+    state.centreGalleryId = null;
+    contentGid = null;
+    closeDrawerForce();
+    renderCentre();
+  }
+  function openDrawer(tab) {
+    const id = state.centreGalleryId;
+    if (!id) return;
+    if (state.drawer.galleryId === id && !$('drawer').hidden && (!tab || state.drawer.tab === tab)) { closeDrawer(); return; }
+    state.drawer.galleryId = id;
+    state.drawer.tab = tab || 'settings';
+    state.drawer.dirty = false;
+    initDraft();
+    $('library-layout').classList.add('drawer-open');
+    ensureScrim();
+    renderDrawer();
+  }
+  function closeDrawer() {
+    if (state.drawer.dirty && !confirm('Discard unsaved changes?')) return;
+    state.drawer.galleryId = null;
+    state.drawer.draft = null;
+    $('library-layout').classList.remove('drawer-open');
+    $('drawer').hidden = true;
+    removeScrim();
+  }
+  function ensureScrim() {
+    if (window.innerWidth >= 1280) return;
+    if ($('drawer-scrim')) return;
+    const s = document.createElement('div');
+    s.id = 'drawer-scrim';
+    s.className = 'drawer-scrim';
+    s.addEventListener('click', closeDrawer);
+    document.body.appendChild(s);
+  }
+  function removeScrim() { const s = $('drawer-scrim'); if (s) s.remove(); }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (!$('drawer').hidden && state.drawer.galleryId) closeDrawer();
+      else if (state.centreGalleryId) backToLibrary();
+      else if (state.selection.size) clearSelection();
     }
   });
 
-  apiTokenCopyBtn.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(apiTokenRevealInput.value);
-      apiTokenCopyBtn.textContent = 'Copied!';
-      setTimeout(() => { apiTokenCopyBtn.textContent = 'Copy'; }, 1500);
-    } catch (_) {
-      apiTokenRevealInput.select();
-      document.execCommand('copy');
+  function currentDrawerGallery() { return state.galleries.find(g => g.id === state.drawer.galleryId); }
+  function initDraft() {
+    const g = currentDrawerGallery();
+    if (!g) return;
+    const eff = effective(g);
+    state.drawer.draft = {
+      name: g.name,
+      active: g.active !== false,
+      override: !!g.overrideCollectionSettings,
+      password: '',            // only sent if typed
+      downloadsEnabled: eff.downloadsEnabled,
+      commentingEnabled: eff.commentingEnabled,
+      expiresAt: eff.expiresAt ? eff.expiresAt.split('T')[0] : '',
+    };
+  }
+
+  function renderDrawer() {
+    const drawer = $('drawer');
+    const g = currentDrawerGallery();
+    if (!g) { drawer.hidden = true; return; }
+    drawer.hidden = false;
+    const col = parentCollection(g);
+    const d = state.drawer.draft;
+    const isProofing = g.type === 'proofing';
+
+    // Header
+    let parentLine;
+    if (col) parentLine = `<span class="drawer-parent" data-open-col="${escapeHtml(col.id)}">${escapeHtml(col.name.toUpperCase())}</span>`;
+    else if (isProofing) parentLine = `<span class="drawer-parent ungrouped">UNGROUPED <span class="add-to-col" data-add-to-col>Add to collection…</span></span>`;
+    else parentLine = `<span class="drawer-parent ungrouped">PORTFOLIO</span>`;
+
+    const meta = [`${g.videoCount || 0} items`, `${g.viewCount || 0} views`];
+    if (g.lastViewedAt) meta.push('last viewed ' + shortDate(g.lastViewedAt));
+
+    let html = `<div class="drawer-header">
+      ${parentLine}
+      <h2 class="drawer-title">${escapeHtml(g.name)}</h2>
+      <div class="drawer-meta">${meta.join(' · ')}</div>
+    </div>
+    <div class="drawer-tabs">
+      <button class="drawer-tab${state.drawer.tab === 'settings' ? ' active' : ''}" data-tab="settings">Settings</button>
+      ${isProofing ? `<button class="drawer-tab${state.drawer.tab === 'comments' ? ' active' : ''}" data-tab="comments">Comments</button>` : ''}
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>`;
+    drawer.innerHTML = html;
+
+    drawer.querySelectorAll('.drawer-tab').forEach(t =>
+      t.addEventListener('click', () => { state.drawer.tab = t.getAttribute('data-tab'); renderDrawer(); }));
+    const openColEl = drawer.querySelector('[data-open-col]');
+    if (openColEl) openColEl.addEventListener('click', () => { closeDrawerForce(); state.centreGalleryId = null; contentGid = null; state.rail = openColEl.getAttribute('data-open-col'); renderRail(); renderCentre(); });
+    const addToColEl = drawer.querySelector('[data-add-to-col]');
+    if (addToColEl) addToColEl.addEventListener('click', addCurrentToCollection);
+
+    if (state.drawer.tab === 'comments') renderDrawerComments(g);
+    else renderDrawerSettings(g, col, d, isProofing);
+  }
+  function closeDrawerForce() {
+    state.drawer.galleryId = null; state.drawer.draft = null;
+    $('library-layout').classList.remove('drawer-open'); $('drawer').hidden = true; removeScrim();
+  }
+
+  function renderDrawerSettings(g, col, d, isProofing) {
+    const body = $('drawer-body');
+    const baseUrl = window.location.origin;
+    let html = '';
+
+    if (isProofing && g.token) {
+      html += `<div class="drawer-block">
+        <div class="d-label">Link</div>
+        <div class="d-link-url">${escapeHtml(baseUrl + '/gallery/' + g.token)}</div>
+        <div class="d-link-actions">
+          <button class="link-btn accent" data-link="copy">Copy</button>
+          <button class="link-btn accent" data-link="open">Open</button>
+          <button class="link-btn accent" data-link="email">Email</button>
+          <button class="link-btn muted" data-link="regen">Regenerate</button>
+        </div>
+      </div>`;
+    }
+
+    if (isProofing && col) {
+      const useCollection = !d.override;
+      html += `<div class="drawer-block">
+        <div class="switch-row">
+          <div><div class="sr-text">Use collection settings</div><div class="sr-sub">Password, downloads, expiry</div></div>
+          <button class="switch${useCollection ? ' on' : ''}" data-switch="useCollection"></button>
+        </div>
+        ${useCollection ? inheritedReadOnly(g) : editableSettings(d)}
+      </div>`;
+    } else if (isProofing) {
+      html += `<div class="drawer-block">${editableSettings(d)}</div>`;
+    }
+
+    html += `<div class="drawer-block">
+      <div class="switch-row"><div class="sr-text">Active</div><button class="switch${d.active ? ' on' : ''}" data-switch="active"></button></div>
+    </div>`;
+
+    html += `<div class="drawer-footer">
+      <button class="btn-primary" data-act="save">Save</button>
+      <button class="link-btn" data-act="move">Move…</button>
+      <button class="link-btn" data-act="duplicate">Duplicate</button>
+      <span class="spacer"></span>
+      <button class="link-btn danger muted" data-act="delete">Delete</button>
+    </div>`;
+    body.innerHTML = html;
+    wireDrawerSettings(g, col);
+  }
+
+  function inheritedReadOnly(g) {
+    const eff = effective(g);
+    const row = (k, v) => `<div class="inherit-row"><span class="ir-key">${k}</span><span class="ir-val">${v}</span></div>`;
+    return `<div class="inherit-list locked">
+      ${row('Password', eff.hasPassword ? 'Set' : 'None')}
+      ${row('Downloads', eff.downloadsEnabled ? 'On' : 'Off')}
+      ${row('Comments', eff.commentingEnabled ? 'On' : 'Off')}
+      ${row('Expires', formatDate(eff.expiresAt))}
+    </div>`;
+  }
+  function editableSettings(d) {
+    return `<div class="inherit-list">
+      <div class="editable-row"><span class="er-key">Password</span><span class="er-ctl"><input type="text" class="d-input" data-field="password" placeholder="${d.hasPasswordExisting ? '(set — type to change)' : 'No password'}" value=""></span></div>
+      <div class="switch-row"><div class="sr-text">Downloads</div><button class="switch${d.downloadsEnabled ? ' on' : ''}" data-switch="downloadsEnabled"></button></div>
+      <div class="switch-row"><div class="sr-text">Comments</div><button class="switch${d.commentingEnabled ? ' on' : ''}" data-switch="commentingEnabled"></button></div>
+      <div class="editable-row"><span class="er-key">Expires</span><span class="er-ctl"><input type="date" class="d-input" data-field="expiresAt" value="${d.expiresAt || ''}" style="max-width:180px;"></span></div>
+    </div>`;
+  }
+
+  function wireDrawerSettings(g, col) {
+    const body = $('drawer-body');
+    const d = state.drawer.draft;
+    body.querySelectorAll('[data-switch]').forEach(sw => sw.addEventListener('click', () => {
+      const key = sw.getAttribute('data-switch');
+      if (key === 'useCollection') { d.override = !d.override; state.drawer.dirty = true; renderDrawer(); return; }
+      d[key] = !sw.classList.contains('on');
+      sw.classList.toggle('on');
+      state.drawer.dirty = true;
+    }));
+    body.querySelectorAll('[data-field]').forEach(inp => inp.addEventListener('input', () => {
+      d[inp.getAttribute('data-field')] = inp.value;
+      state.drawer.dirty = true;
+    }));
+    body.querySelectorAll('[data-link]').forEach(b => b.addEventListener('click', () => linkAction(g, b.getAttribute('data-link'))));
+    body.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => drawerAction(g, col, b.getAttribute('data-act'))));
+  }
+
+  async function linkAction(g, act) {
+    const url = window.location.origin + '/gallery/' + g.token;
+    if (act === 'copy') { navigator.clipboard.writeText(url); toast('Link copied'); }
+    else if (act === 'open') { window.open(url, '_blank'); }
+    else if (act === 'email') { openMailto(buildGalleryMailto(g)); }
+    else if (act === 'regen') {
+      if (!await confirmModal({ title: 'Regenerate link', message: 'The old link will stop working.' })) return;
+      const res = await fetch(`/api/galleries/${g.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regenerateToken: true }) });
+      if (res.ok) { await loadData(); renderAll(); toast('Link regenerated'); }
+    }
+  }
+
+  async function drawerAction(g, col, act) {
+    const d = state.drawer.draft;
+    if (act === 'save') {
+      const body = { name: d.name, active: d.active };
+      if (g.type === 'proofing') {
+        if (col) {
+          body.overrideCollectionSettings = d.override;
+          if (d.override) {
+            if (d.password) body.password = d.password;
+            body.downloadsEnabled = d.downloadsEnabled;
+            body.commentingEnabled = d.commentingEnabled;
+            body.expiresAt = d.expiresAt ? new Date(d.expiresAt + 'T23:59:59').toISOString() : null;
+          }
+        } else {
+          if (d.password) body.password = d.password;
+          body.downloadsEnabled = d.downloadsEnabled;
+          body.commentingEnabled = d.commentingEnabled;
+          body.expiresAt = d.expiresAt ? new Date(d.expiresAt + 'T23:59:59').toISOString() : null;
+        }
+      }
+      const res = await fetch(`/api/galleries/${g.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (res.ok) {
+        state.drawer.dirty = false;
+        await loadData(); initDraft(); renderAll(); renderDrawer();
+        toast('Saved');
+      } else toast('Save failed');
+    } else if (act === 'delete') {
+      if (!await confirmModal({ title: 'Delete gallery', message: `Delete "${g.name}"? This cannot be undone.`, okText: 'Delete', danger: true })) return;
+      const res = await fetch(`/api/galleries/${g.id}`, { method: 'DELETE' });
+      if (res.ok) { closeDrawerForce(); state.centreGalleryId = null; contentGid = null; await loadData(); renderAll(); toast('Gallery deleted'); }
+    } else if (act === 'duplicate') {
+      toast('Creating copy…');
+      const res = await fetch('/api/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: g.name + ' (copy)', type: g.type }) });
+      if (res.ok && col) {
+        const ng = await res.json();
+        const merged = [...(col.galleryIds || []), ng.id];
+        await fetch(`/api/collections/${col.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: merged }) });
+      }
+      await loadData(); renderAll(); toast('Duplicated (metadata only — items not copied)');
+    } else if (act === 'move') {
+      addCurrentToCollection();
+    }
+  }
+
+  async function addCurrentToCollection() {
+    const g = currentDrawerGallery();
+    if (!g) return;
+    const options = [{ value: '', label: '— None (ungrouped) —' }, ...state.collections.map(c => ({ value: c.id, label: c.name }))];
+    const colId = await promptModal({ title: 'Move to collection', okText: 'Move', field: { type: 'select', label: 'Collection', options } });
+    if (colId === null) return;
+    // remove from any current collection, add to the chosen one
+    for (const c of state.collections) {
+      const has = (c.galleryIds || []).includes(g.id);
+      if (has && c.id !== colId) {
+        await fetch(`/api/collections/${c.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: c.galleryIds.filter(x => x !== g.id) }) });
+      }
+    }
+    if (colId) {
+      const target = state.collections.find(c => c.id === colId);
+      if (target && !(target.galleryIds || []).includes(g.id)) {
+        await fetch(`/api/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(target.galleryIds || []), g.id] }) });
+      }
+    }
+    await loadData(); initDraft(); renderAll(); renderDrawer();
+    toast('Moved');
+  }
+
+  function buildGalleryMailto(g) {
+    if (!g || !g.token) return null;
+    const url = window.location.origin + '/gallery/' + g.token;
+    const subject = `Your gallery is ready — ${g.name}`;
+    const pwLine = effective(g).hasPassword ? `\nPassword: [enter the gallery password here]\n` : '';
+    const body = `Hello,\n\nYour gallery is ready.\n\n${url}\n${pwLine}\nThanks,\nAJ Mast`;
+    return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
+  function openMailto(mailto) {
+    if (!mailto) return;
+    const a = document.createElement('a');
+    a.href = mailto; a.target = '_blank'; a.rel = 'noopener'; a.style.display = 'none';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+
+  // ==========================================================================
+  // Drawer: Content tab (ported item engine)
+  // ==========================================================================
+  let contentGid = null;
+  let contentItems = [];
+  let contentSortable = null;
+
+  async function loadContent() {
+    if (!contentGid) return;
+    const res = await fetch(`/api/admin/galleries/${contentGid}/videos`);
+    if (!res.ok) { if (res.status === 401) checkAuth(); return; }
+    const data = await res.json();
+    contentItems = Array.isArray(data) ? data : (data.videos || []);
+    const stats = (data && data.stats) || {};
+    renderContentItems(contentItems, stats);
+  }
+
+  function renderContentItems(items, stats) {
+    const list = $('content-list');
+    if (!list) return;
+    const dlItems = (stats && stats.downloads && stats.downloads.items) || {};
+    if (!items.length) { list.innerHTML = `<div class="drawer-empty">No items yet. Use “Add files”.</div>`; return; }
+    list.innerHTML = items.map(entry => {
+      if (entry.type === 'header') {
+        return `<div class="admin-header-item" data-id="${entry.id}" data-type="header">
+          <span class="drag-handle">≡</span>
+          <input type="text" class="title-input header-text-input" value="${escapeHtml(entry.text)}">
+          <button class="btn-icon delete-btn" title="Delete header">×</button>
+        </div>`;
+      }
+      const isPhoto = entry.type === 'photo';
+      const thumbSrc = entry.thumbnail ? '/thumbnails/' + encodeURIComponent(entry.thumbnail) + '?t=' + Date.now() : '';
+      let media;
+      if (thumbSrc) media = `<img src="${thumbSrc}" class="admin-thumb">`;
+      else if (isPhoto) media = `<img src="/uploads/${encodeURIComponent(entry.filename)}" class="admin-thumb">`;
+      else media = `<video src="/uploads/${encodeURIComponent(entry.filename)}" muted preload="metadata" class="admin-thumb"></video>`;
+      const dlCount = dlItems[entry.id] || 0;
+      return `<div class="admin-video-item" data-id="${entry.id}">
+        <span class="drag-handle">≡</span>
+        ${media}
+        <input type="text" class="title-input" value="${escapeHtml(entry.title)}">
+        <span class="video-dl-count" title="${dlCount} downloads">↓ ${dlCount}</span>
+        <button class="btn-icon replace-btn" title="Replace file">↻</button>
+        ${isPhoto ? '' : `<button class="btn-icon cc-btn${(entry.captions && entry.captions.length) ? ' has-captions' : ''}" title="Captions">CC</button>`}
+        ${isPhoto ? '' : `<button class="btn-icon thumb-btn" title="Set thumbnail">▦</button>`}
+        <button class="btn-icon toggle-vis ${entry.visible ? '' : 'hidden-video'}" title="${entry.visible ? 'Visible' : 'Hidden'}">${entry.visible ? '◉' : '○'}</button>
+        <button class="btn-icon delete-btn" title="Delete">×</button>
+      </div>`;
+    }).join('');
+    if (contentSortable) { try { contentSortable.destroy(); } catch (_) {} }
+    contentSortable = Sortable.create(list, {
+      handle: '.drag-handle', animation: 150, ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
+      onEnd: async () => {
+        const order = Array.from(list.querySelectorAll('.admin-video-item, .admin-header-item')).map(i => i.dataset.id);
+        await fetch(`/api/admin/galleries/${contentGid}/reorder`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }) });
+      },
+    });
+  }
+
+  // Delegated content interactions (survive drawer re-renders)
+  document.addEventListener('change', async (e) => {
+    if (!e.target.classList || !e.target.classList.contains('title-input')) return;
+    const container = e.target.closest('.admin-video-item, .admin-header-item');
+    if (!container || !contentGid) return;
+    const id = container.dataset.id;
+    if (container.dataset.type === 'header') {
+      await fetch(`/api/admin/galleries/${contentGid}/headers/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: e.target.value }) });
+    } else {
+      await fetch(`/api/admin/galleries/${contentGid}/videos/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: e.target.value }) });
     }
   });
-
-  apiTokenModalDoneBtn.addEventListener('click', () => {
-    apiTokenModal.style.display = 'none';
-    apiTokenRevealInput.value = '';
-  });
-
-  // ============ Deploy from GitHub ============
-
-  // ============ Update Check ============
-
-  let updateChecked = false;
-
-  async function checkForUpdates() {
-    const loading = document.getElementById('update-loading');
-    const info = document.getElementById('update-info');
-    loading.style.display = '';
-    info.style.display = 'none';
-
-    try {
-      const res = await fetch('/api/settings/update');
-      const data = await res.json();
-
-      document.getElementById('update-local-version').textContent = data.localVersion || 'unknown';
-      document.getElementById('update-local-commit').textContent = data.localCommit ? `(${data.localCommit})` : '';
-
-      if (data.updateAvailable) {
-        document.getElementById('update-available-section').style.display = '';
-        document.getElementById('update-current-section').style.display = 'none';
-        document.getElementById('update-remote-version').textContent = data.remoteVersion || '';
-        document.getElementById('update-remote-commit').textContent = data.remoteCommit ? `(${data.remoteCommit})` : '';
-
-        if (data.commitLog) {
-          document.getElementById('update-commit-log').style.display = '';
-          document.getElementById('update-commits').textContent = data.commitLog;
-        }
-        if (data.changelog) {
-          document.getElementById('update-changelog-section').style.display = '';
-          document.getElementById('update-changelog').textContent = data.changelog;
-        }
-      } else {
-        document.getElementById('update-available-section').style.display = 'none';
-        document.getElementById('update-current-section').style.display = '';
-      }
-
-      if (!data.enabled) {
-        const deployBtn = document.getElementById('deploy-btn');
-        if (deployBtn) deployBtn.style.display = 'none';
-      }
-    } catch (e) {
-      loading.textContent = 'Failed to check for updates.';
+  document.addEventListener('click', async (e) => {
+    const vis = e.target.closest('.toggle-vis');
+    if (vis && contentGid) {
+      const item = vis.closest('.admin-video-item'); const id = item.dataset.id;
+      const newVisible = vis.classList.contains('hidden-video');
+      const res = await fetch(`/api/admin/galleries/${contentGid}/videos/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visible: newVisible }) });
+      if (res.ok) { vis.classList.toggle('hidden-video', !newVisible); vis.textContent = newVisible ? '◉' : '○'; vis.title = newVisible ? 'Visible' : 'Hidden'; }
       return;
     }
-
-    loading.style.display = 'none';
-    info.style.display = '';
-    updateChecked = true;
-  }
-
-  // Deploy / Update button
-  document.getElementById('deploy-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('deploy-btn');
-    if (!confirm('Update to the latest version?')) return;
-
-    btn.disabled = true;
-    btn.textContent = 'Updating...';
-    const statusEl = document.getElementById('deploy-status');
-    statusEl.textContent = '';
-
-    try {
-      const res = await fetch('/api/settings/deploy', { method: 'POST' });
-      const data = await res.json();
-
-      if (res.ok) {
-        statusEl.textContent = data.message || 'Update successful!';
-        statusEl.style.color = '#4caf50';
-        setTimeout(() => window.location.reload(), 1500);
-      } else {
-        statusEl.textContent = data.error || 'Update failed.';
-        statusEl.style.color = '#e00';
-        btn.disabled = false;
-        btn.textContent = 'Update to Latest Version';
-      }
-    } catch (err) {
-      statusEl.textContent = 'Network error: ' + err.message;
-      statusEl.style.color = '#e00';
-      btn.disabled = false;
-      btn.textContent = 'Update to Latest Version';
+    const del = e.target.closest('.admin-video-item .delete-btn, .admin-header-item .delete-btn');
+    if (del && contentGid) {
+      const item = del.closest('.admin-video-item, .admin-header-item'); const id = item.dataset.id;
+      const isHeader = item.dataset.type === 'header';
+      if (!await confirmModal({ title: isHeader ? 'Delete header' : 'Delete item', message: isHeader ? 'Delete this section header?' : 'Delete this item? This cannot be undone.', okText: 'Delete', danger: true })) return;
+      const url = isHeader ? `/api/admin/galleries/${contentGid}/headers/${id}` : `/api/admin/galleries/${contentGid}/videos/${id}`;
+      const res = await fetch(url, { method: 'DELETE' });
+      if (res.ok) item.remove();
+      return;
     }
+    const rep = e.target.closest('.replace-btn');
+    if (rep && contentGid) {
+      replaceVideoId = rep.closest('.admin-video-item').dataset.id;
+      $('replace-file-input').click();
+      return;
+    }
+    const cc = e.target.closest('.cc-btn');
+    if (cc && contentGid) { openCaptionsModal(cc.closest('.admin-video-item').dataset.id); return; }
+    const th = e.target.closest('.thumb-btn');
+    if (th && contentGid) { openThumbForItem(th.closest('.admin-video-item').dataset.id); return; }
   });
 
-  // ============ Video Tools (ffmpeg) ============
+  // Replace file
+  let replaceVideoId = null;
+  $('replace-file-input').addEventListener('change', () => {
+    const file = $('replace-file-input').files[0];
+    if (!file || !replaceVideoId) return;
+    const fd = new FormData(); fd.append('video', file);
+    const xhr = new XMLHttpRequest();
+    xhr.addEventListener('load', () => { if (xhr.status >= 200 && xhr.status < 300) loadContent(); else toast('Replace failed'); replaceVideoId = null; $('replace-file-input').value = ''; });
+    xhr.addEventListener('error', () => { toast('Replace failed'); replaceVideoId = null; $('replace-file-input').value = ''; });
+    xhr.open('PUT', `/api/admin/galleries/${contentGid}/videos/${replaceVideoId}/replace`);
+    xhr.send(fd);
+  });
 
+  // ==========================================================================
+  // Drawer: Comments tab (ported)
+  // ==========================================================================
+  async function renderDrawerComments(g) {
+    const body = $('drawer-body');
+    body.innerHTML = `<div class="drawer-empty">Loading…</div>`;
+    const res = await fetch(`/api/admin/galleries/${g.id}/comments`);
+    if (!res.ok) { if (res.status === 401) checkAuth(); return; }
+    const comments = await res.json();
+    if (!comments.length) { body.innerHTML = `<div class="drawer-empty">No comments yet.</div>`; return; }
+    const grouped = {}; const order = [];
+    comments.forEach(c => {
+      const key = c.videoId || c.videoTitle || 'Unknown';
+      if (!grouped[key]) { grouped[key] = { title: c.videoTitle || 'Unknown Video', comments: [] }; order.push(key); }
+      grouped[key].comments.push(c);
+    });
+    body.innerHTML = order.map(key => {
+      const grp = grouped[key];
+      return `<div class="comments-video-group">
+        <div class="comments-video-header">
+          <span class="comments-video-toggle">▼</span>
+          <span class="comments-video-name">${escapeHtml(grp.title)}</span>
+          <span class="comments-video-count">${grp.comments.length}</span>
+        </div>
+        <div class="comments-video-body">${grp.comments.map(c => `
+          <div class="comment-item">
+            <div class="comment-header"><strong>${escapeHtml(c.name)}</strong><span class="comment-timestamp">@ ${formatTime(c.timestamp)}</span></div>
+            <div class="comment-text">${escapeHtml(c.text)}</div>
+            <div class="comment-date">${new Date(c.createdAt).toLocaleString()}</div>
+          </div>`).join('')}</div>
+      </div>`;
+    }).join('');
+    body.querySelectorAll('.comments-video-header').forEach(h =>
+      h.addEventListener('click', () => h.parentElement.classList.toggle('collapsed')));
+  }
+  function formatTime(seconds) {
+    const m = Math.floor(seconds / 60); const s = Math.floor(seconds % 60).toString().padStart(2, '0');
+    return m + ':' + s;
+  }
+
+  // ==========================================================================
+  // Upload screen + module-level queue engine
+  // ==========================================================================
+  const CONCURRENCY = 3;
+  const MAX_RETRIES = 3;
+
+  function setUploadDestinationForGallery(g) {
+    state.upload.destination = { collectionId: g.collectionId || '', galleryId: g.id };
+    savePrefs();
+  }
+  function renderUpload() {
+    // Destination selectors
+    const colSel = $('dest-collection'), galSel = $('dest-gallery');
+    const dest = state.upload.destination;
+    colSel.innerHTML = `<option value="">Ungrouped</option>` +
+      state.collections.map(c => `<option value="${c.id}"${dest.collectionId === c.id ? ' selected' : ''}>${escapeHtml(c.name)}</option>`).join('');
+    populateDestGalleries();
+    renderQueues();
+  }
+  function populateDestGalleries() {
+    const galSel = $('dest-gallery');
+    const dest = state.upload.destination;
+    const inCol = state.galleries.filter(g => g.active !== false && (dest.collectionId ? g.collectionId === dest.collectionId : !g.collectionId));
+    if (!inCol.length) { galSel.innerHTML = `<option value="">— no galleries —</option>`; state.upload.destination.galleryId = ''; return; }
+    if (!inCol.find(g => g.id === dest.galleryId)) state.upload.destination.galleryId = inCol[0].id;
+    galSel.innerHTML = inCol.map(g => `<option value="${g.id}"${state.upload.destination.galleryId === g.id ? ' selected' : ''}>${escapeHtml(g.name)}</option>`).join('');
+  }
+  $('dest-collection').addEventListener('change', (e) => { state.upload.destination.collectionId = e.target.value; state.upload.destination.galleryId = ''; populateDestGalleries(); savePrefs(); });
+  $('dest-gallery').addEventListener('change', (e) => { state.upload.destination.galleryId = e.target.value; savePrefs(); });
+  $('dest-new-gallery').addEventListener('click', async () => {
+    const name = await promptModal({ title: 'New gallery', okText: 'Create', field: { type: 'text', label: 'Gallery name', value: 'Client Gallery' } });
+    if (!name) return;
+    const res = await fetch('/api/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, type: 'proofing' }) });
+    if (!res.ok) { toast('Create failed'); return; }
+    const g = await res.json();
+    if (state.upload.destination.collectionId) {
+      const col = state.collections.find(c => c.id === state.upload.destination.collectionId);
+      if (col) await fetch(`/api/collections/${col.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(col.galleryIds || []), g.id] }) });
+    }
+    await loadData();
+    state.upload.destination.galleryId = g.id;
+    renderUpload(); renderRail();
+    toast('Gallery created');
+  });
+  $('dest-import').addEventListener('click', () => { contentGid = state.upload.destination.galleryId; if (!contentGid) { toast('Pick a destination gallery first'); return; } openImportModal(); });
+
+  // Drag & drop
+  const ALLOWED_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v', 'image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  const ALLOWED_EXTS = ['.mp4', '.webm', '.mov', '.m4v', '.jpg', '.jpeg', '.png', '.webp', '.gif'];
+  function filterMediaFiles(fileList) {
+    return Array.from(fileList).filter(f => ALLOWED_TYPES.includes(f.type) || ALLOWED_EXTS.includes((f.name.toLowerCase().match(/\.[^.]+$/) || [''])[0]));
+  }
+  const dropZone = $('drop-zone');
+  dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault(); dropZone.classList.remove('drag-over');
+    const files = filterMediaFiles(e.dataTransfer.files);
+    if (files.length) enqueueFiles(files);
+  });
+  $('file-input').addEventListener('change', (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length) enqueueFiles(files);
+    e.target.value = '';
+  });
+
+  function titleFromFilename(fn) {
+    return fn.replace(/\.[^.]+$/, '').replace(/^\d{10,}-/, '').replace(/[_-]/g, ' ').replace(/\s+/g, ' ').trim() || 'Untitled';
+  }
+  function enqueueFiles(files, gid) {
+    gid = gid || state.upload.destination.galleryId;
+    if (!gid) { toast('Pick a destination gallery first'); return; }
+    files.forEach(file => {
+      state.upload.queue.push({
+        id: 'u' + Date.now() + Math.random().toString(36).slice(2, 6),
+        file, name: file.name, size: file.size, title: titleFromFilename(file.name),
+        galleryId: gid, pct: 0, status: 'waiting', error: '', retries: 0, xhr: null, uploaded: null,
+      });
+    });
+    renderQueues(); pumpQueue();
+  }
+
+  function pumpQueue() {
+    const active = state.upload.queue.filter(i => i.status === 'uploading').length;
+    let slots = CONCURRENCY - active;
+    for (const item of state.upload.queue) {
+      if (slots <= 0) break;
+      if (item.status === 'waiting') { startUpload(item); slots--; }
+    }
+    updateUploadsCount();
+  }
+  function startUpload(item) {
+    item.status = 'uploading'; item.error = '';
+    const fd = new FormData(); fd.append('video', item.file); fd.append('title', item.title);
+    const xhr = new XMLHttpRequest(); item.xhr = xhr;
+    xhr.upload.addEventListener('progress', (e) => { if (e.lengthComputable) { item.pct = Math.round(e.loaded / e.total * 100); updateQueueProgress(item); } });
+    xhr.addEventListener('load', () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        item.pct = 100; item.status = 'done';
+        try { item.uploaded = JSON.parse(xhr.responseText); } catch (_) {}
+        renderQueues();
+        if (item.uploaded && item.uploaded.type === 'video' && !item.uploaded.thumbnail) autoGenerateVideoThumbnail(item.uploaded, item.galleryId).catch(() => {});
+        refreshCountsSoon();
+      } else {
+        let detail = `HTTP ${xhr.status}`;
+        try { const d = JSON.parse(xhr.responseText); if (d.error) detail = d.error; } catch (_) {}
+        failItem(item, detail);
+      }
+      item.xhr = null; pumpQueue();
+    });
+    xhr.addEventListener('error', () => { failItem(item, 'Connection dropped at ' + item.pct + '%'); item.xhr = null; pumpQueue(); });
+    xhr.open('POST', `/api/admin/galleries/${item.galleryId}/videos`);
+    xhr.send(fd);
+    renderQueues();
+  }
+  function failItem(item, detail) {
+    if (item.retries < MAX_RETRIES) {
+      item.retries++; item.status = 'waiting'; item.error = 'Retrying… (' + item.retries + ')';
+      renderQueues();
+      setTimeout(pumpQueue, 800 * item.retries);
+    } else { item.status = 'failed'; item.error = detail; renderQueues(); }
+  }
+  let _refreshTimer = null;
+  function refreshCountsSoon() { clearTimeout(_refreshTimer); _refreshTimer = setTimeout(async () => { await loadData(); renderRail(); if (state.screen === 'library' && !state.centreGalleryId) renderCentre(); if (contentGid) loadContent(); }, 1200); }
+
+  $('queue-pause-all').addEventListener('click', () => { state.upload.queue.forEach(i => { if (i.status === 'uploading' || i.status === 'waiting') { if (i.xhr) i.xhr.abort(); i.status = 'paused'; } }); renderQueues(); });
+  $('queue-cancel-all').addEventListener('click', () => { state.upload.queue.forEach(i => { if (i.xhr) i.xhr.abort(); }); state.upload.queue = []; renderQueues(); });
+
+  // The queue is module-level state; it renders into the Upload screen and,
+  // when a gallery is open, into that gallery view's inline queue too.
+  function renderQueues() { renderUploadScreenQueue(); renderInlineQueue(); updateUploadsCount(); }
+
+  function renderUploadScreenQueue() {
+    const head = $('queue-head'), list = $('queue-list');
+    if (!head || !list) return;
+    const q = state.upload.queue;
+    if (!q.length) { head.hidden = true; list.innerHTML = ''; return; }
+    head.hidden = false;
+    const total = q.length;
+    const done = q.filter(i => i.status === 'done').length;
+    const remainBytes = q.filter(i => i.status !== 'done').reduce((s, i) => s + (i.size || 0), 0);
+    $('queue-stats').textContent = `${done} of ${total}${remainBytes ? ' · ' + fmtBytes(remainBytes) + ' left' : ''}`;
+    list.innerHTML = q.map(queueRowHtml).join('');
+    wireQueueRows(list, q);
+  }
+
+  function renderInlineQueue() {
+    const el = $('gv-queue');
+    if (!el) return;
+    const items = state.upload.queue.filter(i => i.galleryId === state.centreGalleryId && i.status !== 'done');
+    el.innerHTML = items.map(queueRowHtml).join('');
+    wireQueueRows(el, items);
+  }
+
+  function wireQueueRows(scope, items) {
+    items.forEach(item => {
+      const row = scope.querySelector(`[data-q="${item.id}"]`); if (!row) return;
+      const act = row.querySelector('.qr-action button');
+      if (act) act.addEventListener('click', () => queueRowAction(item, act.getAttribute('data-qa')));
+    });
+  }
+
+  function updateQueueProgress(item) {
+    document.querySelectorAll(`[data-q="${item.id}"]`).forEach(row => {
+      const fill = row.querySelector('.qr-fill'); if (fill) fill.style.width = item.pct + '%';
+    });
+  }
+  function queueRowHtml(item) {
+    const statusText = { waiting: 'Waiting', uploading: 'Uploading', done: 'Done', failed: 'Failed', paused: 'Paused' }[item.status];
+    const sub = item.status === 'failed' ? `<div class="qr-sub err">${escapeHtml(item.error || 'Failed')}</div>`
+      : item.error && item.status === 'waiting' ? `<div class="qr-sub err">${escapeHtml(item.error)}</div>`
+      : `<div class="qr-sub">${fmtBytes(item.size)}</div>`;
+    let action = '';
+    if (item.status === 'uploading') action = `<button data-qa="pause">Pause</button>`;
+    else if (item.status === 'failed' || item.status === 'paused') action = `<button data-qa="retry">Retry</button>`;
+    else if (item.status === 'done' && item.uploaded && item.uploaded.type === 'video') action = `<button data-qa="frame">Frame</button>`;
+    return `<div class="queue-row" data-q="${item.id}">
+      <span class="qr-thumb"></span>
+      <div class="qr-file"><div class="qr-name">${escapeHtml(item.name)}</div>${sub}</div>
+      <div class="qr-track"><div class="qr-fill" style="width:${item.pct}%"></div></div>
+      <div class="qr-status ${item.status}">${statusText}</div>
+      <div class="qr-action">${action}</div>
+    </div>`;
+  }
+  function queueRowAction(item, act) {
+    if (act === 'pause') { if (item.xhr) item.xhr.abort(); item.status = 'paused'; renderQueues(); }
+    else if (act === 'retry') { item.retries = 0; item.pct = 0; item.status = 'waiting'; item.error = ''; renderQueues(); pumpQueue(); }
+    else if (act === 'frame') { openThumbForUploaded(item); }
+  }
+
+  // ==========================================================================
+  // Thumbnail picker (ported)
+  // ==========================================================================
+  const thumbPicker = $('thumb-picker');
+  const thumbVideo = $('thumb-video');
+  const thumbScrubber = $('thumb-scrubber');
+  const thumbTime = $('thumb-time');
+  const thumbCanvas = $('thumb-canvas');
+  const thumbCtx = thumbCanvas.getContext('2d', { willReadFrequently: true });
+  let thumbGid = null, thumbVideoId = null;
+
+  function openThumbForItem(videoId) {
+    thumbGid = contentGid; thumbVideoId = videoId;
+    const item = contentItems.find(v => v.id === videoId);
+    if (item && item.filename) openThumbPicker('/uploads/' + encodeURIComponent(item.filename));
+  }
+  function openThumbForUploaded(queueItem) {
+    thumbGid = queueItem.galleryId; thumbVideoId = queueItem.uploaded.id;
+    openThumbPicker('/uploads/' + encodeURIComponent(queueItem.uploaded.filename));
+  }
+  function openThumbPicker(src) {
+    thumbVideo.src = src;
+    thumbPicker.classList.add('open');
+    thumbScrubber.value = 0; thumbTime.textContent = '0:00';
+    thumbVideo.addEventListener('loadedmetadata', function onMeta() {
+      thumbScrubber.max = thumbVideo.duration; thumbVideo.currentTime = 0.1;
+      thumbVideo.removeEventListener('loadedmetadata', onMeta);
+    });
+  }
+  thumbScrubber.addEventListener('input', () => { thumbVideo.currentTime = parseFloat(thumbScrubber.value); });
+  thumbVideo.addEventListener('seeked', () => {
+    drawThumbFrame();
+    const t = thumbVideo.currentTime;
+    thumbTime.textContent = Math.floor(t / 60) + ':' + Math.floor(t % 60).toString().padStart(2, '0');
+  });
+  function drawThumbFrame() {
+    const vw = thumbVideo.videoWidth || 16, vh = thumbVideo.videoHeight || 9;
+    const cA = thumbCanvas.width / thumbCanvas.height, vA = vw / vh;
+    let dw, dh, dx, dy;
+    if (vA > cA) { dw = thumbCanvas.width; dh = dw / vA; dx = 0; dy = (thumbCanvas.height - dh) / 2; }
+    else { dh = thumbCanvas.height; dw = dh * vA; dx = (thumbCanvas.width - dw) / 2; dy = 0; }
+    thumbCtx.fillStyle = '#000'; thumbCtx.fillRect(0, 0, thumbCanvas.width, thumbCanvas.height);
+    thumbCtx.imageSmoothingQuality = 'high';
+    thumbCtx.drawImage(thumbVideo, dx, dy, dw, dh);
+  }
+  async function captureFrameAsJpegBlob(videoEl) {
+    const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+    if (!vw || !vh) throw new Error('Video not ready');
+    const w = Math.min(vw, 640), h = Math.round(w * vh / vw);
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d'); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(videoEl, 0, 0, w, h);
+    return await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('export failed')), 'image/jpeg', 0.88));
+  }
+  async function uploadThumbnailBlob(gid, videoId, blob) {
+    const res = await fetch(`/api/admin/galleries/${gid}/videos/${videoId}/thumbnail`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Failed to save thumbnail'); }
+  }
+  $('thumb-capture-btn').addEventListener('click', async () => {
+    const btn = $('thumb-capture-btn'); btn.disabled = true; btn.textContent = 'Saving…';
+    try { const blob = await captureFrameAsJpegBlob(thumbVideo); await uploadThumbnailBlob(thumbGid, thumbVideoId, blob); closeThumbPicker(); if (contentGid === thumbGid) loadContent(); toast('Thumbnail set'); }
+    catch (err) { toast(err.message || 'Failed'); }
+    finally { btn.disabled = false; btn.textContent = 'Set Thumbnail'; }
+  });
+  async function autoGenerateVideoThumbnail(video, gid) {
+    const v = document.createElement('video'); v.muted = true; v.preload = 'auto'; v.playsInline = true;
+    v.src = '/uploads/' + encodeURIComponent(video.filename);
+    const waitFor = (ev, ms) => new Promise((res, rej) => {
+      let done = false; const ok = () => { if (done) return; done = true; res(); }; const er = () => { if (done) return; done = true; rej(new Error(ev)); };
+      v.addEventListener(ev, ok, { once: true }); v.addEventListener('error', er, { once: true });
+      setTimeout(() => { if (!done) { done = true; rej(new Error('timeout')); } }, ms);
+    });
+    try {
+      await waitFor('loadedmetadata', 30000);
+      const dur = v.duration || 0; const upper = Math.min(10, isFinite(dur) && dur > 0 ? dur : 10);
+      const lo = Math.min(0.3, upper); v.currentTime = lo + Math.random() * Math.max(0, upper - lo);
+      await waitFor('seeked', 15000);
+      const blob = await captureFrameAsJpegBlob(v); await uploadThumbnailBlob(gid, video.id, blob);
+      if (contentGid === gid) loadContent();
+    } finally { v.removeAttribute('src'); v.load(); }
+  }
+  $('thumb-cancel-btn').addEventListener('click', closeThumbPicker);
+  thumbPicker.addEventListener('click', (e) => { if (e.target === thumbPicker) closeThumbPicker(); });
+  function closeThumbPicker() { thumbPicker.classList.remove('open'); thumbVideo.pause(); thumbVideo.src = ''; thumbVideoId = null; }
+
+  // ==========================================================================
+  // Captions modal (ported)
+  // ==========================================================================
+  const CAPTION_LANGUAGES = [
+    { code: 'en', label: 'English' }, { code: 'es', label: 'Español' }, { code: 'fr', label: 'Français' },
+    { code: 'de', label: 'Deutsch' }, { code: 'it', label: 'Italiano' }, { code: 'pt', label: 'Português' },
+    { code: 'pt-br', label: 'Português (Brasil)' }, { code: 'nl', label: 'Nederlands' }, { code: 'zh', label: '中文' },
+    { code: 'ja', label: '日本語' }, { code: 'ko', label: '한국어' }, { code: 'ar', label: 'العربية' },
+    { code: 'hi', label: 'हिन्दी' }, { code: 'ru', label: 'Русский' },
+  ];
+  let captionsVideoId = null;
+  const captionLangSelect = $('caption-lang');
+  captionLangSelect.innerHTML = CAPTION_LANGUAGES.map(l => `<option value="${l.code}">${escapeHtml(l.label)} (${l.code})</option>`).join('') + '<option value="__custom__">Other…</option>';
+  captionLangSelect.addEventListener('change', () => { $('caption-custom-lang-label').style.display = captionLangSelect.value === '__custom__' ? '' : 'none'; });
+
+  function openCaptionsModal(videoId) {
+    captionsVideoId = videoId;
+    $('caption-upload-status').textContent = ''; $('caption-file-input').value = '';
+    captionLangSelect.value = CAPTION_LANGUAGES[0].code; $('caption-custom-lang-label').style.display = 'none';
+    $('caption-custom-code').value = ''; $('caption-custom-label').value = '';
+    const item = contentItems.find(v => v.id === videoId);
+    $('captions-modal-title').textContent = item ? '— ' + item.title : '';
+    renderCaptionsList();
+    $('captions-modal').hidden = false;
+  }
+  function renderCaptionsList() {
+    const item = contentItems.find(v => v.id === captionsVideoId);
+    const captions = (item && item.captions) || [];
+    const el = $('captions-list');
+    if (!captions.length) { el.innerHTML = `<p class="setting-hint">No captions yet.</p>`; return; }
+    el.innerHTML = captions.map(c => `<div class="editable-row"><span class="er-key">${escapeHtml(c.label || c.lang)} <span style="color:var(--text-5);">(${escapeHtml(c.lang)})</span></span><button class="btn-icon caption-track-remove" data-lang="${escapeHtml(c.lang)}">×</button></div>`).join('');
+  }
+  $('captions-close-btn').addEventListener('click', () => { $('captions-modal').hidden = true; captionsVideoId = null; });
+  $('captions-modal').querySelector('.modal-backdrop').addEventListener('click', () => { $('captions-modal').hidden = true; });
+  $('captions-list').addEventListener('click', async (e) => {
+    const btn = e.target.closest('.caption-track-remove'); if (!btn || !captionsVideoId) return;
+    const lang = btn.dataset.lang;
+    if (!await confirmModal({ title: 'Remove caption', message: `Remove the "${lang}" caption track?`, okText: 'Remove', danger: true })) return;
+    const res = await fetch(`/api/admin/galleries/${contentGid}/videos/${captionsVideoId}/captions/${encodeURIComponent(lang)}`, { method: 'DELETE' });
+    if (res.ok) { await loadContent(); renderCaptionsList(); } else $('caption-upload-status').textContent = 'Could not remove caption.';
+  });
+  $('caption-upload-btn').addEventListener('click', async () => {
+    if (!captionsVideoId) return;
+    const file = $('caption-file-input').files[0];
+    if (!file) { $('caption-upload-status').textContent = 'Choose a .vtt file first.'; return; }
+    let lang, label;
+    if (captionLangSelect.value === '__custom__') {
+      lang = $('caption-custom-code').value.trim().toLowerCase(); label = $('caption-custom-label').value.trim();
+      if (!/^[a-z]{2,3}(-[a-z]{2,4})?$/.test(lang)) { $('caption-upload-status').textContent = 'Enter a valid code (e.g. en or pt-br).'; return; }
+    } else { lang = captionLangSelect.value; const k = CAPTION_LANGUAGES.find(l => l.code === lang); label = k ? k.label : lang.toUpperCase(); }
+    const fd = new FormData(); fd.append('caption', file); fd.append('lang', lang); fd.append('label', label);
+    $('caption-upload-status').textContent = 'Uploading…';
+    const res = await fetch(`/api/admin/galleries/${contentGid}/videos/${captionsVideoId}/captions`, { method: 'POST', body: fd });
+    if (res.ok) { $('caption-file-input').value = ''; $('caption-upload-status').textContent = 'Caption added.'; await loadContent(); renderCaptionsList(); }
+    else { const e = await res.json().catch(() => ({})); $('caption-upload-status').textContent = e.error || 'Upload failed.'; }
+  });
+
+  // ==========================================================================
+  // Import from server modal (ported)
+  // ==========================================================================
+  const importModal = $('import-modal');
+  $('import-cancel-btn').addEventListener('click', () => importModal.hidden = true);
+  importModal.querySelector('.modal-backdrop').addEventListener('click', () => importModal.hidden = true);
+  async function openImportModal() {
+    if (!contentGid) contentGid = state.upload.destination.galleryId;
+    if (!contentGid) { toast('Pick a destination gallery first'); return; }
+    importModal.hidden = false;
+    const listEl = $('import-file-list');
+    listEl.innerHTML = '<p class="import-loading">Scanning…</p>';
+    $('import-select-all').checked = false; $('import-confirm-btn').disabled = true;
+    try {
+      const res = await fetch('/api/admin/import/files');
+      if (!res.ok) throw new Error('scan failed');
+      const data = await res.json();
+      $('import-path').textContent = data.path;
+      if (!data.files.length) { listEl.innerHTML = '<p class="import-empty">No media files found. Upload via FTP to the path above.</p>'; return; }
+      listEl.innerHTML = data.files.map(f => `<label class="import-file-row"><input type="checkbox" class="import-file-check" value="${escapeHtml(f.name)}"><span class="import-file-name">${escapeHtml(f.name)}</span><span class="import-file-size">${(f.size / (1024 * 1024)).toFixed(1)} MB</span></label>`).join('');
+      updateImportBtn();
+    } catch (_) { listEl.innerHTML = '<p class="import-empty">Error scanning import folder.</p>'; }
+  }
+  $('import-select-all').addEventListener('change', (e) => { $('import-file-list').querySelectorAll('.import-file-check').forEach(c => c.checked = e.target.checked); updateImportBtn(); });
+  $('import-file-list').addEventListener('change', (e) => { if (e.target.classList.contains('import-file-check')) updateImportBtn(); });
+  function updateImportBtn() {
+    const n = $('import-file-list').querySelectorAll('.import-file-check:checked').length;
+    $('import-confirm-btn').disabled = n === 0;
+    $('import-confirm-btn').textContent = n ? `Import ${n} File${n !== 1 ? 's' : ''}` : 'Import Selected';
+  }
+  $('import-confirm-btn').addEventListener('click', async () => {
+    const filenames = Array.from($('import-file-list').querySelectorAll('.import-file-check:checked')).map(c => c.value);
+    if (!filenames.length) return;
+    $('import-confirm-btn').disabled = true; $('import-confirm-btn').textContent = 'Importing…';
+    try {
+      const res = await fetch(`/api/admin/galleries/${contentGid}/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filenames }) });
+      const data = await res.json();
+      if (data.imported && data.imported.length) { importModal.hidden = true; if (contentGid === state.drawer.galleryId) loadContent(); refreshCountsSoon(); toast(`Imported ${data.imported.length}`); }
+      if (data.errors && data.errors.length) toast('Some files failed to import');
+    } catch (err) { toast('Import failed'); }
+    finally { $('import-confirm-btn').disabled = false; $('import-confirm-btn').textContent = 'Import Selected'; }
+  });
+
+  // ==========================================================================
+  // New gallery / new collection modals
+  // ==========================================================================
+  function openNewGallery(collectionId) {
+    const modal = $('new-gallery-modal');
+    $('ng-name').value = 'Client Gallery';
+    modal.querySelectorAll('input[name="ng-type"]').forEach(r => r.checked = r.value === 'proofing');
+    const colSel = $('ng-collection');
+    colSel.innerHTML = `<option value="">— None —</option>` + state.collections.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    if (collectionId) colSel.value = collectionId;
+    modal.hidden = false;
+    $('ng-name').focus(); $('ng-name').select();
+  }
+  $('ng-cancel').addEventListener('click', () => $('new-gallery-modal').hidden = true);
+  $('new-gallery-modal').querySelector('.modal-backdrop').addEventListener('click', () => $('new-gallery-modal').hidden = true);
+  document.querySelectorAll('input[name="ng-type"]').forEach(r => r.addEventListener('change', () => {
+    $('ng-collection-group').style.display = r.value === 'reels' ? 'none' : '';
+  }));
+  $('ng-create').addEventListener('click', async () => {
+    const name = $('ng-name').value.trim(); if (!name) { $('ng-name').focus(); return; }
+    const type = document.querySelector('input[name="ng-type"]:checked').value;
+    const colId = type === 'proofing' ? $('ng-collection').value : '';
+    $('new-gallery-modal').hidden = true;
+    const res = await fetch('/api/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, type }) });
+    if (!res.ok) { toast('Create failed'); return; }
+    const g = await res.json();
+    if (colId) {
+      const col = state.collections.find(c => c.id === colId);
+      if (col) await fetch(`/api/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(col.galleryIds || []), g.id] }) });
+    }
+    await loadData(); renderAll(); openGallery(g.id);
+    toast('Gallery created');
+  });
+
+  const ncModal = $('new-collection-modal');
+  let ncState = { downloads: false, commenting: false };
+  function openNewCollection() {
+    closeAllMenus();
+    $('nc-name').value = ''; $('nc-link').value = ''; $('nc-password').value = ''; $('nc-expires').value = '';
+    ncState = { downloads: false, commenting: false };
+    $('nc-downloads').classList.remove('on'); $('nc-commenting').classList.remove('on');
+    const gl = $('nc-galleries');
+    const avail = state.galleries.filter(g => g.type === 'proofing' && g.active !== false);
+    gl.innerHTML = avail.length ? avail.map(g => `<label class="gal-check-row"><input type="checkbox" value="${g.id}"><span>${escapeHtml(g.name)}</span></label>`).join('') : `<p class="setting-hint" style="padding:8px;">No client galleries yet.</p>`;
+    ncModal.hidden = false;
+    $('nc-name').focus();
+  }
+  $('nc-downloads').addEventListener('click', () => { ncState.downloads = !ncState.downloads; $('nc-downloads').classList.toggle('on'); });
+  $('nc-commenting').addEventListener('click', () => { ncState.commenting = !ncState.commenting; $('nc-commenting').classList.toggle('on'); });
+  $('nc-cancel').addEventListener('click', () => ncModal.hidden = true);
+  ncModal.querySelector('.modal-backdrop').addEventListener('click', () => ncModal.hidden = true);
+  $('nc-create').addEventListener('click', async () => {
+    const name = $('nc-name').value.trim(); if (!name) { $('nc-name').focus(); return; }
+    const galleryIds = Array.from($('nc-galleries').querySelectorAll('input:checked')).map(c => c.value);
+    const body = {
+      name, galleryIds,
+      downloadsEnabled: ncState.downloads, commentingEnabled: ncState.commenting,
+      expiresAt: $('nc-expires').value ? new Date($('nc-expires').value + 'T23:59:59').toISOString() : null,
+    };
+    if ($('nc-password').value.trim()) body.password = $('nc-password').value.trim();
+    const res = await fetch('/api/collections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) { toast('Create failed'); return; }
+    const col = await res.json();
+    ncModal.hidden = true;
+    await loadData();
+    state.rail = col.id;
+    renderRail(); renderCentre();
+    toast('Collection created');
+  });
+
+  function copyCollectionLink(colId) {
+    const col = state.collections.find(c => c.id === colId);
+    if (!col) return;
+    navigator.clipboard.writeText(window.location.origin + '/collection/' + col.token);
+    toast('Collection link copied');
+  }
+
+  // ==========================================================================
+  // Generic prompt / confirm modals
+  // ==========================================================================
+  function promptModal(cfg) {
+    const modal = $('prompt-modal');
+    $('prompt-title').textContent = cfg.title || 'Enter value';
+    const sub = $('prompt-sub'); if (cfg.sub) { sub.textContent = cfg.sub; sub.hidden = false; } else sub.hidden = true;
+    $('prompt-ok').textContent = cfg.okText || 'OK';
+    const f = cfg.field || { type: 'text' };
+    const field = $('prompt-field');
+    if (f.type === 'select') {
+      field.innerHTML = `<div class="setting-group"><label>${escapeHtml(f.label || '')}</label><select class="setting-input" id="prompt-input">${f.options.map(o => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`).join('')}</select></div>`;
+    } else {
+      field.innerHTML = `<div class="setting-group"><label>${escapeHtml(f.label || '')}</label><input type="${f.type}" class="setting-input" id="prompt-input" placeholder="${escapeHtml(f.placeholder || '')}" value="${escapeHtml(f.value || '')}"></div>`;
+    }
+    modal.hidden = false;
+    const input = $('prompt-input'); input.focus(); if (input.select) input.select();
+    return new Promise((resolve) => {
+      function cleanup() { modal.hidden = true; $('prompt-ok').removeEventListener('click', ok); $('prompt-cancel').removeEventListener('click', cancel); modal.querySelector('.modal-backdrop').removeEventListener('click', cancel); document.removeEventListener('keydown', key); }
+      function ok() { const v = input.value; cleanup(); resolve(v); }
+      function cancel() { cleanup(); resolve(null); }
+      function key(e) { if (e.key === 'Enter' && f.type !== 'textarea') { e.preventDefault(); ok(); } if (e.key === 'Escape') cancel(); }
+      $('prompt-ok').addEventListener('click', ok); $('prompt-cancel').addEventListener('click', cancel);
+      modal.querySelector('.modal-backdrop').addEventListener('click', cancel); document.addEventListener('keydown', key);
+    });
+  }
+  function confirmModal(cfg) {
+    const modal = $('confirm-modal');
+    $('confirm-title').textContent = cfg.title || 'Confirm';
+    $('confirm-message').textContent = cfg.message || '';
+    const okBtn = $('confirm-ok'); okBtn.textContent = cfg.okText || 'Confirm';
+    okBtn.className = cfg.danger ? 'btn-primary' : 'btn-primary';
+    modal.hidden = false;
+    return new Promise((resolve) => {
+      function cleanup() { modal.hidden = true; okBtn.removeEventListener('click', ok); $('confirm-cancel').removeEventListener('click', cancel); modal.querySelector('.modal-backdrop').removeEventListener('click', cancel); document.removeEventListener('keydown', key); }
+      function ok() { cleanup(); resolve(true); }
+      function cancel() { cleanup(); resolve(false); }
+      function key(e) { if (e.key === 'Escape') cancel(); if (e.key === 'Enter') ok(); }
+      okBtn.addEventListener('click', ok); $('confirm-cancel').addEventListener('click', cancel);
+      modal.querySelector('.modal-backdrop').addEventListener('click', cancel); document.addEventListener('keydown', key);
+    });
+  }
+
+  // ==========================================================================
+  // Settings screen (ported panels)
+  // ==========================================================================
+  let settingsLoaded = { email: false, header: false };
+  function openSettings() {
+    switchSettingsTab('email');
+  }
+  document.querySelectorAll('.settings-tab').forEach(tab => tab.addEventListener('click', () => switchSettingsTab(tab.dataset.settingsTab)));
+  function switchSettingsTab(name) {
+    document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.settingsTab === name));
+    document.querySelectorAll('.settings-tab-content').forEach(c => c.hidden = c.id !== 'settings-tab-' + name);
+    if (name === 'email' && !settingsLoaded.email) { loadEmailSettings(); settingsLoaded.email = true; }
+    if (name === 'update') { checkForUpdates(); loadVideoToolsStatus(); }
+    if (name === 'header' && !settingsLoaded.header) { loadHeaderConfig(); settingsLoaded.header = true; }
+    if (name === 'api') loadApiTokenState();
+  }
+
+  // --- Email ---
+  async function loadEmailSettings() {
+    const res = await fetch('/api/settings/email'); if (!res.ok) return;
+    const c = await res.json();
+    $('resend-api-key').value = c.resendApiKey || ''; $('smtp-host').value = c.host || '';
+    $('smtp-port').value = c.port || 587; $('smtp-secure').checked = !!c.secure;
+    $('smtp-user').value = c.user || ''; $('smtp-pass').value = c.pass || '';
+    $('smtp-from').value = c.from || ''; $('smtp-admin-email').value = c.adminEmail || ''; $('smtp-base-url').value = c.baseUrl || '';
+  }
+  $('save-email-btn').addEventListener('click', async () => {
+    const body = { resendApiKey: $('resend-api-key').value, host: $('smtp-host').value, port: $('smtp-port').value, secure: $('smtp-secure').checked, user: $('smtp-user').value, pass: $('smtp-pass').value, from: $('smtp-from').value, adminEmail: $('smtp-admin-email').value, baseUrl: $('smtp-base-url').value };
+    const res = await fetch('/api/settings/email', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const s = $('email-status');
+    if (res.ok) { s.textContent = 'Settings saved.'; s.className = 'email-status success'; } else { s.textContent = 'Failed to save.'; s.className = 'email-status error'; }
+    setTimeout(() => { s.textContent = ''; s.className = 'email-status'; }, 4000);
+  });
+  $('test-email-btn').addEventListener('click', async () => {
+    const s = $('email-status'); s.textContent = 'Sending test email…';
+    const res = await fetch('/api/settings/email/test', { method: 'POST' }); s.textContent = '';
+    if (res.ok) showEmailResult('success', 'Email Test Succeeded', 'Test email sent! Check your inbox.');
+    else { const d = await res.json().catch(() => ({})); showEmailResult('error', 'Email Test Failed', d.error || 'Failed to send test email.'); }
+  });
+  function showEmailResult(type, title, msg) {
+    $('email-result-title').textContent = title;
+    $('email-result-title').style.color = type === 'error' ? 'var(--danger)' : '#4caf50';
+    $('email-result-text').textContent = msg;
+    $('email-result-copy-btn').style.display = type === 'error' ? '' : 'none';
+    $('email-result-modal').hidden = false;
+  }
+  $('email-result-close-btn').addEventListener('click', () => $('email-result-modal').hidden = true);
+  $('email-result-modal').querySelector('.modal-backdrop').addEventListener('click', () => $('email-result-modal').hidden = true);
+  $('email-result-copy-btn').addEventListener('click', () => { navigator.clipboard.writeText($('email-result-text').textContent); $('email-result-copy-btn').textContent = 'Copied!'; setTimeout(() => $('email-result-copy-btn').textContent = 'Copy Error', 1800); });
+
+  // --- Update ---
+  let updateChecked = false;
+  async function checkForUpdates() {
+    if (updateChecked) return;
+    const loading = $('update-loading'), info = $('update-info');
+    loading.style.display = ''; info.hidden = true;
+    try {
+      const data = await (await fetch('/api/settings/update')).json();
+      $('update-local-version').textContent = data.localVersion || 'unknown';
+      $('update-local-commit').textContent = data.localCommit ? `(${data.localCommit})` : '';
+      if (data.updateAvailable) {
+        $('update-available-section').hidden = false; $('update-current-section').hidden = true;
+        $('update-remote-version').textContent = data.remoteVersion || '';
+        $('update-remote-commit').textContent = data.remoteCommit ? `(${data.remoteCommit})` : '';
+        if (data.commitLog) { $('update-commit-log').hidden = false; $('update-commits').textContent = data.commitLog; }
+        if (data.changelog) { $('update-changelog-section').hidden = false; $('update-changelog').textContent = data.changelog; }
+      } else { $('update-available-section').hidden = true; $('update-current-section').hidden = false; }
+      if (!data.enabled) $('deploy-btn').style.display = 'none';
+    } catch (_) { loading.textContent = 'Failed to check for updates.'; return; }
+    loading.style.display = 'none'; info.hidden = false; updateChecked = true;
+  }
+  $('deploy-btn').addEventListener('click', async () => {
+    if (!await confirmModal({ title: 'Update', message: 'Update to the latest version?' })) return;
+    const btn = $('deploy-btn'); btn.disabled = true; btn.textContent = 'Updating…';
+    const s = $('deploy-status'); s.textContent = '';
+    try {
+      const res = await fetch('/api/settings/deploy', { method: 'POST' }); const d = await res.json();
+      if (res.ok) { s.textContent = d.message || 'Update successful!'; s.style.color = '#4caf50'; setTimeout(() => location.reload(), 1500); }
+      else { s.textContent = d.error || 'Update failed.'; s.style.color = 'var(--danger)'; btn.disabled = false; btn.textContent = 'Update to Latest Version'; }
+    } catch (e) { s.textContent = 'Network error.'; s.style.color = 'var(--danger)'; btn.disabled = false; btn.textContent = 'Update to Latest Version'; }
+  });
   async function loadVideoToolsStatus() {
-    const statusEl = document.getElementById('video-tools-status');
-    const btn = document.getElementById('install-ffmpeg-btn');
-    if (!statusEl || !btn) return;
+    const statusEl = $('video-tools-status'), btn = $('install-ffmpeg-btn');
     statusEl.textContent = 'Checking…';
-    statusEl.style.color = '';
     try {
-      const res = await fetch('/api/admin/video-tools/status');
-      const data = await res.json();
-      if (data.ffmpeg && data.ffprobe) {
-        statusEl.innerHTML = '✅ Installed' + (data.version ? ' (ffmpeg ' + escapeHtml(data.version) + ')' : '') +
-          ' — captions embedded in uploaded MP4s are extracted automatically.';
-        statusEl.style.color = '#4caf50';
-        btn.textContent = 'Reinstall Video Tools';
-      } else {
-        statusEl.innerHTML = '⚠️ Not installed — captions baked into uploaded MP4s won\'t be extracted until this is installed.';
-        statusEl.style.color = '#e0a800';
-        btn.textContent = 'Install Video Tools';
-      }
+      const data = await (await fetch('/api/admin/video-tools/status')).json();
+      if (data.ffmpeg && data.ffprobe) { statusEl.textContent = '✅ Installed' + (data.version ? ' (ffmpeg ' + data.version + ')' : '') + ' — embedded captions are extracted automatically.'; btn.textContent = 'Reinstall Video Tools'; }
+      else { statusEl.textContent = '⚠️ Not installed — captions baked into MP4s won’t be extracted until installed.'; btn.textContent = 'Install Video Tools'; }
       btn.disabled = false;
-    } catch (err) {
-      statusEl.textContent = 'Could not check status: ' + err.message;
-      statusEl.style.color = '#e00';
-      btn.disabled = false;
-    }
+    } catch (e) { statusEl.textContent = 'Could not check status.'; btn.disabled = false; }
   }
-
-  document.getElementById('install-ffmpeg-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('install-ffmpeg-btn');
-    const resultEl = document.getElementById('video-tools-result');
-    if (!confirm('Download and install a static ffmpeg build on the server? This can take a minute.')) return;
-    btn.disabled = true;
-    const original = btn.textContent;
-    btn.textContent = 'Installing… (this can take a minute)';
-    resultEl.textContent = '';
+  $('install-ffmpeg-btn').addEventListener('click', async () => {
+    if (!await confirmModal({ title: 'Install video tools', message: 'Download and install a static ffmpeg build on the server? This can take a minute.' })) return;
+    const btn = $('install-ffmpeg-btn'), resultEl = $('video-tools-result'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Installing…'; resultEl.textContent = '';
     try {
-      const res = await fetch('/api/admin/video-tools/install', { method: 'POST' });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        resultEl.innerHTML = '✅ Installed' + (data.status && data.status.version ? ' ffmpeg ' + escapeHtml(data.status.version) : '') +
-          '. Re-upload or replace a video to extract its embedded captions.';
-        resultEl.style.color = '#4caf50';
-      } else {
-        resultEl.textContent = (data && data.error) ? data.error : 'Install failed.';
-        resultEl.style.color = '#e00';
-      }
-    } catch (err) {
-      resultEl.textContent = 'Network error: ' + err.message;
-      resultEl.style.color = '#e00';
-    }
-    btn.textContent = original;
-    loadVideoToolsStatus();
+      const res = await fetch('/api/admin/video-tools/install', { method: 'POST' }); const d = await res.json();
+      if (res.ok && d.ok) { resultEl.textContent = '✅ Installed' + (d.status && d.status.version ? ' ffmpeg ' + d.status.version : '') + '.'; resultEl.style.color = '#4caf50'; }
+      else { resultEl.textContent = (d && d.error) || 'Install failed.'; resultEl.style.color = 'var(--danger)'; }
+    } catch (e) { resultEl.textContent = 'Network error.'; resultEl.style.color = 'var(--danger)'; }
+    btn.textContent = orig; loadVideoToolsStatus();
   });
 
-  // ============ Header Settings ============
-
+  // --- Header config ---
   let headerConfig = null;
-  let headerLoaded = false;
-
   async function loadHeaderConfig() {
-    try {
-      const res = await fetch('/api/header');
-      headerConfig = await res.json();
-      populateHeaderForm();
-    } catch (e) {
-      document.getElementById('header-status').textContent = 'Failed to load header config.';
-    }
-    headerLoaded = true;
+    try { headerConfig = await (await fetch('/api/header')).json(); populateHeaderForm(); }
+    catch (e) { $('header-status').textContent = 'Failed to load header config.'; }
   }
-
   function populateHeaderForm() {
     if (!headerConfig) return;
     const logo = headerConfig.logo || {};
-    document.getElementById('header-site-name').value = headerConfig.siteName || '';
-    document.getElementById('header-logo-text').value = logo.text || '';
-    if (logo.src) {
-      const preview = document.getElementById('header-logo-preview');
-      preview.src = logo.src;
-      preview.style.display = '';
-      document.getElementById('header-logo-none').style.display = 'none';
-      const removeBtn = document.getElementById('header-logo-remove');
-      if (removeBtn) removeBtn.style.display = '';
-    }
-    document.getElementById('header-logo-alt').value = logo.alt || '';
-    document.getElementById('header-logo-link').value = logo.link || '';
-    document.getElementById('header-email').value = headerConfig.email || '';
-    document.getElementById('header-phone').value = headerConfig.phone || '';
-    document.getElementById('header-tagline').value = headerConfig.tagline || '';
+    $('header-site-name').value = headerConfig.siteName || '';
+    $('header-logo-text').value = logo.text || '';
+    if (logo.src) { const p = $('header-logo-preview'); p.src = logo.src; p.style.display = ''; $('header-logo-none').style.display = 'none'; $('header-logo-remove').style.display = ''; }
+    $('header-logo-alt').value = logo.alt || ''; $('header-logo-link').value = logo.link || '';
+    $('header-email').value = headerConfig.email || ''; $('header-phone').value = headerConfig.phone || ''; $('header-tagline').value = headerConfig.tagline || '';
     renderNavItems(headerConfig.nav || []);
   }
-
   function renderNavItems(nav) {
-    const list = document.getElementById('header-nav-list');
-    list.innerHTML = '';
-    nav.forEach((item, i) => {
-      const el = document.createElement('div');
-      el.className = 'header-nav-item';
-      el.dataset.index = i;
-
+    const list = $('header-nav-list'); list.innerHTML = '';
+    nav.forEach((item) => {
+      const el = document.createElement('div'); el.className = 'header-nav-item';
       if (item.type === 'link') {
-        el.innerHTML = `
-          <div class="header-nav-item-row">
-            <span class="drag-handle" style="cursor:grab;">&#9776;</span>
-            <input type="text" class="setting-input nav-label" value="${escapeHtml(item.label || '')}" placeholder="Label" style="width:150px;">
-            <input type="text" class="setting-input nav-url" value="${escapeHtml(item.url || '')}" placeholder="URL" style="flex:1;">
-            <label class="toggle-label" style="font-size:12px;white-space:nowrap;"><input type="checkbox" class="nav-external" ${item.external ? 'checked' : ''}> New tab</label>
-            <button class="btn btn-icon nav-delete" title="Remove">&times;</button>
-          </div>
-        `;
-      } else if (item.type === 'dropdown') {
-        let childrenHtml = (item.children || []).map((child, ci) => `
-          <div class="header-nav-child-row" data-child-index="${ci}">
-            <span style="width:24px;display:inline-block;"></span>
-            <input type="text" class="setting-input child-label" value="${escapeHtml(child.label || '')}" placeholder="Label" style="width:150px;">
-            <input type="text" class="setting-input child-url" value="${escapeHtml(child.url || '')}" placeholder="URL" style="flex:1;">
-            <button class="btn btn-icon child-delete" title="Remove">&times;</button>
-          </div>
-        `).join('');
-
-        el.innerHTML = `
-          <div class="header-nav-item-row">
-            <span class="drag-handle" style="cursor:grab;">&#9776;</span>
-            <input type="text" class="setting-input nav-label" value="${escapeHtml(item.label || '')}" placeholder="Dropdown label" style="width:150px;">
-            <span class="setting-hint" style="flex:1;">Dropdown menu</span>
-            <button class="btn btn-icon btn-sm nav-add-child" title="Add link">+</button>
-            <button class="btn btn-icon nav-delete" title="Remove">&times;</button>
-          </div>
-          <div class="header-nav-children">${childrenHtml}</div>
-        `;
+        el.innerHTML = `<div class="header-nav-item-row">
+          <span class="drag-handle">≡</span>
+          <input type="text" class="setting-input nav-label" value="${escapeHtml(item.label || '')}" placeholder="Label" style="width:150px;">
+          <input type="text" class="setting-input nav-url" value="${escapeHtml(item.url || '')}" placeholder="URL" style="flex:1;">
+          <label class="toggle-label" style="font-size:12px;white-space:nowrap;"><input type="checkbox" class="nav-external" ${item.external ? 'checked' : ''}> New tab</label>
+          <button class="btn-icon nav-delete">×</button></div>`;
+      } else {
+        const children = (item.children || []).map(ch => `<div class="header-nav-child-row"><span style="width:24px;"></span><input type="text" class="setting-input child-label" value="${escapeHtml(ch.label || '')}" placeholder="Label" style="width:150px;"><input type="text" class="setting-input child-url" value="${escapeHtml(ch.url || '')}" placeholder="URL" style="flex:1;"><button class="btn-icon child-delete">×</button></div>`).join('');
+        el.innerHTML = `<div class="header-nav-item-row">
+          <span class="drag-handle">≡</span>
+          <input type="text" class="setting-input nav-label" value="${escapeHtml(item.label || '')}" placeholder="Dropdown label" style="width:150px;">
+          <span class="setting-hint" style="flex:1;">Dropdown menu</span>
+          <button class="btn-icon nav-add-child">+</button>
+          <button class="btn-icon nav-delete">×</button></div>
+          <div class="header-nav-children">${children}</div>`;
       }
       list.appendChild(el);
     });
   }
-
-  function collectNavFromForm() {
+  function collectNav() {
     const items = [];
     document.querySelectorAll('.header-nav-item').forEach(el => {
-      const labelInput = el.querySelector('.nav-label');
+      const label = el.querySelector('.nav-label').value.trim();
       const urlInput = el.querySelector('.nav-url');
-      const externalInput = el.querySelector('.nav-external');
-      const childRows = el.querySelectorAll('.header-nav-child-row');
-
-      if (urlInput) {
-        // It's a link
-        items.push({
-          type: 'link',
-          label: labelInput.value.trim(),
-          url: urlInput.value.trim(),
-          external: externalInput ? externalInput.checked : false,
-        });
-      } else {
-        // It's a dropdown
+      if (urlInput) items.push({ type: 'link', label, url: urlInput.value.trim(), external: el.querySelector('.nav-external')?.checked || false });
+      else {
         const children = [];
-        childRows.forEach(row => {
-          const cl = row.querySelector('.child-label');
-          const cu = row.querySelector('.child-url');
-          if (cl && cu && (cl.value.trim() || cu.value.trim())) {
-            children.push({ label: cl.value.trim(), url: cu.value.trim() });
-          }
-        });
-        items.push({
-          type: 'dropdown',
-          label: labelInput.value.trim(),
-          children,
-        });
+        el.querySelectorAll('.header-nav-child-row').forEach(r => { const cl = r.querySelector('.child-label').value.trim(); const cu = r.querySelector('.child-url').value.trim(); if (cl || cu) children.push({ label: cl, url: cu }); });
+        items.push({ type: 'dropdown', label, children });
       }
     });
     return items;
   }
-
-  // Add link
-  document.getElementById('header-add-link').addEventListener('click', () => {
-    const nav = collectNavFromForm();
-    nav.push({ type: 'link', label: '', url: '', external: false });
-    renderNavItems(nav);
-  });
-
-  // Add dropdown
-  document.getElementById('header-add-dropdown').addEventListener('click', () => {
-    const nav = collectNavFromForm();
-    nav.push({ type: 'dropdown', label: '', children: [{ label: '', url: '' }] });
-    renderNavItems(nav);
-  });
-
-  // Delete nav item or child, add child to dropdown
-  document.getElementById('header-nav-list').addEventListener('click', e => {
-    if (e.target.closest('.nav-delete')) {
-      const item = e.target.closest('.header-nav-item');
-      item.remove();
-    } else if (e.target.closest('.child-delete')) {
-      const row = e.target.closest('.header-nav-child-row');
-      row.remove();
-    } else if (e.target.closest('.nav-add-child')) {
-      const childContainer = e.target.closest('.header-nav-item').querySelector('.header-nav-children');
-      const ci = childContainer.children.length;
-      const row = document.createElement('div');
-      row.className = 'header-nav-child-row';
-      row.dataset.childIndex = ci;
-      row.innerHTML = `
-        <span style="width:24px;display:inline-block;"></span>
-        <input type="text" class="setting-input child-label" value="" placeholder="Label" style="width:150px;">
-        <input type="text" class="setting-input child-url" value="" placeholder="URL" style="flex:1;">
-        <button class="btn btn-icon child-delete" title="Remove">&times;</button>
-      `;
-      childContainer.appendChild(row);
+  $('header-add-link').addEventListener('click', () => { const nav = collectNav(); nav.push({ type: 'link', label: '', url: '', external: false }); renderNavItems(nav); });
+  $('header-add-dropdown').addEventListener('click', () => { const nav = collectNav(); nav.push({ type: 'dropdown', label: '', children: [{ label: '', url: '' }] }); renderNavItems(nav); });
+  $('header-nav-list').addEventListener('click', (e) => {
+    if (e.target.closest('.nav-delete')) e.target.closest('.header-nav-item').remove();
+    else if (e.target.closest('.child-delete')) e.target.closest('.header-nav-child-row').remove();
+    else if (e.target.closest('.nav-add-child')) {
+      const c = e.target.closest('.header-nav-item').querySelector('.header-nav-children');
+      const row = document.createElement('div'); row.className = 'header-nav-child-row';
+      row.innerHTML = `<span style="width:24px;"></span><input type="text" class="setting-input child-label" placeholder="Label" style="width:150px;"><input type="text" class="setting-input child-url" placeholder="URL" style="flex:1;"><button class="btn-icon child-delete">×</button>`;
+      c.appendChild(row);
     }
   });
+  $('header-logo-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const fd = new FormData(); fd.append('logo', file);
+    $('header-status').textContent = 'Uploading logo…';
+    const res = await fetch('/api/settings/header/logo', { method: 'POST', body: fd }); const d = await res.json();
+    if (res.ok) { const p = $('header-logo-preview'); p.src = d.src + '?t=' + Date.now(); p.style.display = ''; $('header-logo-none').style.display = 'none'; $('header-logo-remove').style.display = ''; $('header-status').textContent = 'Logo uploaded.'; }
+    else $('header-status').textContent = d.error || 'Upload failed.';
+  });
+  $('header-logo-remove').addEventListener('click', () => { $('header-logo-preview').src = ''; $('header-logo-preview').style.display = 'none'; $('header-logo-none').style.display = ''; $('header-logo-remove').style.display = 'none'; $('header-logo-file').value = ''; });
+  $('save-header-btn').addEventListener('click', async () => {
+    const preview = $('header-logo-preview');
+    const logoSrc = (preview.style.display !== 'none' && preview.getAttribute('src')) ? preview.getAttribute('src') : '';
+    const config = { siteName: $('header-site-name').value.trim(), logo: { src: logoSrc, text: $('header-logo-text').value.trim(), alt: $('header-logo-alt').value.trim(), link: $('header-logo-link').value.trim(), height: 74 }, email: $('header-email').value.trim(), phone: $('header-phone').value.trim(), tagline: $('header-tagline').value.trim(), nav: collectNav() };
+    $('header-status').textContent = 'Saving…';
+    const res = await fetch('/api/settings/header', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
+    if (res.ok) { $('header-status').textContent = 'Header saved.'; $('header-status').style.color = '#4caf50'; }
+    else { const d = await res.json().catch(() => ({})); $('header-status').textContent = d.error || 'Save failed.'; $('header-status').style.color = 'var(--danger)'; }
+  });
 
-  // Logo upload
-  document.getElementById('header-logo-file').addEventListener('change', async e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const formData = new FormData();
-    formData.append('logo', file);
-    const statusEl = document.getElementById('header-status');
-    statusEl.textContent = 'Uploading logo...';
-
+  // --- API token ---
+  async function loadApiTokenState() {
+    $('api-token-loading').style.display = ''; $('api-token-env-state').hidden = true; $('api-token-state').hidden = true; $('api-token-status').textContent = '';
     try {
-      const res = await fetch('/api/settings/header/logo', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (res.ok) {
-        const preview = document.getElementById('header-logo-preview');
-        preview.src = data.src + '?t=' + Date.now();
-        preview.style.display = '';
-        document.getElementById('header-logo-none').style.display = 'none';
-        statusEl.textContent = 'Logo uploaded.';
-      } else {
-        statusEl.textContent = data.error || 'Upload failed.';
-      }
-    } catch (err) {
-      statusEl.textContent = 'Upload error: ' + err.message;
-    }
-  });
-
-  // Save header
-  // Remove logo image button
-  document.getElementById('header-logo-remove')?.addEventListener('click', () => {
-    document.getElementById('header-logo-preview').src = '';
-    document.getElementById('header-logo-preview').style.display = 'none';
-    document.getElementById('header-logo-none').style.display = '';
-    document.getElementById('header-logo-remove').style.display = 'none';
-    document.getElementById('header-logo-file').value = '';
-  });
-
-  document.getElementById('save-header-btn').addEventListener('click', async () => {
-    const previewEl = document.getElementById('header-logo-preview');
-    const logoSrc = (previewEl.style.display !== 'none' && previewEl.getAttribute('src')) ? previewEl.getAttribute('src') : '';
-    const config = {
-      siteName: document.getElementById('header-site-name').value.trim(),
-      logo: {
-        src: logoSrc,
-        text: document.getElementById('header-logo-text').value.trim(),
-        alt: document.getElementById('header-logo-alt').value.trim(),
-        link: document.getElementById('header-logo-link').value.trim(),
-        height: 74,
-      },
-      email: document.getElementById('header-email').value.trim(),
-      phone: document.getElementById('header-phone').value.trim(),
-      tagline: document.getElementById('header-tagline').value.trim(),
-      nav: collectNavFromForm(),
-    };
-
-    const statusEl = document.getElementById('header-status');
-    statusEl.textContent = 'Saving...';
-
+      const info = await (await fetch('/api/settings/api-token')).json();
+      $('api-token-loading').style.display = 'none';
+      if (info.envManaged) { $('api-token-env-state').hidden = false; return; }
+      $('api-token-state').hidden = false;
+      if (info.hasToken) { $('api-token-status-text').textContent = 'An API token is active.'; $('api-token-generate-btn').style.display = 'none'; $('api-token-regenerate-btn').style.display = ''; $('api-token-revoke-btn').style.display = ''; }
+      else { $('api-token-status-text').textContent = 'No API token is set.'; $('api-token-generate-btn').style.display = ''; $('api-token-regenerate-btn').style.display = 'none'; $('api-token-revoke-btn').style.display = 'none'; }
+    } catch (e) { $('api-token-loading').textContent = 'Could not load API token state.'; }
+  }
+  async function generateApiToken(rotate) {
+    if (rotate && !await confirmModal({ title: 'Rotate token', message: 'Any client using the old token will get 401 errors.' })) return;
+    $('api-token-status').textContent = 'Generating…';
     try {
-      const res = await fetch('/api/settings/header', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config),
-      });
-      if (res.ok) {
-        statusEl.textContent = 'Header saved. Reloading...';
-        statusEl.style.color = '#4caf50';
-        setTimeout(() => window.location.reload(), 500);
-      } else {
-        const data = await res.json();
-        statusEl.textContent = data.error || 'Save failed.';
-        statusEl.style.color = '#e00';
-      }
-    } catch (err) {
-      statusEl.textContent = 'Error: ' + err.message;
-      statusEl.style.color = '#e00';
-    }
-  });
-
-  // ============ Hash Routing ============
-
-  function handleHash() {
-    const hash = window.location.hash.replace('#', '');
-    const galleryMatch = hash.match(/^gallery\/([^/]+)\/(videos|settings|comments)$/);
-    const galleryShort = hash.match(/^gallery\/([^/]+)$/);
-    const collectionMatch = hash.match(/^collection\/([^/]+)\/settings$/);
-
-    if (hash === 'settings' || hash === 'email-settings') {
-      showEmailSettings();
-    } else if (collectionMatch) {
-      selectCollection(collectionMatch[1]);
-    } else if (galleryMatch) {
-      selectGallery(galleryMatch[1], galleryMatch[2]);
-    } else if (galleryShort) {
-      selectGallery(galleryShort[1], 'videos');
-    } else {
-      showNoGallery();
-    }
+      const res = await fetch('/api/settings/api-token', { method: 'POST' }); const d = await res.json();
+      if (!res.ok) { $('api-token-status').textContent = d.error || 'Error'; return; }
+      $('api-token-status').textContent = '';
+      $('api-token-reveal-input').value = d.token; $('api-token-modal').hidden = false;
+      $('api-token-reveal-input').focus(); $('api-token-reveal-input').select();
+      loadApiTokenState();
+    } catch (e) { $('api-token-status').textContent = 'Network error.'; }
   }
-
-  window.addEventListener('hashchange', handleHash);
-
-  function showNoGallery() {
-    currentGalleryId = null;
-    currentGallery = null;
-    currentCollectionId = null;
-    noGallery.style.display = '';
-    videosPanel.style.display = 'none';
-    emailSettingsPanel.style.display = 'none';
-    collectionPanel.style.display = 'none';
-    renderGalleryList();
-  }
-
-  function selectGallery(gid, tab) {
-    const gallery = galleries.find(g => g.id === gid);
-    if (!gallery) { showNoGallery(); return; }
-
-    currentGalleryId = gid;
-    currentGallery = gallery;
-    currentGalleryItems = [];
-    currentCollectionId = null;
-    noGallery.style.display = 'none';
-    videosPanel.style.display = '';
-    emailSettingsPanel.style.display = 'none';
-    collectionPanel.style.display = 'none';
-    galleryTitle.textContent = 'Gallery: ' + gallery.name;
-
-    // Show/hide proofing-only elements
-    const isProofing = gallery.type === 'proofing';
-    document.querySelectorAll('.setting-proofing-only').forEach(el => {
-      el.style.display = isProofing ? '' : 'none';
-    });
-    document.querySelector('.tab-comments').style.display = isProofing ? '' : 'none';
-
-    // Gallery link bar on videos tab
-    const linkBar = document.getElementById('gallery-link-bar');
-    if (isProofing && gallery.token) {
-      const galleryUrl = window.location.origin + '/gallery/' + gallery.token;
-      document.getElementById('gallery-link-display').value = galleryUrl;
-      linkBar.style.display = 'flex';
-    } else {
-      linkBar.style.display = 'none';
-    }
-
-    // Activate tab
-    switchTab(tab || 'videos');
-
-    renderGalleryList();
-
-    if (tab === 'videos') loadVideos();
-    else if (tab === 'settings') { loadSettings(); if (isProofing) loadGalleryItemsForEmail(); }
-    else if (tab === 'comments') loadComments();
-  }
-
-  async function loadGalleryItemsForEmail() {
-    if (!currentGalleryId) return;
-    const gid = currentGalleryId;
-    try {
-      const res = await fetch(`/api/admin/galleries/${gid}/videos`);
-      if (!res.ok) return;
-      const data = await res.json();
-      const items = Array.isArray(data) ? data : (data.videos || []);
-      if (currentGalleryId === gid) currentGalleryItems = items;
-    } catch (e) {}
-  }
-
-  // ============ Tabs ============
-
-  tabBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const tab = btn.dataset.tab;
-      window.location.hash = `gallery/${currentGalleryId}/${tab}`;
-    });
+  $('api-token-generate-btn').addEventListener('click', () => generateApiToken(false));
+  $('api-token-regenerate-btn').addEventListener('click', () => generateApiToken(true));
+  $('api-token-revoke-btn').addEventListener('click', async () => {
+    if (!await confirmModal({ title: 'Revoke token', message: 'Any client using it will immediately get 401 errors.', okText: 'Revoke', danger: true })) return;
+    const res = await fetch('/api/settings/api-token', { method: 'DELETE' });
+    if (res.ok) { $('api-token-status').textContent = 'Token revoked.'; loadApiTokenState(); }
   });
-
-  function switchTab(tab) {
-    tabBtns.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
-    tabContents.forEach(tc => tc.classList.toggle('active', tc.id === 'tab-' + tab));
-  }
-
-  // ============ Collections ============
-
-  function selectCollection(colId) {
-    const col = collections.find(c => c.id === colId);
-    if (!col) { showNoGallery(); return; }
-
-    currentCollectionId = colId;
-    currentGalleryId = null;
-    currentGallery = null;
-    noGallery.style.display = 'none';
-    videosPanel.style.display = 'none';
-    emailSettingsPanel.style.display = 'none';
-    collectionPanel.style.display = '';
-
-    document.getElementById('collection-title').textContent = 'Collection: ' + col.name;
-    renderCollectionStats(col);
-    document.getElementById('col-setting-name').value = col.name;
-    document.getElementById('col-setting-link').value = window.location.origin + '/collection/' + col.token;
-
-    // Sorted gallery list (included galleries, draggable)
-    const sortedList = document.getElementById('col-gallery-sorted');
-    sortedList.innerHTML = '';
-    const galMap = {};
-    galleries.forEach(g => galMap[g.id] = g);
-    const includedIds = col.galleryIds || [];
-
-    includedIds.forEach(gid => {
-      const g = galMap[gid];
-      if (!g) return;
-      const row = document.createElement('div');
-      row.className = 'col-gallery-sorted-row';
-      row.dataset.id = g.id;
-      const badgeClass = g.type === 'proofing' ? 'proofing' : 'reels';
-      const badgeText = g.type === 'proofing' ? 'Client' : 'Portfolio';
-      row.innerHTML = `
-        <span class="drag-handle" style="cursor:grab;">&#9776;</span>
-        <span class="col-gallery-picker-name">${escapeHtml(g.name)}</span>
-        <span class="col-gallery-picker-badge ${badgeClass}">${badgeText}</span>
-        <button class="btn btn-icon col-gallery-remove" title="Remove">&times;</button>
-      `;
-      row.querySelector('.col-gallery-remove').addEventListener('click', () => {
-        row.remove();
-        rebuildAddPicker();
-      });
-      sortedList.appendChild(row);
-    });
-
-    // Make the sorted list draggable
-    if (window._colSortable) window._colSortable.destroy();
-    window._colSortable = Sortable.create(sortedList, {
-      handle: '.drag-handle',
-      ghostClass: 'sortable-ghost',
-      animation: 150,
-    });
-
-    // Add picker (unchecked galleries only)
-    function rebuildAddPicker() {
-      const picker = document.getElementById('col-gallery-picker');
-      picker.innerHTML = '';
-      const currentIds = Array.from(sortedList.querySelectorAll('.col-gallery-sorted-row')).map(r => r.dataset.id);
-      const available = galleries.filter(g => !currentIds.includes(g.id));
-      if (available.length === 0) {
-        picker.innerHTML = '<p style="padding:8px 12px;font-size:12px;color:var(--color-gray-text);">All galleries are in this collection.</p>';
-        return;
-      }
-      available.forEach(g => {
-        const row = document.createElement('div');
-        row.className = 'col-gallery-picker-row';
-        row.style.cursor = 'pointer';
-        const badgeClass = g.type === 'proofing' ? 'proofing' : 'reels';
-        const badgeText = g.type === 'proofing' ? 'Client' : 'Portfolio';
-        row.innerHTML = `
-          <span style="color:var(--color-primary);font-weight:600;font-size:16px;">+</span>
-          <span class="col-gallery-picker-name">${escapeHtml(g.name)}</span>
-          <span class="col-gallery-picker-badge ${badgeClass}">${badgeText}</span>
-        `;
-        row.addEventListener('click', () => {
-          // Add to sorted list
-          const newRow = document.createElement('div');
-          newRow.className = 'col-gallery-sorted-row';
-          newRow.dataset.id = g.id;
-          newRow.innerHTML = `
-            <span class="drag-handle" style="cursor:grab;">&#9776;</span>
-            <span class="col-gallery-picker-name">${escapeHtml(g.name)}</span>
-            <span class="col-gallery-picker-badge ${badgeClass}">${badgeText}</span>
-            <button class="btn btn-icon col-gallery-remove" title="Remove">&times;</button>
-          `;
-          newRow.querySelector('.col-gallery-remove').addEventListener('click', () => {
-            newRow.remove();
-            rebuildAddPicker();
-          });
-          sortedList.appendChild(newRow);
-          rebuildAddPicker();
-        });
-        picker.appendChild(row);
-      });
-    }
-    rebuildAddPicker();
-
-    // Collection settings
-    document.getElementById('col-setting-password').value = '';
-    document.getElementById('col-setting-password').placeholder = col.hasPassword ? '(password set — enter new to change)' : 'No password';
-    document.getElementById('col-setting-downloads').checked = col.downloadsEnabled || false;
-    document.getElementById('col-setting-commenting').checked = col.commentingEnabled || false;
-    document.getElementById('col-setting-expires').value = col.expiresAt ? col.expiresAt.split('T')[0] : '';
-    document.getElementById('col-setting-active').checked = col.active !== false;
-
-    const sortOrderSelect = document.getElementById('col-setting-sort-order');
-    sortOrderSelect.value = col.sortOrder || 'custom';
-    updateSortOrderUI(sortOrderSelect.value);
-
-    renderGalleryList();
-  }
-
-  document.getElementById('new-collection-btn').addEventListener('click', async () => {
-    const name = prompt('Collection name:');
-    if (!name) return;
-    const res = await fetch('/api/collections', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name })
-    });
-    if (res.ok) {
-      const col = await res.json();
-      await loadGalleries();
-      window.location.hash = `collection/${col.id}/settings`;
-    }
-  });
-
-  function updateSortOrderUI(value) {
-    const isCustom = value === 'custom';
-    document.getElementById('col-drag-hint').style.display = isCustom ? '' : 'none';
-    document.querySelectorAll('#col-gallery-sorted .drag-handle').forEach(h => {
-      h.style.visibility = isCustom ? '' : 'hidden';
-    });
-    if (window._colSortable) window._colSortable.option('disabled', !isCustom);
-  }
-
-  document.getElementById('col-setting-sort-order').addEventListener('change', (e) => {
-    updateSortOrderUI(e.target.value);
-  });
-
-  document.getElementById('col-save-btn').addEventListener('click', async () => {
-    if (!currentCollectionId) return;
-    const sortedRows = document.getElementById('col-gallery-sorted').querySelectorAll('.col-gallery-sorted-row');
-    const galleryIds = Array.from(sortedRows).map(r => r.dataset.id);
-
-    const colBody = {
-      name: document.getElementById('col-setting-name').value,
-      galleryIds,
-      downloadsEnabled: document.getElementById('col-setting-downloads').checked,
-      commentingEnabled: document.getElementById('col-setting-commenting').checked,
-      expiresAt: document.getElementById('col-setting-expires').value || null,
-      active: document.getElementById('col-setting-active').checked,
-      sortOrder: document.getElementById('col-setting-sort-order').value,
-    };
-    const colPw = document.getElementById('col-setting-password').value;
-    if (colPw) colBody.password = colPw;
-
-    const res = await fetch(`/api/collections/${currentCollectionId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(colBody)
-    });
-
-    if (res.ok) {
-      await loadGalleries();
-      selectCollection(currentCollectionId);
-      alert('Collection saved.');
-    }
-  });
-
-  document.getElementById('col-copy-link-btn').addEventListener('click', () => {
-    navigator.clipboard.writeText(document.getElementById('col-setting-link').value);
-    alert('Link copied!');
-  });
-
-  document.getElementById('col-open-link-btn').addEventListener('click', () => {
-    const url = document.getElementById('col-setting-link').value;
-    if (url) window.open(url, '_blank');
-  });
-
-  document.getElementById('col-remove-password-btn').addEventListener('click', async () => {
-    if (!confirm('Remove collection password?')) return;
-    const res = await fetch(`/api/collections/${currentCollectionId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: '' })
-    });
-    if (res.ok) {
-      await loadGalleries();
-      selectCollection(currentCollectionId);
-      alert('Password removed.');
-    }
-  });
-
-  document.getElementById('col-regen-link-btn').addEventListener('click', async () => {
-    if (!confirm('Regenerate link? The old link will stop working.')) return;
-    const res = await fetch(`/api/collections/${currentCollectionId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ regenerateToken: true })
-    });
-    if (res.ok) {
-      await loadGalleries();
-      selectCollection(currentCollectionId);
-      alert('Link regenerated.');
-    }
-  });
-
-  document.getElementById('col-delete-btn').addEventListener('click', async () => {
-    const col = collections.find(c => c.id === currentCollectionId);
-    if (!confirm(`Delete collection "${col ? col.name : ''}"? Galleries will be preserved.`)) return;
-    const res = await fetch(`/api/collections/${currentCollectionId}`, { method: 'DELETE' });
-    if (res.ok) {
-      window.location.hash = '';
-      await loadGalleries();
-    }
-  });
-
-  // ============ Create Gallery ============
-
-  // --- Generic confirmation modal ---
-  function confirmModal({ title, message, confirmText = 'Confirm', danger = true }) {
-    const modal = document.getElementById('confirm-modal');
-    document.getElementById('confirm-modal-title').textContent = title;
-    document.getElementById('confirm-modal-message').textContent = message;
-    const confirmBtn = document.getElementById('confirm-modal-confirm-btn');
-    const cancelBtn = document.getElementById('confirm-modal-cancel-btn');
-    confirmBtn.textContent = confirmText;
-    confirmBtn.className = 'btn btn-sm ' + (danger ? 'btn-danger' : 'btn-primary');
-    modal.style.display = '';
-
-    return new Promise((resolve) => {
-      function cleanup() {
-        modal.style.display = 'none';
-        confirmBtn.removeEventListener('click', onConfirm);
-        cancelBtn.removeEventListener('click', onCancel);
-        modal.querySelector('.import-modal-backdrop').removeEventListener('click', onCancel);
-        document.removeEventListener('keydown', onKeydown);
-      }
-      function onConfirm() { cleanup(); resolve(true); }
-      function onCancel() { cleanup(); resolve(false); }
-      function onKeydown(e) { if (e.key === 'Escape') onCancel(); }
-      confirmBtn.addEventListener('click', onConfirm);
-      cancelBtn.addEventListener('click', onCancel);
-      modal.querySelector('.import-modal-backdrop').addEventListener('click', onCancel);
-      document.addEventListener('keydown', onKeydown);
-    });
-  }
-
-  // --- New Gallery Modal logic ---
-  function openNewGalleryModal(type) {
-    const modal = document.getElementById('new-gallery-modal');
-    const titleEl = document.getElementById('new-gallery-modal-title');
-    const nameInput = document.getElementById('new-gallery-name');
-    const colLabel = document.getElementById('new-gallery-collection-label');
-    const colSelect = document.getElementById('new-gallery-collection');
-
-    titleEl.textContent = type === 'reels' ? 'New Portfolio Gallery' : 'New Client Gallery';
-    nameInput.value = type === 'reels' ? 'Portfolio' : 'Client Gallery';
-
-    // Show collection dropdown only for proofing galleries when collections exist
-    if (type === 'proofing' && collections.length > 0) {
-      colSelect.innerHTML = '<option value="">— None —</option>' +
-        collections.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
-      colLabel.style.display = '';
-    } else {
-      colLabel.style.display = 'none';
-    }
-
-    modal.style.display = '';
-    nameInput.focus();
-    nameInput.select();
-
-    return new Promise((resolve) => {
-      function cleanup() {
-        modal.style.display = 'none';
-        document.getElementById('new-gallery-create-btn').removeEventListener('click', onCreate);
-        document.getElementById('new-gallery-cancel-btn').removeEventListener('click', onCancel);
-        modal.querySelector('.import-modal-backdrop').removeEventListener('click', onCancel);
-        nameInput.removeEventListener('keydown', onKeydown);
-      }
-      function onCreate() {
-        const name = nameInput.value.trim();
-        if (!name) { nameInput.focus(); return; }
-        const collectionId = colLabel.style.display === 'none' ? '' : colSelect.value;
-        cleanup();
-        resolve({ name, collectionId });
-      }
-      function onCancel() { cleanup(); resolve(null); }
-      function onKeydown(e) { if (e.key === 'Enter') onCreate(); if (e.key === 'Escape') onCancel(); }
-
-      document.getElementById('new-gallery-create-btn').addEventListener('click', onCreate);
-      document.getElementById('new-gallery-cancel-btn').addEventListener('click', onCancel);
-      modal.querySelector('.import-modal-backdrop').addEventListener('click', onCancel);
-      nameInput.addEventListener('keydown', onKeydown);
-    });
-  }
-
-  document.getElementById('new-reels-btn').addEventListener('click', async () => {
-    const result = await openNewGalleryModal('reels');
-    if (!result) return;
-    await fetch('/api/galleries', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: result.name, type: 'reels' })
-    });
-    await loadGalleries();
-  });
-
-  document.getElementById('new-proofing-btn').addEventListener('click', async () => {
-    const result = await openNewGalleryModal('proofing');
-    if (!result) return;
-    const res = await fetch('/api/galleries', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: result.name, type: 'proofing' })
-    });
-    const gallery = await res.json();
-
-    // Add to selected collection if one was chosen
-    if (result.collectionId) {
-      const col = collections.find(c => c.id === result.collectionId);
-      if (col) {
-        const updatedIds = [...(col.galleryIds || []), gallery.id];
-        await fetch(`/api/collections/${col.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ galleryIds: updatedIds })
-        });
-      }
-    }
-
-    await loadGalleries();
-    window.location.hash = `gallery/${gallery.id}/videos`;
-  });
-
-  // ============ Gallery Settings ============
-
-  function loadSettings() {
-    if (!currentGallery) return;
-    document.getElementById('setting-name').value = currentGallery.name;
-    document.getElementById('setting-type').textContent = currentGallery.type === 'proofing' ? 'Client Gallery' : 'Portfolio Gallery';
-    document.getElementById('setting-active').checked = currentGallery.active;
-
-    // Collection inheritance info
-    const colInfo = document.getElementById('setting-collection-info');
-    const overrideCheck = document.getElementById('setting-override');
-    const inCollection = currentGallery.collectionId && currentGallery.type === 'proofing';
-
-    if (inCollection) {
-      colInfo.style.display = '';
-      document.getElementById('setting-collection-name').textContent = currentGallery.collectionName || 'Unknown';
-      overrideCheck.checked = currentGallery.overrideCollectionSettings || false;
-    } else {
-      colInfo.style.display = 'none';
-    }
-    // Always recompute field enabled state — standalone galleries are always editable,
-    // collection members depend on the override toggle.
-    updateOverrideState();
-
-    if (currentGallery.type === 'proofing') {
-      const baseUrl = window.location.origin;
-      document.getElementById('setting-link').value = baseUrl + '/gallery/' + currentGallery.token;
-      // Password field: show placeholder if password is set, empty if not
-      const pwInput = document.getElementById('setting-password');
-      pwInput.value = '';
-      pwInput.placeholder = currentGallery.hasPassword ? '(password set — enter new to change)' : 'No password';
-      document.getElementById('setting-downloads').checked = currentGallery.downloadsEnabled;
-      document.getElementById('setting-commenting').checked = currentGallery.commentingEnabled || false;
-      document.getElementById('setting-expires').value = currentGallery.expiresAt ? currentGallery.expiresAt.split('T')[0] : '';
-    }
-  }
-
-  function updateOverrideState() {
-    if (!currentGallery) return;
-    const inCollection = currentGallery.collectionId && currentGallery.type === 'proofing';
-    // Standalone galleries are always editable. Collection members only when override is on.
-    const editable = !inCollection || document.getElementById('setting-override').checked;
-    const fields = ['setting-password', 'setting-downloads', 'setting-commenting', 'setting-expires', 'setting-active'];
-    fields.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.disabled = !editable;
-    });
-    const removeBtn = document.getElementById('remove-password-btn');
-    if (removeBtn) removeBtn.disabled = !editable;
-    // Visual dimming only applies to collection members with override off.
-    document.querySelectorAll('.setting-proofing-only').forEach(el => {
-      el.style.opacity = editable ? '' : '0.5';
-    });
-  }
-
-  document.getElementById('setting-override').addEventListener('change', updateOverrideState);
-
-  document.getElementById('save-settings-btn').addEventListener('click', async () => {
-    const body = {
-      name: document.getElementById('setting-name').value,
-      active: document.getElementById('setting-active').checked
-    };
-
-    if (currentGallery.type === 'proofing') {
-      // Send override flag if gallery is in a collection
-      if (currentGallery.collectionId) {
-        body.overrideCollectionSettings = document.getElementById('setting-override').checked;
-      }
-      // Only send password if user typed something new
-      const pwVal = document.getElementById('setting-password').value.trim();
-      if (pwVal) body.password = pwVal;
-      body.downloadsEnabled = document.getElementById('setting-downloads').checked;
-      body.commentingEnabled = document.getElementById('setting-commenting').checked;
-      const expiresVal = document.getElementById('setting-expires').value;
-      body.expiresAt = expiresVal ? new Date(expiresVal + 'T23:59:59').toISOString() : null;
-    }
-
-    const res = await fetch(`/api/galleries/${currentGalleryId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-
-    if (res.ok) {
-      const updated = await res.json();
-      const idx = galleries.findIndex(g => g.id === currentGalleryId);
-      if (idx !== -1) Object.assign(galleries[idx], updated);
-      currentGallery = galleries[idx];
-      galleryTitle.textContent = 'Gallery: ' + updated.name;
-      renderGalleryList();
-      alert('Settings saved.');
-    }
-  });
-
-  document.getElementById('remove-password-btn').addEventListener('click', async () => {
-    if (!currentGalleryId) return;
-    if (!currentGallery.hasPassword) {
-      alert('No password is currently set.');
-      return;
-    }
-    if (!confirm('Remove the gallery password? Anyone with the link will be able to access it.')) return;
-
-    const res = await fetch(`/api/galleries/${currentGalleryId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: '' })
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      Object.assign(currentGallery, updated);
-      const pwInput = document.getElementById('setting-password');
-      pwInput.value = '';
-      pwInput.placeholder = 'No password';
-      renderGalleryList();
-      alert('Password removed.');
-    }
-  });
-
-  document.getElementById('copy-link-btn').addEventListener('click', () => {
-    const input = document.getElementById('setting-link');
-    navigator.clipboard.writeText(input.value);
-    alert('Link copied!');
-  });
-
-  document.getElementById('open-link-btn').addEventListener('click', () => {
-    const url = document.getElementById('setting-link').value;
-    if (url) window.open(url, '_blank');
-  });
-
-  // Gallery link bar (videos tab)
-  document.getElementById('gallery-link-copy').addEventListener('click', () => {
-    const input = document.getElementById('gallery-link-display');
-    navigator.clipboard.writeText(input.value);
-    alert('Link copied!');
-  });
-
-  document.getElementById('gallery-link-open').addEventListener('click', () => {
-    const url = document.getElementById('gallery-link-display').value;
-    if (url) window.open(url, '_blank');
-  });
-
-  function buildGalleryMailto() {
-    if (!currentGallery || !currentGallery.token) return null;
-    const galleryUrl = window.location.origin + '/gallery/' + currentGallery.token;
-    const name = currentGallery.name;
-
-    const hasVideos = currentGalleryItems.some(i => i.type === 'video');
-    const commentingOn = !!currentGallery.commentingEnabled;
-
-    const subject = `Your ${hasVideos ? 'videos' : 'photos'} are ready — ${name}`;
-
-    const passwordLine = currentGallery.hasPassword
-      ? `\nPassword: [enter the gallery password here]\n`
-      : '';
-
-    let commentsSection = '';
-    if (commentingOn) {
-      const instructions = hasVideos
-        ? `1. Open the link and enter your name when prompted.
-2. Click any video to open it.
-3. Pause at the moment you'd like to comment on.
-4. Type your note in the box on the right — the timestamp is captured automatically.
-5. Press Enter to post (Shift+Enter for a new line).
-6. When you're finished with a video, click "Finish & Send Comments" to share your feedback.
-
-Each comment is tied to a specific moment in the video, so I can see exactly what you're referring to.`
-        : `1. Open the link and enter your name when prompted.
-2. Click any photo to open it.
-3. Type your note in the box on the right.
-4. Press Enter to post (Shift+Enter for a new line).
-5. When you're finished with a photo, click "Finish & Send Comments" to share your feedback.`;
-      commentsSection = `\nLeaving comments\n${instructions}\n`;
-    }
-
-    const body = `Hello,
-
-Your gallery is ready.
-
-${galleryUrl}
-${passwordLine}${commentsSection}
-Thanks,
-AJ Mast`;
-
-    return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  }
-
-  function openMailtoInNewWindow(mailto) {
-    if (!mailto) return;
-    const a = document.createElement('a');
-    a.href = mailto;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  }
-
-  document.getElementById('email-link-btn').addEventListener('click', () => {
-    openMailtoInNewWindow(buildGalleryMailto());
-  });
-
-  document.getElementById('gallery-link-email').addEventListener('click', () => {
-    openMailtoInNewWindow(buildGalleryMailto());
-  });
-
-  document.getElementById('regen-link-btn').addEventListener('click', async () => {
-    if (!confirm('Regenerate access link? The old link will stop working.')) return;
-    const res = await fetch(`/api/galleries/${currentGalleryId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ regenerateToken: true })
-    });
-    if (res.ok) {
-      const updated = await res.json();
-      const idx = galleries.findIndex(g => g.id === currentGalleryId);
-      if (idx !== -1) Object.assign(galleries[idx], updated);
-      currentGallery = galleries[idx];
-      loadSettings();
-      alert('Link regenerated.');
-    }
-  });
-
-  document.getElementById('reset-stats-btn').addEventListener('click', async () => {
-    if (!currentGalleryId) return;
-    const ok = await confirmModal({
-      title: 'Reset Statistics',
-      message: `Reset view and download counts for "${currentGallery.name}"? This cannot be undone.`,
-      confirmText: 'Reset Stats',
-    });
-    if (!ok) return;
-    const res = await fetch(`/api/admin/galleries/${currentGalleryId}/stats/reset`, { method: 'POST' });
-    if (res.ok) {
-      loadVideos();
-      loadGalleries();
-    } else {
-      alert('Failed to reset statistics.');
-    }
-  });
-
-  document.getElementById('delete-gallery-btn').addEventListener('click', async () => {
-    if (!confirm(`Delete "${currentGallery.name}"? This cannot be undone.`)) return;
-    const res = await fetch(`/api/galleries/${currentGalleryId}`, { method: 'DELETE' });
-    if (res.ok) {
-      window.location.hash = '';
-      await loadGalleries();
-    } else {
-      const err = await res.json();
-      alert(err.error || 'Failed to delete gallery.');
-    }
-  });
-
-  // ============ Videos (gallery-scoped) ============
-
-  async function loadVideos() {
-    if (!currentGalleryId) return;
-    const res = await fetch(`/api/admin/galleries/${currentGalleryId}/videos`);
-    if (!res.ok) {
-      if (res.status === 401) checkAuth();
-      return;
-    }
-    const data = await res.json();
-    const items = Array.isArray(data) ? data : (data.videos || []);
-    const stats = (data && data.stats) || {};
-    currentGalleryItems = items;
-    renderVideos(items, stats);
-    renderGalleryStats(stats);
-  }
-
-  function renderGalleryStats(stats) {
-    const bar = document.getElementById('gallery-stats-bar');
-    if (!bar) return;
-    if (!currentGallery || currentGallery.type !== 'proofing') {
-      bar.style.display = 'none';
-      return;
-    }
-    const views = (stats && stats.views) || {};
-    const downloads = (stats && stats.downloads) || {};
-    const total = views.total || 0;
-    const unique = views.unique || 0;
-    const parts = [];
-    if (total === 0) {
-      parts.push('Not viewed yet');
-    } else {
-      parts.push(`Viewed ${total} time${total !== 1 ? 's' : ''}`);
-      parts.push(`${unique} unique visitor${unique !== 1 ? 's' : ''}`);
-      if (views.lastViewedAt) {
-        const d = new Date(views.lastViewedAt);
-        parts.push(`last viewed ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`);
-      }
-    }
-    if (downloads.downloadAll) {
-      parts.push(`Download All run ${downloads.downloadAll}×`);
-    }
-    bar.textContent = parts.join('  ·  ');
-    bar.style.display = '';
-  }
-
-  function renderCollectionStats(col) {
-    const bar = document.getElementById('collection-stats-bar');
-    if (!bar) return;
-    const total = col.viewCount || 0;
-    const unique = col.uniqueVisitors || 0;
-    const parts = [];
-    if (total === 0) {
-      parts.push('Not viewed yet');
-    } else {
-      parts.push(`Viewed ${total} time${total !== 1 ? 's' : ''}`);
-      parts.push(`${unique} unique visitor${unique !== 1 ? 's' : ''}`);
-      if (col.lastViewedAt) {
-        const d = new Date(col.lastViewedAt);
-        parts.push(`last viewed ${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`);
-      }
-    }
-    bar.textContent = parts.join('  ·  ');
-    bar.style.display = '';
-  }
-
-  function renderVideos(items, stats) {
-    videoList.innerHTML = '';
-    const dlItems = (stats && stats.downloads && stats.downloads.items) || {};
-    items.forEach(entry => {
-      if (entry.type === 'header') {
-        const item = document.createElement('div');
-        item.className = 'admin-header-item';
-        item.dataset.id = entry.id;
-        item.dataset.type = 'header';
-        item.innerHTML = `
-          <span class="drag-handle">&#9776;</span>
-          <input type="text" class="title-input header-text-input" value="${escapeHtml(entry.text)}">
-          <button class="btn btn-icon delete-btn" title="Delete header">&times;</button>
-        `;
-        videoList.appendChild(item);
-        return;
-      }
-
-      const item = document.createElement('div');
-      item.className = 'admin-video-item';
-      item.dataset.id = entry.id;
-
-      const isPhoto = entry.type === 'photo';
-      const thumbSrc = entry.thumbnail
-        ? '/thumbnails/' + encodeURIComponent(entry.thumbnail) + '?t=' + Date.now()
-        : '';
-
-      let mediaThumbnail;
-      if (thumbSrc) {
-        mediaThumbnail = `<img src="${thumbSrc}" class="admin-thumb">`;
-      } else if (isPhoto) {
-        mediaThumbnail = `<img src="/uploads/${encodeURIComponent(entry.filename)}" class="admin-thumb">`;
-      } else {
-        mediaThumbnail = `<video src="/uploads/${encodeURIComponent(entry.filename)}" muted preload="metadata" class="admin-thumb"></video>`;
-      }
-
-      const dlCount = dlItems[entry.id] || 0;
-      const dlBadge = `<span class="video-dl-count" title="${dlCount} download${dlCount !== 1 ? 's' : ''}">&#8595; ${dlCount}</span>`;
-
-      item.innerHTML = `
-        <span class="drag-handle">&#9776;</span>
-        ${mediaThumbnail}
-        <input type="text" class="title-input" value="${escapeHtml(entry.title)}">
-        ${dlBadge}
-        <button class="btn btn-icon replace-btn" title="Replace file">&#8635;</button>
-        ${isPhoto ? '' : `<button class="btn btn-icon cc-btn${(entry.captions && entry.captions.length) ? ' has-captions' : ''}" title="Captions">CC</button>`}
-        ${isPhoto ? '' : '<button class="btn btn-icon thumb-btn" title="Set thumbnail">&#127910;</button>'}
-        <button class="btn btn-icon toggle-vis ${entry.visible ? '' : 'hidden-video'}" title="${entry.visible ? 'Visible' : 'Hidden'}">
-          ${entry.visible ? '&#128065;' : '&#128064;'}
-        </button>
-        <button class="btn btn-icon delete-btn" title="Delete">&times;</button>
-      `;
-      videoList.appendChild(item);
-    });
-    initSortable();
-  }
-
-  // ============ Inline Title Edit ============
-
-  videoList.addEventListener('change', async e => {
-    if (!e.target.classList.contains('title-input')) return;
-    const container = e.target.closest('.admin-video-item, .admin-header-item');
-    const id = container.dataset.id;
-
-    if (container.dataset.type === 'header') {
-      await fetch(`/api/admin/galleries/${currentGalleryId}/headers/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: e.target.value })
-      });
-    } else {
-      await fetch(`/api/admin/galleries/${currentGalleryId}/videos/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: e.target.value })
-      });
-    }
-  });
-
-  // ============ Visibility Toggle ============
-
-  videoList.addEventListener('click', async e => {
-    const btn = e.target.closest('.toggle-vis');
-    if (!btn) return;
-    const item = btn.closest('.admin-video-item');
-    const id = item.dataset.id;
-    const isCurrentlyVisible = !btn.classList.contains('hidden-video');
-    const newVisible = !isCurrentlyVisible;
-
-    const res = await fetch(`/api/admin/galleries/${currentGalleryId}/videos/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ visible: newVisible })
-    });
-
-    if (res.ok) {
-      btn.classList.toggle('hidden-video', !newVisible);
-      btn.innerHTML = newVisible ? '&#128065;' : '&#128064;';
-      btn.title = newVisible ? 'Visible' : 'Hidden';
-    }
-  });
-
-  // ============ Delete ============
-
-  videoList.addEventListener('click', async e => {
-    const btn = e.target.closest('.delete-btn');
-    if (!btn) return;
-
-    const item = btn.closest('.admin-video-item, .admin-header-item');
-    const id = item.dataset.id;
-    const isHeader = item.dataset.type === 'header';
-
-    const msg = isHeader ? 'Delete this section header?' : 'Delete this item? This cannot be undone.';
-    if (!confirm(msg)) return;
-
-    const url = isHeader
-      ? `/api/admin/galleries/${currentGalleryId}/headers/${id}`
-      : `/api/admin/galleries/${currentGalleryId}/videos/${id}`;
-    const res = await fetch(url, { method: 'DELETE' });
-    if (res.ok) item.remove();
-  });
-
-  // ============ Replace Video ============
-
-  const replaceFileInput = document.getElementById('replace-file-input');
-  let replaceVideoId = null;
-
-  videoList.addEventListener('click', e => {
-    const btn = e.target.closest('.replace-btn');
-    if (!btn) return;
-    const item = btn.closest('.admin-video-item');
-    replaceVideoId = item.dataset.id;
-    replaceFileInput.click();
-  });
-
-  replaceFileInput.addEventListener('change', () => {
-    const file = replaceFileInput.files[0];
-    if (!file || !replaceVideoId) return;
-
-    const formData = new FormData();
-    formData.append('video', file);
-
-    const xhr = new XMLHttpRequest();
-    xhr.addEventListener('load', () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        loadVideos();
-      } else {
-        alert('Replace failed.');
-      }
-      replaceVideoId = null;
-      replaceFileInput.value = '';
-    });
-    xhr.addEventListener('error', () => {
-      alert('Replace failed.');
-      replaceVideoId = null;
-      replaceFileInput.value = '';
-    });
-    xhr.open('PUT', `/api/admin/galleries/${currentGalleryId}/videos/${replaceVideoId}/replace`);
-    xhr.send(formData);
-  });
-
-  // ============ Captions ============
-
-  const CAPTION_LANGUAGES = [
-    { code: 'en', label: 'English' },
-    { code: 'es', label: 'Español' },
-    { code: 'fr', label: 'Français' },
-    { code: 'de', label: 'Deutsch' },
-    { code: 'it', label: 'Italiano' },
-    { code: 'pt', label: 'Português' },
-    { code: 'pt-br', label: 'Português (Brasil)' },
-    { code: 'nl', label: 'Nederlands' },
-    { code: 'zh', label: '中文 (Mandarin)' },
-    { code: 'ja', label: '日本語' },
-    { code: 'ko', label: '한국어' },
-    { code: 'ar', label: 'العربية' },
-    { code: 'hi', label: 'हिन्दी' },
-    { code: 'ru', label: 'Русский' },
-  ];
-
-  const captionsModal = document.getElementById('captions-modal');
-  const captionsList = document.getElementById('captions-list');
-  const captionLangSelect = document.getElementById('caption-lang');
-  const captionCustomLabel = document.getElementById('caption-custom-lang-label');
-  const captionCustomCode = document.getElementById('caption-custom-code');
-  const captionCustomLabelInput = document.getElementById('caption-custom-label');
-  const captionFileInput = document.getElementById('caption-file-input');
-  const captionUploadStatus = document.getElementById('caption-upload-status');
-  let captionsVideoId = null;
-
-  captionLangSelect.innerHTML = CAPTION_LANGUAGES
-    .map(l => `<option value="${l.code}">${escapeHtml(l.label)} (${l.code})</option>`)
-    .join('') + '<option value="__custom__">Other…</option>';
-
-  captionLangSelect.addEventListener('change', () => {
-    captionCustomLabel.style.display = captionLangSelect.value === '__custom__' ? '' : 'none';
-  });
-
-  videoList.addEventListener('click', e => {
-    const btn = e.target.closest('.cc-btn');
-    if (!btn) return;
-    const item = btn.closest('.admin-video-item');
-    openCaptionsModal(item.dataset.id);
-  });
-
-  function openCaptionsModal(videoId) {
-    captionsVideoId = videoId;
-    captionUploadStatus.textContent = '';
-    captionFileInput.value = '';
-    captionLangSelect.value = CAPTION_LANGUAGES[0].code;
-    captionCustomLabel.style.display = 'none';
-    captionCustomCode.value = '';
-    captionCustomLabelInput.value = '';
-    const item = currentGalleryItems.find(v => v.id === videoId);
-    document.getElementById('captions-modal-title').textContent = item ? '— ' + item.title : '';
-    renderCaptionsList();
-    captionsModal.style.display = '';
-  }
-
-  function renderCaptionsList() {
-    const item = currentGalleryItems.find(v => v.id === captionsVideoId);
-    const captions = (item && item.captions) || [];
-    if (!captions.length) {
-      captionsList.innerHTML = '<p style="font-size:13px;color:var(--color-body-text);">No captions yet.</p>';
-      return;
-    }
-    captionsList.innerHTML = captions.map(c => `
-      <div class="caption-track-row">
-        <span>${escapeHtml(c.label || c.lang)} <span style="color:var(--color-body-text);">(${escapeHtml(c.lang)})</span></span>
-        <button class="caption-track-remove" data-lang="${escapeHtml(c.lang)}" title="Remove">&times;</button>
-      </div>
-    `).join('');
-  }
-
-  function closeCaptionsModal() {
-    captionsModal.style.display = 'none';
-    captionsVideoId = null;
-  }
-
-  document.getElementById('captions-close-btn').addEventListener('click', closeCaptionsModal);
-  captionsModal.querySelector('.import-modal-backdrop').addEventListener('click', closeCaptionsModal);
-
-  captionsList.addEventListener('click', async e => {
-    const btn = e.target.closest('.caption-track-remove');
-    if (!btn || !captionsVideoId) return;
-    const lang = btn.dataset.lang;
-    if (!confirm(`Remove the "${lang}" caption track?`)) return;
-    const res = await fetch(`/api/admin/galleries/${currentGalleryId}/videos/${captionsVideoId}/captions/${encodeURIComponent(lang)}`, { method: 'DELETE' });
-    if (res.ok) {
-      await loadVideos();
-      renderCaptionsList();
-    } else {
-      captionUploadStatus.textContent = 'Could not remove caption.';
-    }
-  });
-
-  document.getElementById('caption-upload-btn').addEventListener('click', async () => {
-    if (!captionsVideoId) return;
-    const file = captionFileInput.files[0];
-    if (!file) { captionUploadStatus.textContent = 'Choose a .vtt file first.'; return; }
-
-    let lang, label;
-    if (captionLangSelect.value === '__custom__') {
-      lang = captionCustomCode.value.trim().toLowerCase();
-      label = captionCustomLabelInput.value.trim();
-      if (!/^[a-z]{2,3}(-[a-z]{2,4})?$/.test(lang)) {
-        captionUploadStatus.textContent = 'Enter a valid language code (e.g. en or pt-br).';
-        return;
-      }
-    } else {
-      lang = captionLangSelect.value;
-      const known = CAPTION_LANGUAGES.find(l => l.code === lang);
-      label = known ? known.label : lang.toUpperCase();
-    }
-
-    const formData = new FormData();
-    formData.append('caption', file);
-    formData.append('lang', lang);
-    formData.append('label', label);
-
-    captionUploadStatus.textContent = 'Uploading…';
-    try {
-      const res = await fetch(`/api/admin/galleries/${currentGalleryId}/videos/${captionsVideoId}/captions`, {
-        method: 'POST',
-        body: formData,
-      });
-      if (res.ok) {
-        captionFileInput.value = '';
-        captionUploadStatus.textContent = 'Caption added.';
-        await loadVideos();
-        renderCaptionsList();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        captionUploadStatus.textContent = err.error || 'Upload failed.';
-      }
-    } catch (e) {
-      captionUploadStatus.textContent = 'Upload failed.';
-    }
-  });
-
-  // ============ Add Section Header ============
-
-  document.getElementById('add-header-btn').addEventListener('click', async () => {
-    const text = prompt('Section header text:');
-    if (!text) return;
-    await fetch(`/api/admin/galleries/${currentGalleryId}/headers`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
-    });
-    loadVideos();
-  });
-
-  // ============ Refresh Metadata ============
-
-  document.getElementById('refresh-metadata-btn').addEventListener('click', async () => {
-    const btn = document.getElementById('refresh-metadata-btn');
-    btn.disabled = true;
-    btn.textContent = 'Scanning...';
-    try {
-      const res = await fetch(`/api/admin/galleries/${currentGalleryId}/probe`, { method: 'POST' });
-      const data = await res.json();
-      btn.textContent = data.updated > 0 ? `Updated ${data.updated} video${data.updated !== 1 ? 's' : ''}` : 'All up to date';
-      if (data.updated > 0) loadVideos();
-    } catch (err) {
-      btn.textContent = 'Error';
-    }
-    setTimeout(() => {
-      btn.disabled = false;
-      btn.textContent = 'Refresh Metadata';
-    }, 2500);
-  });
-
-  // ============ Drag & Drop Upload ============
-
-  const ALLOWED_TYPES = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v', 'video/x-quicktime', 'video/mov', 'image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-
-  dropZone.addEventListener('dragover', e => {
-    e.preventDefault();
-    dropZone.classList.add('drag-over');
-  });
-
-  dropZone.addEventListener('dragleave', () => {
-    dropZone.classList.remove('drag-over');
-  });
-
-  dropZone.addEventListener('drop', e => {
-    e.preventDefault();
-    dropZone.classList.remove('drag-over');
-    const ALLOWED_EXTS = ['.mp4', '.webm', '.mov', '.m4v', '.jpg', '.jpeg', '.png', '.webp', '.gif'];
-    const files = Array.from(e.dataTransfer.files).filter(f => {
-      if (ALLOWED_TYPES.includes(f.type)) return true;
-      const ext = f.name.toLowerCase().match(/\.[^.]+$/);
-      return ext && ALLOWED_EXTS.includes(ext[0]);
-    });
-    if (files.length) queueUploads(files);
-  });
-
-  fileInput.addEventListener('change', () => {
-    const files = Array.from(fileInput.files);
-    if (files.length) queueUploads(files);
-    fileInput.value = '';
-  });
-
-  function titleFromFilename(filename) {
-    return filename
-      .replace(/\.[^.]+$/, '')
-      .replace(/^\d{10,}-/, '')
-      .replace(/[_-]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim() || 'Untitled';
-  }
-
-  function queueUploads(files) {
-    const items = files.map(file => {
-      const id = 'upload-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
-      const title = titleFromFilename(file.name);
-
-      const row = document.createElement('div');
-      row.className = 'upload-queue-item';
-      row.id = id;
-      row.innerHTML = `
-        <span class="upload-file-name">${escapeHtml(file.name)}</span>
-        <div class="upload-progress-bar">
-          <div class="upload-progress-fill"></div>
-        </div>
-        <span class="upload-status">Waiting...</span>
-      `;
-      uploadQueue.appendChild(row);
-
-      return { file, title, rowId: id };
-    });
-
-    processUploadQueue(items);
-  }
-
-  async function processUploadQueue(items) {
-    // Run a small pool of uploads concurrently instead of one at a time. The
-    // server appends to the gallery atomically and releases its session lock
-    // after auth, so parallel requests are safe and genuinely overlap.
-    const CONCURRENCY = 3;
-    let next = 0;
-
-    async function worker() {
-      while (next < items.length) {
-        const item = items[next++];
-        const uploaded = await uploadFile(item.file, item.title, item.rowId);
-        if (uploaded) {
-          loadVideos();
-          // Newly uploaded videos get a browser-generated thumbnail from a
-          // random frame in the first 10s. Non-blocking: upload queue moves
-          // on while this runs in the background.
-          if (uploaded.type === 'video' && !uploaded.thumbnail) {
-            autoGenerateVideoThumbnail(uploaded).catch(() => { /* non-fatal */ });
-          }
-        }
-      }
-    }
-
-    const pool = [];
-    for (let i = 0; i < Math.min(CONCURRENCY, items.length); i++) pool.push(worker());
-    await Promise.all(pool);
-  }
-
-  function uploadFile(file, title, rowId) {
-    return new Promise((resolve) => {
-      const formData = new FormData();
-      formData.append('video', file);
-      formData.append('title', title);
-
-      const xhr = new XMLHttpRequest();
-      const row = document.getElementById(rowId);
-      const fill = row.querySelector('.upload-progress-fill');
-      const status = row.querySelector('.upload-status');
-
-      status.textContent = 'Uploading...';
-
-      xhr.upload.addEventListener('progress', e => {
-        if (e.lengthComputable) {
-          const pct = Math.round(e.loaded / e.total * 100);
-          fill.style.width = pct + '%';
-          status.textContent = pct + '%';
-        }
-      });
-
-      xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          fill.style.width = '100%';
-          fill.style.background = '#4caf50';
-          status.textContent = 'Done';
-          setTimeout(() => row.remove(), 2000);
-          let uploaded = null;
-          try { uploaded = JSON.parse(xhr.responseText); } catch (_) {}
-          resolve(uploaded);
-        } else {
-          fill.style.background = '#e00';
-          status.textContent = 'Failed';
-          let detail = `HTTP ${xhr.status}`;
-          try {
-            const data = JSON.parse(xhr.responseText);
-            if (data.error) detail = data.error;
-          } catch (e) {
-            if (xhr.responseText) detail += ': ' + xhr.responseText.substring(0, 200);
-          }
-          addErrorDetail(row, detail);
-          addDismissBtn(row);
-          resolve(null);
-        }
-      });
-
-      xhr.addEventListener('error', () => {
-        fill.style.background = '#e00';
-        status.textContent = 'Failed';
-        addErrorDetail(row, 'Network error — the server may have rejected the request before it reached the app. Check that the file is under 500 MB.');
-        addDismissBtn(row);
-        resolve(null);
-      });
-
-      xhr.open('POST', `/api/admin/galleries/${currentGalleryId}/videos`);
-      xhr.send(formData);
-    });
-  }
-
-  function addErrorDetail(row, message) {
-    const detail = document.createElement('div');
-    detail.className = 'upload-error-detail';
-    detail.textContent = message;
-    row.appendChild(detail);
-  }
-
-  function addDismissBtn(row) {
+  $('api-token-copy-btn').addEventListener('click', () => { navigator.clipboard.writeText($('api-token-reveal-input').value); $('api-token-copy-btn').textContent = 'Copied!'; setTimeout(() => $('api-token-copy-btn').textContent = 'Copy', 1500); });
+  $('api-token-modal-done-btn').addEventListener('click', () => { $('api-token-modal').hidden = true; $('api-token-reveal-input').value = ''; });
+
+  // ==========================================================================
+  // Narrow-screen rail toggle
+  // ==========================================================================
+  function ensureRailToggle() {
+    if ($('rail-toggle')) return;
     const btn = document.createElement('button');
-    btn.className = 'btn btn-icon upload-dismiss';
-    btn.title = 'Dismiss';
-    btn.textContent = '\u2715';
-    btn.addEventListener('click', () => row.remove());
-    row.appendChild(btn);
+    btn.id = 'rail-toggle'; btn.className = 'account-btn'; btn.textContent = '☰';
+    btn.style.marginRight = '4px';
+    btn.addEventListener('click', (e) => { e.stopPropagation(); $('rail').classList.toggle('open'); });
+    document.querySelector('.topbar').insertBefore(btn, document.querySelector('.brand'));
   }
-
-  // ============ Import from Server ============
-
-  const importModal = document.getElementById('import-modal');
-  const importFileList = document.getElementById('import-file-list');
-  const importPathEl = document.getElementById('import-path');
-  const importSelectAll = document.getElementById('import-select-all');
-  const importConfirmBtn = document.getElementById('import-confirm-btn');
-
-  document.getElementById('import-server-btn').addEventListener('click', openImportModal);
-  document.getElementById('import-cancel-btn').addEventListener('click', closeImportModal);
-  document.querySelector('.import-modal-backdrop').addEventListener('click', closeImportModal);
-
-  async function openImportModal() {
-    importModal.style.display = 'flex';
-    importFileList.innerHTML = '<p class="import-loading">Scanning...</p>';
-    importSelectAll.checked = false;
-    importConfirmBtn.disabled = true;
-
-    try {
-      const res = await fetch('/api/admin/import/files');
-      if (!res.ok) throw new Error('Failed to scan');
-      const data = await res.json();
-      importPathEl.textContent = data.path;
-
-      if (!data.files.length) {
-        importFileList.innerHTML = '<p class="import-empty">No media files found. Upload .mp4, .webm, .mov, .m4v, .jpg, .png, .webp, or .gif files via FTP to the path above.</p>';
-        return;
-      }
-
-      importFileList.innerHTML = '';
-      data.files.forEach(f => {
-        const row = document.createElement('label');
-        row.className = 'import-file-row';
-        const sizeMB = (f.size / (1024 * 1024)).toFixed(1);
-        row.innerHTML = `
-          <input type="checkbox" class="import-file-check" value="${escapeHtml(f.name)}">
-          <span class="import-file-name">${escapeHtml(f.name)}</span>
-          <span class="import-file-size">${sizeMB} MB</span>
-        `;
-        importFileList.appendChild(row);
-      });
-      updateImportBtn();
-    } catch (err) {
-      importFileList.innerHTML = '<p class="import-empty">Error scanning import folder.</p>';
-    }
+  function syncRailToggle() {
+    const t = $('rail-toggle');
+    if (window.innerWidth < 1100) { ensureRailToggle(); if ($('rail-toggle')) $('rail-toggle').style.display = ''; }
+    else if (t) t.style.display = 'none';
   }
+  window.addEventListener('resize', syncRailToggle);
 
-  function closeImportModal() {
-    importModal.style.display = 'none';
-  }
-
-  importSelectAll.addEventListener('change', () => {
-    const checks = importFileList.querySelectorAll('.import-file-check');
-    checks.forEach(c => c.checked = importSelectAll.checked);
-    updateImportBtn();
-  });
-
-  importFileList.addEventListener('change', (e) => {
-    if (e.target.classList.contains('import-file-check')) {
-      updateImportBtn();
-    }
-  });
-
-  function updateImportBtn() {
-    const checked = importFileList.querySelectorAll('.import-file-check:checked');
-    importConfirmBtn.disabled = checked.length === 0;
-    importConfirmBtn.textContent = checked.length > 0
-      ? `Import ${checked.length} File${checked.length !== 1 ? 's' : ''}`
-      : 'Import Selected';
-  }
-
-  importConfirmBtn.addEventListener('click', async () => {
-    const checked = importFileList.querySelectorAll('.import-file-check:checked');
-    const filenames = Array.from(checked).map(c => c.value);
-    if (!filenames.length) return;
-
-    importConfirmBtn.disabled = true;
-    importConfirmBtn.textContent = 'Importing...';
-
-    try {
-      const res = await fetch(`/api/admin/galleries/${currentGalleryId}/import`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filenames })
-      });
-      const data = await res.json();
-
-      if (data.imported && data.imported.length) {
-        closeImportModal();
-        loadVideos();
-      }
-
-      if (data.errors && data.errors.length) {
-        alert('Some files failed to import:\n' + data.errors.map(e => e.name + ': ' + e.error).join('\n'));
-      }
-    } catch (err) {
-      alert('Import failed: ' + err.message);
-    } finally {
-      importConfirmBtn.disabled = false;
-      importConfirmBtn.textContent = 'Import Selected';
-    }
-  });
-
-  // ============ Thumbnail Picker ============
-
-  videoList.addEventListener('click', e => {
-    const btn = e.target.closest('.thumb-btn');
-    if (!btn) return;
-    const item = btn.closest('.admin-video-item');
-    thumbVideoId = item.dataset.id;
-
-    const vidEl = item.querySelector('video.admin-thumb');
-    const imgEl = item.querySelector('img.admin-thumb');
-    let src;
-    if (vidEl) {
-      src = vidEl.src;
-    } else if (imgEl) {
-      src = null;
-    }
-
-    if (!src) {
-      fetch(`/api/admin/galleries/${currentGalleryId}/videos`).then(r => r.json()).then(data => {
-        const videos = Array.isArray(data) ? data : (data.videos || []);
-        const video = videos.find(v => v.id === thumbVideoId);
-        if (video) {
-          openThumbPicker('/uploads/' + encodeURIComponent(video.filename));
-        }
-      });
-    } else {
-      openThumbPicker(src);
-    }
-  });
-
-  function openThumbPicker(videoSrc) {
-    // No crossOrigin: same-origin, and setting 'anonymous' can taint the
-    // canvas when the static file handler doesn't echo CORS headers.
-    thumbVideo.src = videoSrc;
-    thumbPicker.classList.add('open');
-    thumbScrubber.value = 0;
-    thumbTime.textContent = '0:00';
-
-    thumbVideo.addEventListener('loadedmetadata', function onMeta() {
-      thumbScrubber.max = thumbVideo.duration;
-      // Seek to 0.1s so a real frame is decoded (time 0 can be black)
-      thumbVideo.currentTime = 0.1;
-      // The 'seeked' event handler will call drawThumbFrame automatically
-      thumbVideo.removeEventListener('loadedmetadata', onMeta);
-    });
-  }
-
-  thumbScrubber.addEventListener('input', () => {
-    thumbVideo.currentTime = parseFloat(thumbScrubber.value);
-  });
-
-  thumbVideo.addEventListener('seeked', () => {
-    drawThumbFrame();
-    const t = thumbVideo.currentTime;
-    const mins = Math.floor(t / 60);
-    const secs = Math.floor(t % 60).toString().padStart(2, '0');
-    thumbTime.textContent = mins + ':' + secs;
-  });
-
-  function drawThumbFrame() {
-    // Letterbox the frame into the preview canvas rather than distorting it
-    // to fill the fixed 16:9 box. The uploaded thumbnail is generated from a
-    // separate canvas that exactly matches the video's aspect ratio, so
-    // preview ≈ stored result (minus letterboxing).
-    const vw = thumbVideo.videoWidth || 16;
-    const vh = thumbVideo.videoHeight || 9;
-    const canvasAspect = thumbCanvas.width / thumbCanvas.height;
-    const videoAspect = vw / vh;
-    let dw, dh, dx, dy;
-    if (videoAspect > canvasAspect) {
-      dw = thumbCanvas.width;
-      dh = dw / videoAspect;
-      dx = 0;
-      dy = (thumbCanvas.height - dh) / 2;
-    } else {
-      dh = thumbCanvas.height;
-      dw = dh * videoAspect;
-      dx = (thumbCanvas.width - dw) / 2;
-      dy = 0;
-    }
-    thumbCtx.fillStyle = '#000';
-    thumbCtx.fillRect(0, 0, thumbCanvas.width, thumbCanvas.height);
-    thumbCtx.imageSmoothingEnabled = true;
-    thumbCtx.imageSmoothingQuality = 'high';
-    thumbCtx.drawImage(thumbVideo, dx, dy, dw, dh);
-  }
-
-  // Render the current frame from a <video> element to a JPEG Blob at the
-  // video's native aspect, capped at 640px wide. Used for both the manual
-  // thumbnail picker and the post-upload auto-thumbnail.
-  async function captureFrameAsJpegBlob(videoEl) {
-    const vw = videoEl.videoWidth;
-    const vh = videoEl.videoHeight;
-    if (!vw || !vh) throw new Error('Video not ready');
-    const maxW = 640;
-    const w = Math.min(vw, maxW);
-    const h = Math.round(w * vh / vw);
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(videoEl, 0, 0, w, h);
-    return await new Promise((resolve, reject) => {
-      canvas.toBlob(
-        (b) => b ? resolve(b) : reject(new Error('Canvas export failed')),
-        'image/jpeg',
-        0.88
-      );
-    });
-  }
-
-  async function uploadThumbnailBlob(videoId, blob) {
-    const res = await fetch(`/api/admin/galleries/${currentGalleryId}/videos/${videoId}/thumbnail`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'image/jpeg' },
-      body: blob,
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error((err.error || 'Failed to save thumbnail') + (err.detail ? '\n\n' + err.detail : ''));
-    }
-  }
-
-  thumbCaptureBtn.addEventListener('click', async () => {
-    thumbCaptureBtn.disabled = true;
-    thumbCaptureBtn.textContent = 'Saving\u2026';
-    try {
-      const blob = await captureFrameAsJpegBlob(thumbVideo);
-      await uploadThumbnailBlob(thumbVideoId, blob);
-      closeThumbPicker();
-      loadVideos();
-    } catch (err) {
-      alert(err.message || String(err));
-    } finally {
-      thumbCaptureBtn.disabled = false;
-      thumbCaptureBtn.textContent = 'Set Thumbnail';
-    }
-  });
-
-  // Kick off a browser-side thumbnail generation for a newly uploaded video:
-  // load the video, seek to a random spot in the first 10 seconds, capture
-  // the frame, and upload the resulting JPEG as its thumbnail.
-  async function autoGenerateVideoThumbnail(video) {
-    const v = document.createElement('video');
-    v.muted = true;
-    v.preload = 'auto';
-    v.playsInline = true;
-    v.src = '/uploads/' + encodeURIComponent(video.filename);
-
-    const waitFor = (eventName, timeoutMs) => new Promise((resolve, reject) => {
-      let done = false;
-      const cleanup = () => {
-        v.removeEventListener(eventName, onOk);
-        v.removeEventListener('error', onErr);
-      };
-      const onOk = () => { if (done) return; done = true; cleanup(); resolve(); };
-      const onErr = () => { if (done) return; done = true; cleanup(); reject(new Error(eventName + ' failed')); };
-      v.addEventListener(eventName, onOk, { once: true });
-      v.addEventListener('error', onErr, { once: true });
-      setTimeout(() => { if (done) return; done = true; cleanup(); reject(new Error(eventName + ' timed out')); }, timeoutMs);
-    });
-
-    try {
-      await waitFor('loadedmetadata', 30000);
-      const duration = v.duration || 0;
-      const upper = Math.min(10, isFinite(duration) && duration > 0 ? duration : 10);
-      // Avoid the very first frame (often black) — pick between 0.3s and upper
-      const lo = Math.min(0.3, upper);
-      const seekTo = lo + Math.random() * Math.max(0, upper - lo);
-      v.currentTime = seekTo;
-      await waitFor('seeked', 15000);
-      const blob = await captureFrameAsJpegBlob(v);
-      await uploadThumbnailBlob(video.id, blob);
-      loadVideos();
-    } finally {
-      v.removeAttribute('src');
-      v.load();
-    }
-  }
-
-  thumbCancelBtn.addEventListener('click', () => closeThumbPicker());
-
-  function closeThumbPicker() {
-    thumbPicker.classList.remove('open');
-    thumbVideo.pause();
-    thumbVideo.src = '';
-    thumbVideoId = null;
-  }
-
-  thumbPicker.addEventListener('click', e => {
-    if (e.target === thumbPicker) closeThumbPicker();
-  });
-
-  // ============ Drag & Drop Reorder ============
-
-  function initSortable() {
-    Sortable.create(videoList, {
-      handle: '.drag-handle',
-      animation: 150,
-      ghostClass: 'sortable-ghost',
-      dragClass: 'sortable-drag',
-      onEnd: async () => {
-        const items = videoList.querySelectorAll('.admin-video-item, .admin-header-item');
-        const order = Array.from(items).map(item => item.dataset.id);
-        await fetch(`/api/admin/galleries/${currentGalleryId}/reorder`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order })
-        });
-      }
-    });
-  }
-
-  // ============ Comments (admin view) ============
-
-  async function loadComments() {
-    if (!currentGalleryId) return;
-    const res = await fetch(`/api/admin/galleries/${currentGalleryId}/comments`);
-    if (!res.ok) {
-      if (res.status === 401) checkAuth();
-      return;
-    }
-    const comments = await res.json();
-    const listEl = document.getElementById('comments-list');
-    const noEl = document.getElementById('no-comments');
-
-    if (!comments.length) {
-      listEl.innerHTML = '';
-      noEl.style.display = '';
-      return;
-    }
-
-    noEl.style.display = 'none';
-
-    // Group comments by video
-    const grouped = {};
-    const videoOrder = [];
-    comments.forEach(c => {
-      const key = c.videoId || c.videoTitle || 'Unknown';
-      if (!grouped[key]) {
-        grouped[key] = { title: c.videoTitle || 'Unknown Video', comments: [] };
-        videoOrder.push(key);
-      }
-      grouped[key].comments.push(c);
-    });
-
-    listEl.innerHTML = '';
-    videoOrder.forEach(key => {
-      const group = grouped[key];
-      const section = document.createElement('div');
-      section.className = 'comments-video-group';
-
-      const header = document.createElement('div');
-      header.className = 'comments-video-header';
-      header.innerHTML = `
-        <span class="comments-video-toggle">&#9660;</span>
-        <span class="comments-video-name">${escapeHtml(group.title)}</span>
-        <span class="comments-video-count">${group.comments.length} comment${group.comments.length !== 1 ? 's' : ''}</span>
-      `;
-      header.addEventListener('click', () => {
-        section.classList.toggle('collapsed');
-      });
-
-      const body = document.createElement('div');
-      body.className = 'comments-video-body';
-      body.innerHTML = group.comments.map(c => `
-        <div class="comment-item">
-          <div class="comment-header">
-            <strong>${escapeHtml(c.name)}</strong>
-            <span class="comment-timestamp">@ ${formatTime(c.timestamp)}</span>
-          </div>
-          <div class="comment-text">${escapeHtml(c.text)}</div>
-          <div class="comment-date">${new Date(c.createdAt).toLocaleString()}</div>
-        </div>
-      `).join('');
-
-      section.appendChild(header);
-      section.appendChild(body);
-      listEl.appendChild(section);
-    });
-  }
-
-  // ============ Email Settings ============
-
-  async function showEmailSettings() {
-    currentGalleryId = null;
-    currentGallery = null;
-    currentCollectionId = null;
-    noGallery.style.display = 'none';
-    videosPanel.style.display = 'none';
-    collectionPanel.style.display = 'none';
-    emailSettingsPanel.style.display = '';
-    renderGalleryList();
-    await loadEmailSettings();
-  }
-
-  async function loadEmailSettings() {
-    const res = await fetch('/api/settings/email');
-    if (!res.ok) {
-      if (res.status === 401) checkAuth();
-      return;
-    }
-    const config = await res.json();
-    document.getElementById('resend-api-key').value = config.resendApiKey || '';
-    document.getElementById('smtp-host').value = config.host || '';
-    document.getElementById('smtp-port').value = config.port || 587;
-    document.getElementById('smtp-secure').checked = !!config.secure;
-    document.getElementById('smtp-user').value = config.user || '';
-    document.getElementById('smtp-pass').value = config.pass || '';
-    document.getElementById('smtp-from').value = config.from || '';
-    document.getElementById('smtp-admin-email').value = config.adminEmail || '';
-    document.getElementById('smtp-base-url').value = config.baseUrl || '';
-  }
-
-  document.getElementById('save-email-btn').addEventListener('click', async () => {
-    const body = {
-      resendApiKey: document.getElementById('resend-api-key').value,
-      host: document.getElementById('smtp-host').value,
-      port: document.getElementById('smtp-port').value,
-      secure: document.getElementById('smtp-secure').checked,
-      user: document.getElementById('smtp-user').value,
-      pass: document.getElementById('smtp-pass').value,
-      from: document.getElementById('smtp-from').value,
-      adminEmail: document.getElementById('smtp-admin-email').value,
-      baseUrl: document.getElementById('smtp-base-url').value
-    };
-
-    const res = await fetch('/api/settings/email', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-
-    const statusEl = document.getElementById('email-status');
-    if (res.ok) {
-      statusEl.textContent = 'Settings saved.';
-      statusEl.className = 'email-status success';
-    } else {
-      statusEl.textContent = 'Failed to save settings.';
-      statusEl.className = 'email-status error';
-    }
-    setTimeout(() => { statusEl.textContent = ''; statusEl.className = 'email-status'; }, 4000);
-  });
-
-  // Email test result modal
-  const emailResultModal = document.getElementById('email-result-modal');
-  const emailResultTitle = document.getElementById('email-result-title');
-  const emailResultText = document.getElementById('email-result-text');
-  const emailResultCopyBtn = document.getElementById('email-result-copy-btn');
-  const emailResultCloseBtn = document.getElementById('email-result-close-btn');
-
-  function showEmailResultModal(type, title, message) {
-    emailResultTitle.textContent = title;
-    emailResultTitle.className = type;
-    emailResultText.textContent = message;
-    emailResultText.className = 'email-result-pre ' + type;
-    emailResultCopyBtn.style.display = type === 'error' ? '' : 'none';
-    emailResultCopyBtn.textContent = 'Copy Error';
-    emailResultModal.style.display = 'flex';
-  }
-
-  function closeEmailResultModal() {
-    emailResultModal.style.display = 'none';
-  }
-
-  emailResultCloseBtn.addEventListener('click', closeEmailResultModal);
-  document.querySelector('.email-result-backdrop').addEventListener('click', closeEmailResultModal);
-  emailResultCopyBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(emailResultText.textContent).then(() => {
-      emailResultCopyBtn.textContent = 'Copied!';
-      setTimeout(() => { emailResultCopyBtn.textContent = 'Copy Error'; }, 2000);
-    });
-  });
-
-  document.getElementById('test-email-btn').addEventListener('click', async () => {
-    const statusEl = document.getElementById('email-status');
-    statusEl.textContent = 'Sending test email...';
-    statusEl.className = 'email-status';
-
-    const res = await fetch('/api/settings/email/test', { method: 'POST' });
-    statusEl.textContent = '';
-    statusEl.className = 'email-status';
-
-    if (res.ok) {
-      showEmailResultModal('success', 'Email Test Succeeded', 'Test email sent successfully! Check your inbox.');
-    } else {
-      const data = await res.json().catch(() => ({}));
-      showEmailResultModal('error', 'Email Test Failed', data.error || 'Failed to send test email.');
-    }
-  });
-
-  // ============ Helpers ============
-
-  function escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-  }
-
-  function formatTime(seconds) {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60).toString().padStart(2, '0');
-    return mins + ':' + secs;
-  }
-
+  // ==========================================================================
   // Init
+  // ==========================================================================
+  loadPrefs();
+  let storedTheme = 'dark';
+  try { storedTheme = localStorage.getItem(THEME_KEY) || 'dark'; } catch (_) {}
+  applyTheme(storedTheme);
+  syncRailToggle();
   checkAuth();
 });

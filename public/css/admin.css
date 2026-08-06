@@ -822,13 +822,13 @@ a { color: var(--accent); text-decoration: none; }
 }
 .drop-zone.drag-over { border-color: var(--accent); background: var(--accent-dim); }
 .drop-zone .dz-title {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: .16em;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: .14em;
   text-transform: uppercase;
-  color: var(--text-2);
+  color: var(--text);
 }
-.drop-zone .dz-hint { font-size: 13px; color: var(--text-5); }
+.drop-zone .dz-hint { font-size: 14px; color: var(--text-4); }
 
 .queue-head {
   display: flex;
@@ -1056,10 +1056,10 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 .gv-add { margin-top: 18px; }
 .gv-drop {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
-  border: 1px dashed var(--border-input); border-radius: 4px; padding: 14px 18px;
+  border: 1px dashed var(--border-input); border-radius: 4px; padding: 18px 20px;
 }
 .gv-drop.drag-over { border-color: var(--accent); background: var(--accent-dim); }
-.gv-drop > span { font-size: 13px; color: var(--text-5); }
+.gv-drop > span { font-size: 16px; font-weight: 700; color: var(--text-2); }
 #gv-queue:not(:empty) { margin-top: 12px; }
 .gallery-view .item-list { padding: 10px 32px 0; }
 .gallery-view .drawer-empty { padding: 24px 32px; }

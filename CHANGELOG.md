@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.4.0 — 2026-08-06
+- Redesigned the admin dashboard UI: state-driven library/upload/settings screens, list and grid views, bulk actions
+- Collections can now be edited after creation — password, downloads, commenting, expiry, and gallery membership, plus copy/regenerate share link and delete — via "Collection settings" wherever collections appear. Previously that button only filtered the list, and settings were fixed at creation time.
+
+## 1.3.6 — 2026-07-10
+- Clarified that From Address, Notification Email, and Site Base URL apply to Resend as well as SMTP — these were grouped under the SMTP section, making them look SMTP-only
+
+## 1.3.5 — 2026-06-26
+- Fixed a 500 error downloading large proofing videos by streaming the download in chunks instead of loading the whole file into memory
+
 ## 1.3.4 — 2026-06-24
 - Fixed "Install Video Tools" failing with "No writable home directory" on LiteSpeed/cPanel hosts where PHP has no usable home directory. The static ffmpeg build now installs into the app's `site-data/` directory (always writable, and persists across deploys), and ffmpeg lookup searches there as well as the home directory.
 

@@ -79,6 +79,8 @@
               <p class="centre-sub" id="centre-subtitle"></p>
             </div>
             <div class="centre-controls">
+              <button class="ctrl" id="ctrl-col-copy" hidden>Copy link</button>
+              <button class="ctrl" id="ctrl-col-settings" hidden>Collection settings</button>
               <button class="ctrl" id="ctrl-filter">Filter</button>
               <button class="ctrl" id="ctrl-group">Group: Collection</button>
               <button class="ctrl active" id="ctrl-list" data-view="list">List</button>
@@ -251,29 +253,35 @@
 
   <!-- ============ Modals ============ -->
 
-  <!-- New collection sheet -->
+  <!-- New / edit collection sheet -->
   <div id="new-collection-modal" class="modal" hidden>
     <div class="modal-backdrop"></div>
     <div class="modal-inner wide">
-      <h3>New collection</h3>
-      <p class="sub">Group client galleries under one shareable link.</p>
+      <h3 id="nc-title">New collection</h3>
+      <p class="sub" id="nc-sub">Group client galleries under one shareable link.</p>
       <div class="setting-group"><label>Collection Name</label><input type="text" id="nc-name" class="setting-input" placeholder="e.g. IU School of Nursing"></div>
-      <div class="setting-group"><label>Shareable Link</label>
+      <div class="setting-group" id="nc-link-group" hidden><label>Shareable Link</label>
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="text" id="nc-link" class="setting-input" readonly placeholder="Generated after creation">
-          <button id="nc-regen" class="btn-ghost" disabled>Regenerate</button>
+          <button id="nc-copy" class="btn-ghost">Copy</button>
+          <button id="nc-regen" class="btn-ghost">Regenerate</button>
         </div>
-        <p class="setting-hint">The link is created when you save the collection.</p>
+        <p class="setting-hint" id="nc-link-hint">The link is created when you save the collection.</p>
       </div>
       <hr class="settings-divider">
       <p class="setting-hint" style="margin-bottom:10px;">Inherited settings — galleries in this collection follow these unless they override.</p>
-      <div class="setting-group"><label>Password</label><input type="text" id="nc-password" class="setting-input" placeholder="No password"></div>
+      <div class="setting-group"><label>Password</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="nc-password" class="setting-input" placeholder="No password">
+          <button id="nc-password-clear" class="btn-ghost" hidden>Clear</button>
+        </div>
+      </div>
       <div class="switch-row"><div><div class="sr-text">Downloads</div></div><button type="button" class="switch" id="nc-downloads"></button></div>
       <div class="switch-row"><div><div class="sr-text">Commenting</div></div><button type="button" class="switch" id="nc-commenting"></button></div>
       <div class="setting-group" style="margin-top:14px;"><label>Expiration Date</label><input type="date" id="nc-expires" class="setting-input" style="max-width:200px;"></div>
       <div class="setting-group"><label>Add Galleries</label><div class="gal-checklist" id="nc-galleries"></div></div>
       <div class="modal-actions">
-        <p class="setting-hint" style="margin:0;">Galleries keep their own overrides.</p>
+        <button id="nc-delete" class="link-btn danger muted" hidden>Delete collection</button>
         <div class="right">
           <button id="nc-cancel" class="btn-ghost">Cancel</button>
           <button id="nc-create" class="btn-primary">Create Collection</button>
@@ -426,6 +434,6 @@
   <div id="toast" class="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=102"></script>
+  <script src="/js/admin.js?v=103"></script>
 </body>
 </html>

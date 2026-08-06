@@ -264,7 +264,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   setupMenu('new-btn', 'new-menu', (v) => {
     if (v === 'gallery') openNewGallery();
-    else if (v === 'collection') openNewCollection();
+    else if (v === 'collection') openCollectionModal();
     else if (v === 'upload') setScreen('upload');
   }, 'data-new');
 
@@ -370,7 +370,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.innerWidth < 1100) rail.classList.remove('open');
       });
     });
-    rail.querySelector('[data-new-collection]').addEventListener('click', openNewCollection);
+    rail.querySelector('[data-new-collection]').addEventListener('click', () => openCollectionModal());
   }
 
   // ==========================================================================
@@ -382,6 +382,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.rail === 'archive') return 'ARCHIVE';
     const c = state.collections.find(x => x.id === state.rail);
     return c ? c.name.toUpperCase() : 'GALLERIES';
+  }
+  function currentRailCollection() {
+    if (['all', 'ungrouped', 'archive'].includes(state.rail)) return null;
+    return state.collections.find(c => c.id === state.rail) || null;
   }
   function renderCentre() {
     const header = document.querySelector('.centre-header');
@@ -400,6 +404,14 @@ document.addEventListener('DOMContentLoaded', () => {
     $('ctrl-group').textContent = 'Group: ' + (state.groupBy === 'collection' ? 'Collection' : 'None');
     $('ctrl-list').classList.toggle('active', state.view === 'list');
     $('ctrl-grid').classList.toggle('active', state.view === 'grid');
+
+    const railCol = currentRailCollection();
+    $('ctrl-col-copy').hidden = !railCol;
+    $('ctrl-col-settings').hidden = !railCol;
+    if (railCol) {
+      $('ctrl-col-copy').onclick = () => copyCollectionLink(railCol.id);
+      $('ctrl-col-settings').onclick = () => openCollectionModal(railCol.id);
+    }
 
     if (state.view === 'grid') renderGrid(list);
     else renderTable(list);
@@ -451,13 +463,19 @@ document.addEventListener('DOMContentLoaded', () => {
       const groupedScope = state.rail === 'all' && state.groupBy === 'collection';
       if (groupedScope && grp.col) {
         const collapsed = state.collapsed.has(grp.col.id);
-        const shared = grp.col.id !== '__ungrouped__' && collectionHasShared(grp.col) ? `<span class="g-shared">· shared settings</span>` : '';
+        const isCol = grp.col.id !== '__ungrouped__';
+        const shared = isCol && collectionHasShared(grp.col) ? `<span class="g-shared">· shared settings</span>` : '';
+        const actions = isCol ? `<span class="gb-actions">
+            <button class="link-btn muted" data-col-copy="${escapeHtml(grp.col.id)}">Copy link</button>
+            <button class="link-btn muted" data-col-open="${escapeHtml(grp.col.id)}">Collection settings</button>
+          </span>` : '';
         html += `<div class="group${collapsed ? ' collapsed' : ''}" data-group="${escapeHtml(grp.col.id)}">
           <div class="group-head" data-toggle="${escapeHtml(grp.col.id)}">
             <span class="g-caret">▼</span>
             <span class="g-name">${escapeHtml(grp.col.name)}</span>
             <span class="g-count">${grp.galleries.length}</span>
             ${shared}
+            ${actions}
           </div>` + grp.galleries.map(rowHtml).join('') + `</div>`;
       } else {
         html += grp.galleries.map(rowHtml).join('');
@@ -498,6 +516,10 @@ document.addEventListener('DOMContentLoaded', () => {
         renderCentre();
       });
     });
+    $('table-scroll').querySelectorAll('[data-col-copy]').forEach(el =>
+      el.addEventListener('click', (e) => { e.stopPropagation(); copyCollectionLink(el.getAttribute('data-col-copy')); }));
+    $('table-scroll').querySelectorAll('[data-col-open]').forEach(el =>
+      el.addEventListener('click', (e) => { e.stopPropagation(); openCollectionModal(el.getAttribute('data-col-open')); }));
     $('table-scroll').querySelectorAll('.group-head[data-toggle]').forEach(h => {
       h.addEventListener('click', () => {
         const id = h.getAttribute('data-toggle');
@@ -566,7 +588,7 @@ document.addEventListener('DOMContentLoaded', () => {
     scroll.querySelectorAll('[data-col-copy]').forEach(el =>
       el.addEventListener('click', (e) => { e.stopPropagation(); copyCollectionLink(el.getAttribute('data-col-copy')); }));
     scroll.querySelectorAll('[data-col-open]').forEach(el =>
-      el.addEventListener('click', (e) => { e.stopPropagation(); state.rail = el.getAttribute('data-col-open'); renderRail(); renderCentre(); }));
+      el.addEventListener('click', (e) => { e.stopPropagation(); openCollectionModal(el.getAttribute('data-col-open')); }));
   }
   function cardHtml(g) {
     const eff = effective(g);
@@ -1644,14 +1666,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const ncModal = $('new-collection-modal');
   let ncState = { downloads: false, commenting: false };
-  function openNewCollection() {
+  let ncEditingId = null;
+  let ncClearPassword = false;
+
+  function openCollectionModal(id) {
     closeAllMenus();
-    $('nc-name').value = ''; $('nc-link').value = ''; $('nc-password').value = ''; $('nc-expires').value = '';
-    ncState = { downloads: false, commenting: false };
-    $('nc-downloads').classList.remove('on'); $('nc-commenting').classList.remove('on');
+    ncEditingId = id || null;
+    ncClearPassword = false;
+    const col = ncEditingId ? state.collections.find(c => c.id === ncEditingId) : null;
+
+    $('nc-title').textContent = col ? 'Edit collection' : 'New collection';
+    $('nc-sub').textContent = col ? 'Update sharing settings for this collection.' : 'Group client galleries under one shareable link.';
+    $('nc-create').textContent = col ? 'Save Changes' : 'Create Collection';
+    $('nc-delete').hidden = !col;
+    $('nc-link-group').hidden = !col;
+
+    $('nc-name').value = col ? col.name : '';
+    $('nc-link').value = col ? window.location.origin + '/collection/' + col.token : '';
+    $('nc-link-hint').textContent = col ? 'Share this link with your client.' : 'The link is created when you save the collection.';
+    $('nc-password').value = '';
+    $('nc-password').placeholder = col && col.hasPassword ? '(set — type to change)' : 'No password';
+    $('nc-password-clear').hidden = !(col && col.hasPassword);
+    $('nc-expires').value = col && col.expiresAt ? col.expiresAt.split('T')[0] : '';
+
+    ncState = { downloads: col ? !!col.downloadsEnabled : false, commenting: col ? !!col.commentingEnabled : false };
+    $('nc-downloads').classList.toggle('on', ncState.downloads);
+    $('nc-commenting').classList.toggle('on', ncState.commenting);
+
     const gl = $('nc-galleries');
     const avail = state.galleries.filter(g => g.type === 'proofing' && g.active !== false);
-    gl.innerHTML = avail.length ? avail.map(g => `<label class="gal-check-row"><input type="checkbox" value="${g.id}"><span>${escapeHtml(g.name)}</span></label>`).join('') : `<p class="setting-hint" style="padding:8px;">No client galleries yet.</p>`;
+    const memberIds = new Set(col ? (col.galleryIds || []) : []);
+    gl.innerHTML = avail.length
+      ? avail.map(g => `<label class="gal-check-row"><input type="checkbox" value="${g.id}"${memberIds.has(g.id) ? ' checked' : ''}><span>${escapeHtml(g.name)}</span></label>`).join('')
+      : `<p class="setting-hint" style="padding:8px;">No client galleries yet.</p>`;
+
     ncModal.hidden = false;
     $('nc-name').focus();
   }
@@ -1659,6 +1707,37 @@ document.addEventListener('DOMContentLoaded', () => {
   $('nc-commenting').addEventListener('click', () => { ncState.commenting = !ncState.commenting; $('nc-commenting').classList.toggle('on'); });
   $('nc-cancel').addEventListener('click', () => ncModal.hidden = true);
   ncModal.querySelector('.modal-backdrop').addEventListener('click', () => ncModal.hidden = true);
+  $('nc-password').addEventListener('input', () => { ncClearPassword = false; });
+  $('nc-password-clear').addEventListener('click', () => {
+    ncClearPassword = true;
+    $('nc-password').value = '';
+    $('nc-password').placeholder = 'No password';
+    $('nc-password-clear').hidden = true;
+  });
+  $('nc-copy').addEventListener('click', () => { if (ncEditingId) copyCollectionLink(ncEditingId); });
+  $('nc-regen').addEventListener('click', async () => {
+    if (!ncEditingId) return;
+    if (!await confirmModal({ title: 'Regenerate link', message: 'The old link will stop working.' })) return;
+    const res = await fetch(`/api/collections/${ncEditingId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regenerateToken: true }) });
+    if (!res.ok) { toast('Regenerate failed'); return; }
+    await loadData();
+    const col = state.collections.find(c => c.id === ncEditingId);
+    if (col) $('nc-link').value = window.location.origin + '/collection/' + col.token;
+    renderAll();
+    toast('Link regenerated');
+  });
+  $('nc-delete').addEventListener('click', async () => {
+    if (!ncEditingId) return;
+    const col = state.collections.find(c => c.id === ncEditingId);
+    if (!await confirmModal({ title: 'Delete collection', message: `Delete "${col ? col.name : 'this collection'}"? Galleries inside it are kept, just ungrouped.`, okText: 'Delete', danger: true })) return;
+    const res = await fetch(`/api/collections/${ncEditingId}`, { method: 'DELETE' });
+    if (!res.ok) { toast('Delete failed'); return; }
+    ncModal.hidden = true;
+    if (state.rail === ncEditingId) state.rail = 'all';
+    await loadData();
+    renderRail(); renderCentre();
+    toast('Collection deleted');
+  });
   $('nc-create').addEventListener('click', async () => {
     const name = $('nc-name').value.trim(); if (!name) { $('nc-name').focus(); return; }
     const galleryIds = Array.from($('nc-galleries').querySelectorAll('input:checked')).map(c => c.value);
@@ -1667,15 +1746,20 @@ document.addEventListener('DOMContentLoaded', () => {
       downloadsEnabled: ncState.downloads, commentingEnabled: ncState.commenting,
       expiresAt: $('nc-expires').value ? new Date($('nc-expires').value + 'T23:59:59').toISOString() : null,
     };
-    if ($('nc-password').value.trim()) body.password = $('nc-password').value.trim();
-    const res = await fetch('/api/collections', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!res.ok) { toast('Create failed'); return; }
+    const pw = $('nc-password').value.trim();
+    if (pw) body.password = pw;
+    else if (ncEditingId && ncClearPassword) body.password = '';
+
+    const url = ncEditingId ? `/api/collections/${ncEditingId}` : '/api/collections';
+    const method = ncEditingId ? 'PUT' : 'POST';
+    const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) { toast(ncEditingId ? 'Save failed' : 'Create failed'); return; }
     const col = await res.json();
     ncModal.hidden = true;
     await loadData();
     state.rail = col.id;
     renderRail(); renderCentre();
-    toast('Collection created');
+    toast(ncEditingId ? 'Collection saved' : 'Collection created');
   });
 
   function copyCollectionLink(colId) {

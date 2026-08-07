@@ -290,6 +290,7 @@ a { color: var(--accent); text-decoration: none; }
 .rail-row.compact { height: 32px; }
 .rail-row:hover { color: var(--text); }
 .rail-row.active { color: var(--text); border-left-color: var(--accent); padding-left: 24px; }
+.rail-row.inactive .rail-name { color: var(--text-6); font-style: italic; }
 .rail-row .rail-name { overflow: hidden; text-overflow: ellipsis; }
 .rail-row .rail-count { margin-left: auto; padding-left: 10px; font-size: 13px; color: var(--text-6); }
 .rail-row.new-collection { color: var(--text-5); margin-top: 6px; }

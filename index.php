@@ -1127,7 +1127,7 @@ if ($method === 'POST' && $uri === '/api/galleries') {
         'commentingEnabled' => !empty($input['commentingEnabled']),
         'expiresAt' => $input['expiresAt'] ?? null,
         'active' => true,
-        'overrideCollectionSettings' => false,
+        'overrideCollectionSettings' => !empty($input['overrideCollectionSettings']),
         'createdAt' => date('c'),
     ];
 
@@ -2219,7 +2219,7 @@ if ($method === 'POST' && $uri === '/api/collections') {
         'downloadsEnabled' => !empty($input['downloadsEnabled']),
         'commentingEnabled' => !empty($input['commentingEnabled']),
         'expiresAt' => $input['expiresAt'] ?? null,
-        'active' => true,
+        'active' => !isset($input['active']) || !empty($input['active']),
         'sortOrder' => 'custom',
         'createdAt' => date('c'),
     ];

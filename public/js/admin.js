@@ -377,7 +377,7 @@ document.addEventListener('DOMContentLoaded', () => {
     html += `<div class="rail-section-label">Collections</div>`;
     sortByFavorite(state.collections).forEach(c => {
       const count = all.filter(g => g.collectionId === c.id).length;
-      html += `<div class="rail-row compact${state.rail === c.id ? ' active' : ''}" data-rail="${c.id}">
+      html += `<div class="rail-row compact${state.rail === c.id ? ' active' : ''}${c.active === false ? ' inactive' : ''}" data-rail="${c.id}" title="${c.active === false ? 'Inactive' : ''}">
         <span class="rail-name">${escapeHtml(titleCase(c.name))}</span>
         <span class="rail-count">${count}</span>
         ${starBtn(c, 'collection')}
@@ -494,6 +494,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const collapsed = state.collapsed.has(grp.col.id);
         const isCol = grp.col.id !== '__ungrouped__';
         const shared = isCol && collectionHasShared(grp.col) ? `<span class="g-shared">· shared settings</span>` : '';
+        const inactiveTag = isCol && grp.col.active === false ? `<span class="g-tag">Inactive</span>` : '';
         const actions = isCol ? `<span class="gb-actions">
             <button class="link-btn muted" data-col-copy="${escapeHtml(grp.col.id)}">Copy link</button>
             <button class="link-btn muted" data-col-visit="${escapeHtml(grp.col.id)}">Open</button>
@@ -505,6 +506,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="g-name">${escapeHtml(grp.col.name)}</span>
             <span class="g-count">${grp.galleries.length}</span>
             ${isCol ? starBtn(grp.col, 'collection') : ''}
+            ${inactiveTag}
             ${shared}
             ${actions}
           </div>` + grp.galleries.map(rowHtml).join('') + `</div>`;
@@ -613,6 +615,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <span class="gb-name">${escapeHtml(grp.col.name)}</span>
           <span class="gb-count">${grp.galleries.length}</span>
           ${isCol ? starBtn(grp.col, 'collection') : ''}
+          ${isCol && grp.col.active === false ? `<span class="g-tag">Inactive</span>` : ''}
           ${isCol ? `<span class="gb-actions">
             <button class="link-btn muted" data-col-copy="${escapeHtml(grp.col.id)}">Copy link</button>
             <button class="link-btn muted" data-col-visit="${escapeHtml(grp.col.id)}">Open</button>
@@ -1701,6 +1704,34 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================================================
   // New gallery / new collection modals
   // ==========================================================================
+  let ngState = { downloads: false, commenting: false, useCollection: true };
+  function ngInheritedPreviewHtml(col) {
+    const row = (k, v) => `<div class="inherit-row"><span class="ir-key">${k}</span><span class="ir-val">${v}</span></div>`;
+    return `<div class="inherit-list locked">
+      ${row('Password', col.hasPassword ? 'Set' : 'None')}
+      ${row('Downloads', col.downloadsEnabled ? 'On' : 'Off')}
+      ${row('Comments', col.commentingEnabled ? 'On' : 'Off')}
+      ${row('Expires', formatDate(col.expiresAt))}
+    </div>`;
+  }
+  function updateNgSettingsUI() {
+    const type = document.querySelector('input[name="ng-type"]:checked').value;
+    $('ng-collection-group').style.display = type === 'reels' ? 'none' : '';
+    $('ng-settings-block').hidden = type !== 'proofing';
+    if (type !== 'proofing') return;
+    const colId = $('ng-collection').value;
+    const col = colId ? state.collections.find(c => c.id === colId) : null;
+    $('ng-use-collection-row').hidden = !col;
+    $('ng-use-collection').classList.toggle('on', ngState.useCollection);
+    if (col && ngState.useCollection) {
+      $('ng-inherited-preview').innerHTML = ngInheritedPreviewHtml(col);
+      $('ng-inherited-preview').hidden = false;
+      $('ng-editable-fields').hidden = true;
+    } else {
+      $('ng-inherited-preview').hidden = true;
+      $('ng-editable-fields').hidden = false;
+    }
+  }
   function openNewGallery(collectionId) {
     const modal = $('new-gallery-modal');
     $('ng-name').value = 'Client Gallery';
@@ -1708,20 +1739,36 @@ document.addEventListener('DOMContentLoaded', () => {
     const colSel = $('ng-collection');
     colSel.innerHTML = `<option value="">— None —</option>` + state.collections.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
     if (collectionId) colSel.value = collectionId;
+    ngState = { downloads: false, commenting: false, useCollection: true };
+    $('ng-password').value = ''; $('ng-password').placeholder = 'No password';
+    $('ng-expires').value = '';
+    $('ng-downloads').classList.remove('on'); $('ng-commenting').classList.remove('on');
+    updateNgSettingsUI();
     modal.hidden = false;
     $('ng-name').focus(); $('ng-name').select();
   }
   $('ng-cancel').addEventListener('click', () => $('new-gallery-modal').hidden = true);
   $('new-gallery-modal').querySelector('.modal-backdrop').addEventListener('click', () => $('new-gallery-modal').hidden = true);
-  document.querySelectorAll('input[name="ng-type"]').forEach(r => r.addEventListener('change', () => {
-    $('ng-collection-group').style.display = r.value === 'reels' ? 'none' : '';
-  }));
+  document.querySelectorAll('input[name="ng-type"]').forEach(r => r.addEventListener('change', updateNgSettingsUI));
+  $('ng-collection').addEventListener('change', () => { ngState.useCollection = true; updateNgSettingsUI(); });
+  $('ng-use-collection').addEventListener('click', () => { ngState.useCollection = !ngState.useCollection; updateNgSettingsUI(); });
+  $('ng-downloads').addEventListener('click', () => { ngState.downloads = !ngState.downloads; $('ng-downloads').classList.toggle('on'); });
+  $('ng-commenting').addEventListener('click', () => { ngState.commenting = !ngState.commenting; $('ng-commenting').classList.toggle('on'); });
   $('ng-create').addEventListener('click', async () => {
     const name = $('ng-name').value.trim(); if (!name) { $('ng-name').focus(); return; }
     const type = document.querySelector('input[name="ng-type"]:checked').value;
     const colId = type === 'proofing' ? $('ng-collection').value : '';
+    const body = { name, type };
+    if (type === 'proofing' && (!colId || !ngState.useCollection)) {
+      body.overrideCollectionSettings = !!colId;
+      const pw = $('ng-password').value.trim();
+      if (pw) body.password = pw;
+      body.downloadsEnabled = ngState.downloads;
+      body.commentingEnabled = ngState.commenting;
+      body.expiresAt = $('ng-expires').value ? new Date($('ng-expires').value + 'T23:59:59').toISOString() : null;
+    }
     $('new-gallery-modal').hidden = true;
-    const res = await fetch('/api/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, type }) });
+    const res = await fetch('/api/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) { toast('Create failed'); return; }
     const g = await res.json();
     if (colId) {
@@ -1733,7 +1780,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   const ncModal = $('new-collection-modal');
-  let ncState = { downloads: false, commenting: false };
+  let ncState = { downloads: false, commenting: false, active: true };
   let ncEditingId = null;
   let ncClearPassword = false;
 
@@ -1757,9 +1804,14 @@ document.addEventListener('DOMContentLoaded', () => {
     $('nc-password-clear').hidden = !(col && col.hasPassword);
     $('nc-expires').value = col && col.expiresAt ? col.expiresAt.split('T')[0] : '';
 
-    ncState = { downloads: col ? !!col.downloadsEnabled : false, commenting: col ? !!col.commentingEnabled : false };
+    ncState = {
+      downloads: col ? !!col.downloadsEnabled : false,
+      commenting: col ? !!col.commentingEnabled : false,
+      active: col ? col.active !== false : true,
+    };
     $('nc-downloads').classList.toggle('on', ncState.downloads);
     $('nc-commenting').classList.toggle('on', ncState.commenting);
+    $('nc-active').classList.toggle('on', ncState.active);
 
     const gl = $('nc-galleries');
     const avail = state.galleries.filter(g => g.type === 'proofing' && g.active !== false);
@@ -1773,6 +1825,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   $('nc-downloads').addEventListener('click', () => { ncState.downloads = !ncState.downloads; $('nc-downloads').classList.toggle('on'); });
   $('nc-commenting').addEventListener('click', () => { ncState.commenting = !ncState.commenting; $('nc-commenting').classList.toggle('on'); });
+  $('nc-active').addEventListener('click', () => { ncState.active = !ncState.active; $('nc-active').classList.toggle('on'); });
   $('nc-cancel').addEventListener('click', () => ncModal.hidden = true);
   ncModal.querySelector('.modal-backdrop').addEventListener('click', () => ncModal.hidden = true);
   $('nc-password').addEventListener('input', () => { ncClearPassword = false; });
@@ -1817,6 +1870,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const body = {
       name, galleryIds,
       downloadsEnabled: ncState.downloads, commentingEnabled: ncState.commenting,
+      active: ncState.active,
       expiresAt: $('nc-expires').value ? new Date($('nc-expires').value + 'T23:59:59').toISOString() : null,
     };
     const pw = $('nc-password').value.trim();

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/admin.css?v=7">
+  <link rel="stylesheet" href="/css/admin.css?v=8">
 </head>
 <body>
 
@@ -270,6 +270,7 @@
         </div>
         <p class="setting-hint" id="nc-link-hint">The link is created when you save the collection.</p>
       </div>
+      <div class="switch-row"><div><div class="sr-text">Active</div><div class="sr-sub">Inactive collections are hidden from clients</div></div><button type="button" class="switch on" id="nc-active"></button></div>
       <hr class="settings-divider">
       <p class="setting-hint" style="margin-bottom:10px;">Inherited settings — galleries in this collection follow these unless they override.</p>
       <div class="setting-group"><label>Password</label>
@@ -295,7 +296,7 @@
   <!-- New gallery modal -->
   <div id="new-gallery-modal" class="modal" hidden>
     <div class="modal-backdrop"></div>
-    <div class="modal-inner" style="max-width:420px;">
+    <div class="modal-inner" style="max-width:460px;">
       <h3 id="ng-title">New gallery</h3>
       <div class="setting-group"><label>Gallery Name</label><input type="text" id="ng-name" class="setting-input" placeholder="Gallery name"></div>
       <div class="setting-group"><label>Type</label>
@@ -305,6 +306,22 @@
         </div>
       </div>
       <div class="setting-group" id="ng-collection-group"><label>Add to Collection</label><select id="ng-collection" class="setting-input"><option value="">— None —</option></select></div>
+
+      <div id="ng-settings-block">
+        <hr class="settings-divider">
+        <div class="switch-row" id="ng-use-collection-row" hidden>
+          <div><div class="sr-text">Use collection settings</div><div class="sr-sub">Password, downloads, expiry</div></div>
+          <button type="button" class="switch on" id="ng-use-collection"></button>
+        </div>
+        <div id="ng-inherited-preview" hidden></div>
+        <div id="ng-editable-fields">
+          <div class="setting-group"><label>Password</label><input type="text" id="ng-password" class="setting-input" placeholder="No password"></div>
+          <div class="switch-row"><div><div class="sr-text">Downloads</div></div><button type="button" class="switch" id="ng-downloads"></button></div>
+          <div class="switch-row"><div><div class="sr-text">Commenting</div></div><button type="button" class="switch" id="ng-commenting"></button></div>
+          <div class="setting-group" style="margin-top:14px;"><label>Expiration Date</label><input type="date" id="ng-expires" class="setting-input" style="max-width:200px;"></div>
+        </div>
+      </div>
+
       <div class="modal-actions"><div></div><div class="right">
         <button id="ng-cancel" class="btn-ghost">Cancel</button>
         <button id="ng-create" class="btn-primary">Create</button>
@@ -436,6 +453,6 @@
   <div id="toast" class="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=107"></script>
+  <script src="/js/admin.js?v=109"></script>
 </body>
 </html>

@@ -159,6 +159,8 @@ a { color: var(--accent); text-decoration: none; }
   text-transform: uppercase;
   color: var(--accent);
 }
+.brand-mast.is-link { cursor: pointer; }
+.brand-mast.is-link:hover { text-decoration: underline; }
 .brand-delivery {
   font-size: 13px;
   font-weight: 400;

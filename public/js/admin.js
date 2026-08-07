@@ -1929,7 +1929,15 @@ document.addEventListener('DOMContentLoaded', () => {
   function populateHeaderForm() {
     if (!headerConfig) return;
     const logo = headerConfig.logo || {};
-    $('brand-mast').textContent = logo.text || 'AJ MAST';
+    const brandEl = $('brand-mast');
+    brandEl.classList.toggle('is-link', !logo.text);
+    if (logo.text) {
+      brandEl.textContent = logo.text;
+      brandEl.onclick = null;
+    } else {
+      brandEl.textContent = 'Set in Settings';
+      brandEl.onclick = (e) => { e.stopPropagation(); setScreen('settings'); switchSettingsTab('header'); };
+    }
     $('header-site-name').value = headerConfig.siteName || '';
     $('header-logo-text').value = logo.text || '';
     if (logo.src) { const p = $('header-logo-preview'); p.src = logo.src; p.style.display = ''; $('header-logo-none').style.display = 'none'; $('header-logo-remove').style.display = ''; }

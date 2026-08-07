@@ -152,7 +152,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     if (data.authenticated) {
       hide($('auth-setup')); hide($('auth-login')); show($('app'));
-      await loadData();
+      await Promise.all([loadData(), loadHeaderConfig()]);
+      settingsLoaded.header = true;
       renderAll();
     } else {
       hide($('auth-setup')); show($('auth-login')); hide($('app'));
@@ -488,6 +489,11 @@ document.addEventListener('DOMContentLoaded', () => {
     wireRows(scroll);
   }
 
+  function thumbHtml(g, cls) {
+    const tag = cls === 'gc-cover' ? 'div' : 'span';
+    if (g.thumbnail) return `<img class="${cls}" src="/thumbnails/${encodeURIComponent(g.thumbnail)}" alt="" loading="lazy">`;
+    return `<${tag} class="${cls}"></${tag}>`;
+  }
   function rowHtml(g) {
     const eff = effective(g);
     const selected = state.selection.has(g.id);
@@ -496,7 +502,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return `<div class="gallery-row${selected ? ' selected' : ''}${open ? ' open' : ''}" data-id="${g.id}" role="row">
       <div class="g-name-cell">
         <button class="row-check" data-check="${g.id}" title="Select">${TICK}</button>
-        <span class="g-thumb"></span>
+        ${thumbHtml(g, 'g-thumb')}
         <span class="g-name">${escapeHtml(g.name)}</span>${tag}
       </div>
       <div class="cell">${g.videoCount || 0}</div>
@@ -596,7 +602,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const meta = `${g.videoCount || 0} items · ${g.viewCount || 0} views`;
     const stateLine = g.type === 'reels' ? 'Public' : `${accessLabel(g)} · ${formatDate(eff.expiresAt)}`;
     return `<div class="grid-card${selected ? ' selected' : ''}" data-id="${g.id}">
-      <div class="gc-cover"></div>
+      ${thumbHtml(g, 'gc-cover')}
       <button class="gc-check">${TICK}</button>
       <div class="gc-name">${escapeHtml(g.name)}</div>
       <div class="gc-meta">${meta}</div>
@@ -1923,6 +1929,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function populateHeaderForm() {
     if (!headerConfig) return;
     const logo = headerConfig.logo || {};
+    $('brand-mast').textContent = logo.text || 'AJ MAST';
     $('header-site-name').value = headerConfig.siteName || '';
     $('header-logo-text').value = logo.text || '';
     if (logo.src) { const p = $('header-logo-preview'); p.src = logo.src; p.style.display = ''; $('header-logo-none').style.display = 'none'; $('header-logo-remove').style.display = ''; }

@@ -1090,7 +1090,9 @@ if ($method === 'GET' && $uri === '/api/galleries') {
     }
     $galleries = array_map(function($g) use ($galColMap) {
         $s = sanitizeGallery($g);
-        $s['videoCount'] = count(array_filter(readGalleryVideos($g['id']), fn($v) => ($v['type'] ?? '') !== 'header'));
+        $items = array_values(array_filter(readGalleryVideos($g['id']), fn($v) => ($v['type'] ?? '') !== 'header'));
+        $s['videoCount'] = count($items);
+        $s['thumbnail'] = $items[0]['thumbnail'] ?? null;
         $s['commentCount'] = $g['type'] === 'proofing' ? count(readGalleryComments($g['id'])) : 0;
         $s['collectionId'] = $galColMap[$g['id']]['id'] ?? null;
         $s['collectionName'] = $galColMap[$g['id']]['name'] ?? null;

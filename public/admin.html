@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/admin.css?v=4">
+  <link rel="stylesheet" href="/css/admin.css?v=5">
 </head>
 <body>
 
@@ -45,12 +45,12 @@
         <span class="brand-delivery">DELIVERY</span>
       </div>
       <div class="topbar-search">
-        <input type="text" id="global-search" placeholder="Search" autocomplete="off">
+        <input type="text" id="global-search" placeholder="Search galleries by name…" autocomplete="off">
       </div>
       <div class="topbar-right">
         <button class="topbar-link" id="nav-uploads">Uploads <span class="accent" id="uploads-count">0</span></button>
         <div class="menu-wrap">
-          <button class="account-btn" id="account-btn" title="Account" aria-haspopup="true">&#9679;</button>
+          <button class="account-btn" id="account-btn" title="Account & settings" aria-haspopup="true">&#9881;</button>
           <div class="menu" id="account-menu" hidden>
             <button data-account="settings">Settings</button>
             <button data-account="theme" id="account-theme">Light theme</button>
@@ -80,6 +80,7 @@
             </div>
             <div class="centre-controls">
               <button class="ctrl" id="ctrl-col-copy" hidden>Copy link</button>
+              <button class="ctrl" id="ctrl-col-visit" hidden>Open</button>
               <button class="ctrl" id="ctrl-col-settings" hidden>Collection settings</button>
               <button class="ctrl" id="ctrl-filter">Filter</button>
               <button class="ctrl" id="ctrl-group">Group: Collection</button>
@@ -264,6 +265,8 @@
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="text" id="nc-link" class="setting-input" readonly placeholder="Generated after creation">
           <button id="nc-copy" class="btn-ghost">Copy</button>
+          <button id="nc-open" class="btn-ghost">Open</button>
+          <button id="nc-email" class="btn-ghost">Email</button>
           <button id="nc-regen" class="btn-ghost">Regenerate</button>
         </div>
         <p class="setting-hint" id="nc-link-hint">The link is created when you save the collection.</p>
@@ -434,6 +437,6 @@
   <div id="toast" class="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=105"></script>
+  <script src="/js/admin.js?v=106"></script>
 </body>
 </html>

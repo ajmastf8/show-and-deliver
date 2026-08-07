@@ -323,11 +323,39 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     };
     return list.slice().sort((a, b) => {
+      const fa = a.favorite ? 1 : 0, fb = b.favorite ? 1 : 0;
+      if (fa !== fb) return fb - fa;
       const va = val(a), vb = val(b);
       if (va < vb) return -1 * mul;
       if (va > vb) return 1 * mul;
       return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1;
     });
+  }
+  function sortByFavorite(list) {
+    return list.slice().sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0));
+  }
+  function starBtn(item, kind) {
+    const fav = !!item.favorite;
+    return `<button class="fav-star${fav ? ' is-fav' : ''}" data-fav="${item.id}" data-fav-kind="${kind}" title="${fav ? 'Remove from favorites' : 'Add to favorites'}">${fav ? '&#9733;' : '&#9734;'}</button>`;
+  }
+  function wireFavButtons(scope) {
+    scope.querySelectorAll('[data-fav]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleFavorite(btn.getAttribute('data-fav'), btn.getAttribute('data-fav-kind'));
+      });
+    });
+  }
+  async function toggleFavorite(id, kind) {
+    const list = kind === 'collection' ? state.collections : state.galleries;
+    const item = list.find(x => x.id === id);
+    if (!item) return;
+    const next = !item.favorite;
+    item.favorite = next;
+    renderAll();
+    const url = kind === 'collection' ? `/api/collections/${id}` : `/api/galleries/${id}`;
+    const res = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ favorite: next }) });
+    if (!res.ok) { item.favorite = !next; renderAll(); toast('Failed to update favorite'); }
   }
 
   // ==========================================================================
@@ -351,16 +379,18 @@ document.addEventListener('DOMContentLoaded', () => {
     html += railRow('archive', 'Archive', archived);
 
     html += `<div class="rail-section-label">Collections</div>`;
-    state.collections.forEach(c => {
+    sortByFavorite(state.collections).forEach(c => {
       const count = all.filter(g => g.collectionId === c.id).length;
       html += `<div class="rail-row compact${state.rail === c.id ? ' active' : ''}" data-rail="${c.id}">
         <span class="rail-name">${escapeHtml(titleCase(c.name))}</span>
         <span class="rail-count">${count}</span>
+        ${starBtn(c, 'collection')}
       </div>`;
     });
     html += `<div class="rail-row compact new-collection" data-new-collection>+ New collection</div>`;
     rail.innerHTML = html;
 
+    wireFavButtons(rail);
     rail.querySelectorAll('[data-rail]').forEach(el => {
       el.addEventListener('click', () => {
         state.rail = el.getAttribute('data-rail');
@@ -408,9 +438,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const railCol = currentRailCollection();
     $('ctrl-col-copy').hidden = !railCol;
+    $('ctrl-col-visit').hidden = !railCol;
     $('ctrl-col-settings').hidden = !railCol;
     if (railCol) {
       $('ctrl-col-copy').onclick = () => copyCollectionLink(railCol.id);
+      $('ctrl-col-visit').onclick = () => openCollectionLink(railCol.id);
       $('ctrl-col-settings').onclick = () => openCollectionModal(railCol.id);
     }
 
@@ -426,7 +458,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const grouped = state.rail === 'all' && state.groupBy === 'collection';
     if (!grouped) return [{ col: null, galleries: sortGalleries(list) }];
     const groups = [];
-    state.collections.forEach(c => {
+    sortByFavorite(state.collections).forEach(c => {
       const members = list.filter(g => g.collectionId === c.id);
       if (members.length) groups.push({ col: c, galleries: sortGalleries(members) });
     });
@@ -468,6 +500,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const shared = isCol && collectionHasShared(grp.col) ? `<span class="g-shared">· shared settings</span>` : '';
         const actions = isCol ? `<span class="gb-actions">
             <button class="link-btn muted" data-col-copy="${escapeHtml(grp.col.id)}">Copy link</button>
+            <button class="link-btn muted" data-col-visit="${escapeHtml(grp.col.id)}">Open</button>
             <button class="link-btn muted" data-col-open="${escapeHtml(grp.col.id)}">Collection settings</button>
           </span>` : '';
         html += `<div class="group${collapsed ? ' collapsed' : ''}" data-group="${escapeHtml(grp.col.id)}">
@@ -475,6 +508,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="g-caret">▼</span>
             <span class="g-name">${escapeHtml(grp.col.name)}</span>
             <span class="g-count">${grp.galleries.length}</span>
+            ${isCol ? starBtn(grp.col, 'collection') : ''}
             ${shared}
             ${actions}
           </div>` + grp.galleries.map(rowHtml).join('') + `</div>`;
@@ -487,12 +521,19 @@ document.addEventListener('DOMContentLoaded', () => {
     scroll.innerHTML = html;
     wireTableHeader();
     wireRows(scroll);
+    wireFavButtons(scroll);
   }
 
   function thumbHtml(g, cls) {
     const tag = cls === 'gc-cover' ? 'div' : 'span';
     if (g.thumbnail) return `<img class="${cls}" src="/thumbnails/${encodeURIComponent(g.thumbnail)}" alt="" loading="lazy">`;
     return `<${tag} class="${cls}"></${tag}>`;
+  }
+  function galleryPublicUrl(g) {
+    return g.type === 'proofing' && g.token ? window.location.origin + '/gallery/' + g.token : null;
+  }
+  function openLinkBtnHtml(g) {
+    return galleryPublicUrl(g) ? `<button class="row-open" data-open-link="${g.id}" title="Open public link">&#8599;</button>` : '';
   }
   function rowHtml(g) {
     const eff = effective(g);
@@ -504,6 +545,8 @@ document.addEventListener('DOMContentLoaded', () => {
         <button class="row-check" data-check="${g.id}" title="Select">${TICK}</button>
         ${thumbHtml(g, 'g-thumb')}
         <span class="g-name">${escapeHtml(g.name)}</span>${tag}
+        ${openLinkBtnHtml(g)}
+        ${starBtn(g, 'gallery')}
       </div>
       <div class="cell">${g.videoCount || 0}</div>
       <div class="cell views">${g.viewCount || 0}</div>
@@ -524,6 +567,8 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     $('table-scroll').querySelectorAll('[data-col-copy]').forEach(el =>
       el.addEventListener('click', (e) => { e.stopPropagation(); copyCollectionLink(el.getAttribute('data-col-copy')); }));
+    $('table-scroll').querySelectorAll('[data-col-visit]').forEach(el =>
+      el.addEventListener('click', (e) => { e.stopPropagation(); openCollectionLink(el.getAttribute('data-col-visit')); }));
     $('table-scroll').querySelectorAll('[data-col-open]').forEach(el =>
       el.addEventListener('click', (e) => { e.stopPropagation(); openCollectionModal(el.getAttribute('data-col-open')); }));
     $('table-scroll').querySelectorAll('.group-head[data-toggle]').forEach(h => {
@@ -542,6 +587,13 @@ document.addEventListener('DOMContentLoaded', () => {
       row.querySelector('[data-check]').addEventListener('click', (e) => {
         e.stopPropagation();
         toggleSelect(id, e);
+      });
+      const openLinkBtn = row.querySelector('[data-open-link]');
+      if (openLinkBtn) openLinkBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const g = state.galleries.find(x => x.id === id);
+        const url = g && galleryPublicUrl(g);
+        if (url) window.open(url, '_blank');
       });
       row.addEventListener('click', (e) => {
         if (e.metaKey || e.ctrlKey) { toggleSelect(id, e); return; }
@@ -564,8 +616,10 @@ document.addEventListener('DOMContentLoaded', () => {
         html += `<div class="grid-block"><div class="grid-block-head">
           <span class="gb-name">${escapeHtml(grp.col.name)}</span>
           <span class="gb-count">${grp.galleries.length}</span>
+          ${isCol ? starBtn(grp.col, 'collection') : ''}
           ${isCol ? `<span class="gb-actions">
             <button class="link-btn muted" data-col-copy="${escapeHtml(grp.col.id)}">Copy link</button>
+            <button class="link-btn muted" data-col-visit="${escapeHtml(grp.col.id)}">Open</button>
             <button class="link-btn muted" data-col-open="${escapeHtml(grp.col.id)}">Collection settings</button>
           </span>` : ''}
         </div><div class="grid-cards">`;
@@ -583,16 +637,26 @@ document.addEventListener('DOMContentLoaded', () => {
     scroll.querySelectorAll('.grid-card').forEach(card => {
       const id = card.dataset.id;
       card.querySelector('.gc-check').addEventListener('click', (e) => { e.stopPropagation(); toggleSelect(id, e); });
+      const openLinkBtn = card.querySelector('[data-open-link]');
+      if (openLinkBtn) openLinkBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const g = state.galleries.find(x => x.id === id);
+        const url = g && galleryPublicUrl(g);
+        if (url) window.open(url, '_blank');
+      });
       card.addEventListener('click', (e) => {
         if (e.metaKey || e.ctrlKey) { toggleSelect(id, e); return; }
         if (e.shiftKey) { rangeSelect(id); return; }
         openGallery(id);
       });
     });
+    wireFavButtons(scroll);
     scroll.querySelectorAll('[data-add-gallery]').forEach(el =>
       el.addEventListener('click', () => openNewGallery(el.getAttribute('data-add-gallery') || '')));
     scroll.querySelectorAll('[data-col-copy]').forEach(el =>
       el.addEventListener('click', (e) => { e.stopPropagation(); copyCollectionLink(el.getAttribute('data-col-copy')); }));
+    scroll.querySelectorAll('[data-col-visit]').forEach(el =>
+      el.addEventListener('click', (e) => { e.stopPropagation(); openCollectionLink(el.getAttribute('data-col-visit')); }));
     scroll.querySelectorAll('[data-col-open]').forEach(el =>
       el.addEventListener('click', (e) => { e.stopPropagation(); openCollectionModal(el.getAttribute('data-col-open')); }));
   }
@@ -604,6 +668,8 @@ document.addEventListener('DOMContentLoaded', () => {
     return `<div class="grid-card${selected ? ' selected' : ''}" data-id="${g.id}">
       ${thumbHtml(g, 'gc-cover')}
       <button class="gc-check">${TICK}</button>
+      ${openLinkBtnHtml(g)}
+      ${starBtn(g, 'gallery')}
       <div class="gc-name">${escapeHtml(g.name)}</div>
       <div class="gc-meta">${meta}</div>
       <div class="gc-state">${stateLine}</div>
@@ -1721,6 +1787,11 @@ document.addEventListener('DOMContentLoaded', () => {
     $('nc-password-clear').hidden = true;
   });
   $('nc-copy').addEventListener('click', () => { if (ncEditingId) copyCollectionLink(ncEditingId); });
+  $('nc-open').addEventListener('click', () => { if (ncEditingId) openCollectionLink(ncEditingId); });
+  $('nc-email').addEventListener('click', () => {
+    const col = state.collections.find(c => c.id === ncEditingId);
+    if (col) openMailto(buildCollectionMailto(col));
+  });
   $('nc-regen').addEventListener('click', async () => {
     if (!ncEditingId) return;
     if (!await confirmModal({ title: 'Regenerate link', message: 'The old link will stop working.' })) return;
@@ -1773,6 +1844,19 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!col) return;
     navigator.clipboard.writeText(window.location.origin + '/collection/' + col.token);
     toast('Collection link copied');
+  }
+  function openCollectionLink(colId) {
+    const col = state.collections.find(c => c.id === colId);
+    if (!col) return;
+    window.open(window.location.origin + '/collection/' + col.token, '_blank');
+  }
+  function buildCollectionMailto(col) {
+    if (!col || !col.token) return null;
+    const url = window.location.origin + '/collection/' + col.token;
+    const subject = `Your galleries are ready — ${col.name}`;
+    const pwLine = col.hasPassword ? `\nPassword: [enter the collection password here]\n` : '';
+    const body = `Hello,\n\nYour galleries are ready.\n\n${url}\n${pwLine}\nThanks,\nAJ Mast`;
+    return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   }
 
   // ==========================================================================

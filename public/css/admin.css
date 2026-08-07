@@ -453,6 +453,56 @@ a { color: var(--accent); text-decoration: none; }
 }
 .cell { font-size: 13.5px; color: var(--text-4); }
 .cell.views { color: var(--text-2); }
+.row-open {
+  opacity: 0;
+  flex: 0 0 auto;
+  margin-left: 10px;
+  width: 20px; height: 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: 3px; background: none;
+  color: var(--text-4); font-size: 13px; cursor: pointer;
+}
+.gallery-row:hover .row-open { opacity: 1; }
+.row-open:hover { color: var(--accent); background: var(--raised); }
+.grid-card .row-open {
+  position: absolute;
+  top: 8px; right: 8px;
+  width: 22px; height: 22px;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 3px;
+  background: rgba(0,0,0,.4);
+  color: #fff;
+  opacity: 0;
+  margin-left: 0;
+}
+.grid-card:hover .row-open { opacity: 1; }
+.grid-card .row-open:hover { color: var(--accent); background: rgba(0,0,0,.6); }
+
+.fav-star {
+  border: none; background: none; cursor: pointer; padding: 0;
+  flex: 0 0 auto; margin-left: 8px;
+  font-size: 15px; line-height: 1; color: var(--text-5);
+  opacity: 0;
+}
+.fav-star.is-fav { opacity: 1; color: #f5c518; }
+.gallery-row:hover .fav-star,
+.group-head:hover .fav-star,
+.grid-block-head:hover .fav-star,
+.rail-row:hover .fav-star { opacity: 1; }
+.fav-star:hover { color: #f5c518; }
+.grid-card .fav-star {
+  position: absolute;
+  top: 8px; right: 34px;
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 3px;
+  background: rgba(0,0,0,.4);
+  color: #fff;
+  margin-left: 0;
+}
+.grid-card:hover .fav-star { opacity: 1; }
+.grid-card .fav-star.is-fav { color: #f5c518; }
 
 .empty-note { padding: 40px 32px; color: var(--text-5); font-size: 14px; }
 

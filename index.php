@@ -1159,6 +1159,7 @@ if ($method === 'PUT' && matchRoute('/api/galleries/{id}', $uri, $params)) {
     if (isset($input['commentingEnabled'])) $gallery['commentingEnabled'] = $input['commentingEnabled'];
     if (isset($input['expiresAt'])) $gallery['expiresAt'] = $input['expiresAt'];
     if (isset($input['active'])) $gallery['active'] = $input['active'];
+    if (isset($input['favorite'])) $gallery['favorite'] = $input['favorite'];
     if (!empty($input['regenerateToken']) && $gallery['type'] === 'proofing') {
         $gallery['token'] = generateToken();
     }
@@ -2274,6 +2275,7 @@ if ($method === 'PUT' && matchRoute('/api/collections/{id}', $uri, $params)) {
     if (isset($input['expiresAt'])) $col['expiresAt'] = $input['expiresAt'];
     if (isset($input['active'])) $col['active'] = $input['active'];
     if (isset($input['sortOrder'])) $col['sortOrder'] = $input['sortOrder'];
+    if (isset($input['favorite'])) $col['favorite'] = $input['favorite'];
 
     writeCollections($collections);
     $out = $col;

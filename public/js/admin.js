@@ -278,9 +278,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // Global search
   $('global-search').addEventListener('input', (e) => {
     state.search = e.target.value.trim().toLowerCase();
+    $('global-search-clear').hidden = !e.target.value;
     if (state.centreGalleryId) { state.centreGalleryId = null; contentGid = null; closeDrawerForce(); }
     if (state.screen !== 'library') setScreen('library');
     renderCentre();
+  });
+  $('global-search-clear').addEventListener('click', () => {
+    $('global-search').value = '';
+    $('global-search').dispatchEvent(new Event('input'));
+    $('global-search').focus();
   });
 
   // ==========================================================================
@@ -485,9 +491,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const groups = buildGroups(list);
     if (!groups.length || groups.every(g => !g.galleries.length)) {
-      html += `<div class="empty-note">No galleries here yet.</div>`;
+      html += emptyNoteHtml();
       scroll.innerHTML = html;
       wireTableHeader();
+      wireEmptyNote(scroll);
       return;
     }
 
@@ -526,6 +533,16 @@ document.addEventListener('DOMContentLoaded', () => {
     wireFavButtons(scroll);
   }
 
+  function emptyNoteHtml() {
+    if (state.search) {
+      return `<div class="empty-note">No galleries match "${escapeHtml(state.search)}". <button class="link-btn accent" data-clear-search>Clear search</button></div>`;
+    }
+    return `<div class="empty-note">No galleries here yet.</div>`;
+  }
+  function wireEmptyNote(scope) {
+    const btn = scope.querySelector('[data-clear-search]');
+    if (btn) btn.addEventListener('click', () => $('global-search-clear').click());
+  }
   function thumbHtml(g, cls) {
     const tag = cls === 'gc-cover' ? 'div' : 'span';
     if (g.thumbnail) return `<img class="${cls}" src="/thumbnails/${encodeURIComponent(g.thumbnail)}" alt="" loading="lazy">`;
@@ -610,6 +627,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const scroll = $('table-scroll');
     state._rowOrder = [];
     const groups = buildGroups(list);
+    if (!groups.length || groups.every(g => !g.galleries.length)) {
+      scroll.innerHTML = emptyNoteHtml();
+      wireEmptyNote(scroll);
+      return;
+    }
     let html = `<div class="grid-wrap">`;
     const groupedScope = state.rail === 'all' && state.groupBy === 'collection';
     groups.forEach(grp => {

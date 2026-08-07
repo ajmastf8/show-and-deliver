@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/admin.css?v=9">
+  <link rel="stylesheet" href="/css/admin.css?v=10">
 </head>
 <body>
 
@@ -45,7 +45,10 @@
         <span class="brand-delivery">DELIVERY</span>
       </div>
       <div class="topbar-search">
-        <input type="text" id="global-search" placeholder="Search galleries by name…" autocomplete="off">
+        <input type="search" id="global-search" placeholder="Search galleries by name…"
+          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+          data-1p-ignore data-lpignore="true" data-bwignore data-form-type="other">
+        <button type="button" class="search-clear" id="global-search-clear" hidden title="Clear search" aria-label="Clear search">&times;</button>
       </div>
       <div class="topbar-right">
         <button class="topbar-link" id="nav-uploads">Uploads <span class="accent" id="uploads-count">0</span></button>

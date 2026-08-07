@@ -824,10 +824,8 @@ a { color: var(--accent); text-decoration: none; }
 .upload-wrap { max-width: 1120px; margin: 0 auto; padding: 34px 40px 60px; }
 .upload-wrap h1 {
   margin: 0;
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: .16em;
-  text-transform: uppercase;
+  font-size: 18px;
+  font-weight: 700;
 }
 .upload-sub { margin: 8px 0 0; font-size: 13px; color: var(--text-4); }
 
@@ -928,10 +926,8 @@ a { color: var(--accent); text-decoration: none; }
 .settings-wrap { max-width: 780px; margin: 0 auto; padding: 34px 40px 60px; }
 .settings-wrap h1 {
   margin: 0;
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: .16em;
-  text-transform: uppercase;
+  font-size: 18px;
+  font-weight: 700;
 }
 .settings-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
 .settings-title-actions { display: flex; align-items: center; gap: 18px; }

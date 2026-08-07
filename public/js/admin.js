@@ -496,9 +496,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const shared = isCol && collectionHasShared(grp.col) ? `<span class="g-shared">· shared settings</span>` : '';
         const inactiveTag = isCol && grp.col.active === false ? `<span class="g-tag">Inactive</span>` : '';
         const actions = isCol ? `<span class="gb-actions">
-            <button class="link-btn muted" data-col-copy="${escapeHtml(grp.col.id)}">Copy link</button>
-            <button class="link-btn muted" data-col-visit="${escapeHtml(grp.col.id)}">Open</button>
-            <button class="link-btn muted" data-col-open="${escapeHtml(grp.col.id)}">Collection settings</button>
+            <button class="link-btn" data-col-copy="${escapeHtml(grp.col.id)}">Copy link</button>
+            <button class="link-btn" data-col-visit="${escapeHtml(grp.col.id)}">Open</button>
+            <button class="link-btn" data-col-open="${escapeHtml(grp.col.id)}">Collection settings</button>
           </span>` : '';
         html += `<div class="group${collapsed ? ' collapsed' : ''}" data-group="${escapeHtml(grp.col.id)}">
           <div class="group-head" data-toggle="${escapeHtml(grp.col.id)}">
@@ -617,9 +617,9 @@ document.addEventListener('DOMContentLoaded', () => {
           ${isCol ? starBtn(grp.col, 'collection') : ''}
           ${isCol && grp.col.active === false ? `<span class="g-tag">Inactive</span>` : ''}
           ${isCol ? `<span class="gb-actions">
-            <button class="link-btn muted" data-col-copy="${escapeHtml(grp.col.id)}">Copy link</button>
-            <button class="link-btn muted" data-col-visit="${escapeHtml(grp.col.id)}">Open</button>
-            <button class="link-btn muted" data-col-open="${escapeHtml(grp.col.id)}">Collection settings</button>
+            <button class="link-btn" data-col-copy="${escapeHtml(grp.col.id)}">Copy link</button>
+            <button class="link-btn" data-col-visit="${escapeHtml(grp.col.id)}">Open</button>
+            <button class="link-btn" data-col-open="${escapeHtml(grp.col.id)}">Collection settings</button>
           </span>` : ''}
         </div><div class="grid-cards">`;
         html += grp.galleries.map(cardHtml).join('');

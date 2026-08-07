@@ -927,12 +927,15 @@ a { color: var(--accent); text-decoration: none; }
    ========================================================================== */
 .settings-wrap { max-width: 780px; margin: 0 auto; padding: 34px 40px 60px; }
 .settings-wrap h1 {
-  margin: 0 0 20px;
+  margin: 0;
   font-size: 24px;
   font-weight: 800;
   letter-spacing: .16em;
   text-transform: uppercase;
 }
+.settings-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.settings-title-actions { display: flex; align-items: center; gap: 18px; }
+.settings-title-actions .link-btn { font-size: 13px; }
 .settings-tabs { display: flex; gap: 26px; border-bottom: 1px solid var(--border); margin-bottom: 26px; }
 .settings-tab {
   background: none; border: none;

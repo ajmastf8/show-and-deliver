@@ -231,6 +231,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================================================
   $('brand-home').addEventListener('click', () => { state.rail = 'all'; state.centreGalleryId = null; contentGid = null; closeDrawerForce(); setScreen('library'); renderAll(); });
   $('nav-uploads').addEventListener('click', () => setScreen('upload'));
+  $('nav-settings').addEventListener('click', () => setScreen('settings'));
+  $('account-theme').addEventListener('click', () => toggleTheme());
+  $('account-logout').addEventListener('click', () => logout());
 
   function setupMenu(btnId, menuId, onPick, pickAttr) {
     const btn = $(btnId), menu = $(menuId);
@@ -248,17 +251,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
   function closeAllMenus() {
-    $('account-menu').hidden = true;
     $('new-menu').hidden = true;
     document.querySelectorAll('.filter-pop').forEach(p => p.remove());
   }
   document.addEventListener('click', closeAllMenus);
-
-  setupMenu('account-btn', 'account-menu', (v) => {
-    if (v === 'settings') setScreen('settings');
-    else if (v === 'theme') toggleTheme();
-    else if (v === 'logout') logout();
-  }, 'data-account');
 
   $('upload-back').addEventListener('click', () => setScreen('library'));
   $('settings-back').addEventListener('click', () => setScreen('library'));
@@ -2022,6 +2018,7 @@ document.addEventListener('DOMContentLoaded', () => {
       brandEl.textContent = 'Set in Settings';
       brandEl.onclick = (e) => { e.stopPropagation(); setScreen('settings'); switchSettingsTab('header'); };
     }
+    document.title = (headerConfig.siteName || logo.text || 'AJ Mast') + ' — Delivery Admin';
     $('header-site-name').value = headerConfig.siteName || '';
     $('header-logo-text').value = logo.text || '';
     if (logo.src) { const p = $('header-logo-preview'); p.src = logo.src; p.style.display = ''; $('header-logo-none').style.display = 'none'; $('header-logo-remove').style.display = ''; }

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/admin.css?v=5">
+  <link rel="stylesheet" href="/css/admin.css?v=6">
 </head>
 <body>
 
@@ -49,14 +49,7 @@
       </div>
       <div class="topbar-right">
         <button class="topbar-link" id="nav-uploads">Uploads <span class="accent" id="uploads-count">0</span></button>
-        <div class="menu-wrap">
-          <button class="account-btn" id="account-btn" title="Account & settings" aria-haspopup="true">&#9881;</button>
-          <div class="menu" id="account-menu" hidden>
-            <button data-account="settings">Settings</button>
-            <button data-account="theme" id="account-theme">Light theme</button>
-            <button data-account="logout" class="danger">Logout</button>
-          </div>
-        </div>
+        <button class="topbar-link" id="nav-settings">Settings</button>
         <div class="menu-wrap">
           <button class="btn-primary" id="new-btn">New &#9662;</button>
           <div class="menu" id="new-menu" hidden>
@@ -136,7 +129,13 @@
     <div id="screen-settings" class="screen" hidden>
       <div class="settings-wrap">
         <button class="back-link" id="settings-back">&larr; Library</button>
-        <h1>Settings</h1>
+        <div class="settings-title-row">
+          <h1>Settings</h1>
+          <div class="settings-title-actions">
+            <button class="link-btn" id="account-theme">Light theme</button>
+            <button class="link-btn danger" id="account-logout">Logout</button>
+          </div>
+        </div>
         <div class="settings-tabs">
           <button class="settings-tab active" data-settings-tab="email">Email</button>
           <button class="settings-tab" data-settings-tab="update">Update</button>
@@ -437,6 +436,6 @@
   <div id="toast" class="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=106"></script>
+  <script src="/js/admin.js?v=107"></script>
 </body>
 </html>

@@ -328,7 +328,11 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
   function sortByFavorite(list) {
-    return list.slice().sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0));
+    return list.slice().sort((a, b) => {
+      const aInactive = a.active === false ? 1 : 0, bInactive = b.active === false ? 1 : 0;
+      if (aInactive !== bInactive) return aInactive - bInactive;
+      return (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0);
+    });
   }
   function starBtn(item, kind) {
     const fav = !!item.favorite;

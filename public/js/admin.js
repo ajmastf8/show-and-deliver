@@ -133,6 +133,27 @@ document.addEventListener('DOMContentLoaded', () => {
     clearTimeout(toast._t);
     toast._t = setTimeout(() => t.classList.remove('show'), 2600);
   }
+  // Clipboard write with a fallback for browsers/contexts where the async
+  // Clipboard API is unavailable or rejects (non-secure origin, permission).
+  async function copyText(text, msg) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast(msg || 'Link copied');
+      return true;
+    } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+      document.body.appendChild(ta);
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (_) { ok = false; }
+      document.body.removeChild(ta);
+      toast(ok ? (msg || 'Link copied') : 'Copy failed — select the link and copy manually');
+      return ok;
+    }
+  }
   async function api(url, opts) {
     const res = await fetch(url, opts);
     if (res.status === 401) { checkAuth(); throw new Error('unauthorized'); }
@@ -859,7 +880,15 @@ document.addEventListener('DOMContentLoaded', () => {
               ${isProofing ? `<button class="link-btn accent" data-gv="comments">Comments</button>` : ''}
             </div>
           </div>
-          <div class="gv-sub">${meta.join(' · ')}${link ? ` · <span class="gv-link">${escapeHtml(link)}</span>` : ''}</div>
+          <div class="gv-sub">
+            <span class="gv-meta">${meta.join(' · ')}</span>
+            ${link ? `<span class="gv-sep">·</span>
+            <a class="gv-link" href="${escapeHtml(link)}" target="_blank" rel="noopener" title="${escapeHtml(link)}">${escapeHtml(link)}</a>
+            <span class="gv-link-actions">
+              <button class="gv-link-btn" data-gv="copy" title="Copy link">Copy</button>
+              <button class="gv-link-btn" data-gv="open" title="Open in a new tab">Open</button>
+            </span>` : ''}
+          </div>
           <div class="gv-add">
             <div class="gv-drop" id="gv-drop">
               <span>Drop files here or</span>
@@ -889,6 +918,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (act === 'settings') openDrawer('settings');
     else if (act === 'comments') openDrawer('comments');
     else if (act === 'import') { contentGid = g.id; openImportModal(); }
+    else if (act === 'copy') { copyText(window.location.origin + '/gallery/' + g.token); }
+    else if (act === 'open') { window.open(window.location.origin + '/gallery/' + g.token, '_blank', 'noopener'); }
     else if (act === 'refresh') {
       const res = await fetch(`/api/admin/galleries/${g.id}/probe`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
@@ -1106,7 +1137,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function linkAction(g, act) {
     const url = window.location.origin + '/gallery/' + g.token;
-    if (act === 'copy') { navigator.clipboard.writeText(url); toast('Link copied'); }
+    if (act === 'copy') { copyText(url); }
     else if (act === 'open') { window.open(url, '_blank'); }
     else if (act === 'email') { openMailto(buildGalleryMailto(g)); }
     else if (act === 'regen') {

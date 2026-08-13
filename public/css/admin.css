@@ -792,7 +792,30 @@ a { color: var(--accent); text-decoration: none; }
   border-top: 1px solid var(--border-row);
 }
 .admin-header-item { background: rgba(255,255,255,.02); }
+.admin-video-item.selected { background: var(--accent-dim); box-shadow: inset 2px 0 0 var(--accent); }
 .drag-handle { color: var(--text-6); cursor: grab; font-size: 13px; flex: 0 0 auto; }
+
+/* Thumbnail doubles as the preview trigger */
+.thumb-play {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 0; border: none; background: none; line-height: 0;
+  border-radius: 2px;
+  cursor: pointer;
+}
+.thumb-play-icon {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; color: #fff;
+  background: rgba(0,0,0,.45);
+  border-radius: 2px;
+  opacity: 0;
+  transition: opacity .12s ease-out;
+}
+.thumb-play:hover .thumb-play-icon,
+.thumb-play:focus-visible .thumb-play-icon { opacity: 1; }
+.thumb-play:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 .admin-thumb {
   width: 56px; height: 34px;
   object-fit: cover;
@@ -1055,6 +1078,62 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 .modal-inner p.sub { margin: 0 0 16px; font-size: 13px; color: var(--text-4); }
 .modal-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; }
 .modal-actions .right { display: flex; gap: 10px; margin-left: auto; }
+
+/* ---------- Item preview player ---------- */
+.preview-modal {
+  position: fixed; inset: 0; z-index: 140;
+  display: flex; align-items: center; justify-content: center;
+  padding: 32px;
+}
+.preview-modal[hidden] { display: none; }
+.preview-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.92); }
+.preview-inner {
+  position: relative;
+  display: flex; flex-direction: column;
+  width: 100%; max-width: 1100px; max-height: 100%;
+  gap: 10px;
+}
+.preview-head { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+.preview-title {
+  font-size: 15px; font-weight: 700; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.preview-pos { font-size: 12px; color: var(--text-5); flex: 0 0 auto; }
+.preview-close {
+  margin-left: auto; flex: 0 0 auto;
+  background: none; border: none; color: var(--text-4);
+  font-size: 24px; line-height: 1; width: 32px; height: 32px; border-radius: 3px;
+}
+.preview-close:hover { color: var(--text); background: var(--raised); }
+/* Fixed stage height: the media is letterboxed inside it, so stepping between
+   a 16:9 clip and a tall still doesn't resize the dialog or move the arrows. */
+.preview-stage {
+  position: relative;
+  flex: 1 1 auto; min-height: 0; height: 74vh;
+  display: flex; align-items: center; justify-content: center;
+}
+#preview-video, #preview-photo {
+  width: 100%; height: 100%;
+  object-fit: contain;
+  background: #000;
+  border-radius: 4px;
+}
+#preview-video[hidden], #preview-photo[hidden] { display: none; }
+.preview-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  z-index: 1;
+  width: 42px; height: 60px;
+  background: rgba(0,0,0,.5);
+  border: 1px solid var(--border-menu);
+  border-radius: 4px;
+  color: var(--text-2);
+  font-size: 26px; line-height: 1;
+}
+.preview-nav:hover { color: #fff; background: rgba(0,0,0,.8); border-color: var(--accent); }
+.preview-nav.prev { left: -8px; }
+.preview-nav.next { right: -8px; }
+.preview-nav[hidden] { display: none; }
+.preview-foot { flex: 0 0 auto; font-size: 11.5px; color: var(--text-5); letter-spacing: .04em; }
 
 /* New collection sheet: gallery checklist */
 .gal-checklist {

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/admin.css?v=11">
+  <link rel="stylesheet" href="/css/admin.css?v=12">
 </head>
 <body>
 
@@ -449,6 +449,25 @@
     </div>
   </div>
 
+  <!-- Item preview player -->
+  <div id="preview-modal" class="preview-modal" hidden>
+    <div class="preview-backdrop"></div>
+    <div class="preview-inner">
+      <div class="preview-head">
+        <span class="preview-title" id="preview-title"></span>
+        <span class="preview-pos" id="preview-pos"></span>
+        <button class="preview-close" id="preview-close" title="Close (Esc)">×</button>
+      </div>
+      <div class="preview-stage">
+        <button class="preview-nav prev" id="preview-prev" title="Previous (←)">‹</button>
+        <video id="preview-video" controls playsinline preload="metadata" hidden></video>
+        <img id="preview-photo" alt="" hidden>
+        <button class="preview-nav next" id="preview-next" title="Next (→)">›</button>
+      </div>
+      <div class="preview-foot" id="preview-hint"></div>
+    </div>
+  </div>
+
   <!-- Hidden file input for video replacement -->
   <input type="file" id="replace-file-input" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v,image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" hidden>
 
@@ -456,6 +475,6 @@
   <div id="toast" class="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=112"></script>
+  <script src="/js/admin.js?v=113"></script>
 </body>
 </html>

@@ -861,6 +861,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const g = state.galleries.find(x => x.id === state.centreGalleryId);
     if (!g) { backToLibrary(); return; }
     contentGid = g.id;
+    selectedItemId = null;
     const isProofing = g.type === 'proofing';
     const badge = isProofing ? 'Client gallery' : 'Portfolio';
     const link = isProofing && g.token ? window.location.origin + '/gallery/' + g.token : '';
@@ -984,11 +985,14 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   function removeScrim() { const s = $('drawer-scrim'); if (s) s.remove(); }
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      if (!$('drawer').hidden && state.drawer.galleryId) closeDrawer();
-      else if (state.centreGalleryId) backToLibrary();
-      else if (state.selection.size) clearSelection();
-    }
+    if (e.key !== 'Escape') return;
+    // The preview player owns Escape while it's open, and Escape inside an item
+    // title just leaves the field — neither should also back out of the view.
+    if (previewIsOpen()) return;
+    if (e.target.closest && e.target.closest('.admin-video-item .title-input')) return;
+    if (!$('drawer').hidden && state.drawer.galleryId) closeDrawer();
+    else if (state.centreGalleryId) backToLibrary();
+    else if (state.selection.size) clearSelection();
   });
 
   function currentDrawerGallery() { return state.galleries.find(g => g.id === state.drawer.galleryId); }
@@ -1266,9 +1270,9 @@ document.addEventListener('DOMContentLoaded', () => {
       else if (isPhoto) media = `<img src="/uploads/${encodeURIComponent(entry.filename)}" class="admin-thumb">`;
       else media = `<video src="/uploads/${encodeURIComponent(entry.filename)}" muted preload="metadata" class="admin-thumb"></video>`;
       const dlCount = dlItems[entry.id] || 0;
-      return `<div class="admin-video-item" data-id="${entry.id}">
+      return `<div class="admin-video-item${entry.id === selectedItemId ? ' selected' : ''}" data-id="${entry.id}">
         <span class="drag-handle">≡</span>
-        ${media}
+        <button class="thumb-play" title="Preview">${media}<span class="thumb-play-icon">${isPhoto ? '⤢' : '▶'}</span></button>
         <input type="text" class="title-input" value="${escapeHtml(entry.title)}">
         <span class="video-dl-count" title="${dlCount} downloads">↓ ${dlCount}</span>
         <button class="btn-icon replace-btn" title="Replace file">↻</button>
@@ -1288,6 +1292,135 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // ==========================================================================
+  // Item preview player
+  //
+  // Click a thumbnail to play it, or select a row and press Space. Once open,
+  // ← / → step through the gallery so a whole shoot can be reviewed without
+  // going back to the list.
+  // ==========================================================================
+  let selectedItemId = null;
+  let previewId = null;
+  const previewModal = $('preview-modal');
+  const previewVideo = $('preview-video');
+  const previewPhoto = $('preview-photo');
+
+  function playableItems() { return contentItems.filter(i => i.type !== 'header'); }
+  function previewIsOpen() { return !previewModal.hidden; }
+
+  function selectItem(id, scroll) {
+    selectedItemId = id;
+    document.querySelectorAll('.admin-video-item').forEach(el =>
+      el.classList.toggle('selected', el.dataset.id === id));
+    if (scroll) {
+      const el = document.querySelector(`.admin-video-item[data-id="${id}"]`);
+      if (el) el.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  function moveSelection(delta) {
+    const items = playableItems();
+    if (!items.length) return;
+    const cur = items.findIndex(i => i.id === selectedItemId);
+    const next = cur < 0 ? (delta > 0 ? 0 : items.length - 1)
+      : Math.min(items.length - 1, Math.max(0, cur + delta));
+    selectItem(items[next].id, true);
+  }
+
+  function openPreview(id) {
+    const item = contentItems.find(i => i.id === id);
+    if (!item || item.type === 'header') return;
+    previewId = id;
+    selectItem(id, true);
+    const items = playableItems();
+    const idx = items.findIndex(i => i.id === id);
+    $('preview-title').textContent = item.title || item.filename || '';
+    $('preview-pos').textContent = items.length > 1 ? `${idx + 1} / ${items.length}` : '';
+    $('preview-prev').hidden = items.length < 2;
+    $('preview-next').hidden = items.length < 2;
+
+    const src = '/uploads/' + encodeURIComponent(item.filename);
+    if (item.type === 'photo') {
+      previewVideo.pause(); previewVideo.removeAttribute('src'); previewVideo.load();
+      previewVideo.hidden = true;
+      previewPhoto.src = item.proxy ? '/proxies/' + encodeURIComponent(item.proxy) : src;
+      previewPhoto.hidden = false;
+    } else {
+      previewPhoto.hidden = true; previewPhoto.removeAttribute('src');
+      previewVideo.hidden = false;
+      previewVideo.src = src;
+      previewVideo.play().catch(() => {});
+    }
+    $('preview-hint').textContent = [
+      item.type === 'photo' ? null : 'Space play/pause',
+      items.length > 1 ? '← → previous/next' : null,
+      'Esc close',
+    ].filter(Boolean).join(' · ');
+    previewModal.hidden = false;
+  }
+
+  function closePreview() {
+    previewModal.hidden = true;
+    previewVideo.pause();
+    previewVideo.removeAttribute('src'); previewVideo.load();
+    previewPhoto.removeAttribute('src');
+    previewId = null;
+  }
+
+  function stepPreview(delta) {
+    const items = playableItems();
+    if (items.length < 2) return;
+    const cur = items.findIndex(i => i.id === previewId);
+    if (cur < 0) return;
+    openPreview(items[(cur + delta + items.length) % items.length].id);
+  }
+
+  // The title field fills most of a row, so clicking it is the usual way a row
+  // gets "picked" — keep selection in step with it.
+  document.addEventListener('focusin', (e) => {
+    const row = e.target.closest && e.target.closest('.admin-video-item');
+    if (row) selectItem(row.dataset.id);
+  });
+
+  $('preview-close').addEventListener('click', closePreview);
+  previewModal.querySelector('.preview-backdrop').addEventListener('click', closePreview);
+  $('preview-prev').addEventListener('click', () => stepPreview(-1));
+  $('preview-next').addEventListener('click', () => stepPreview(1));
+
+  const isSpace = (e) => e.key === ' ' || e.key === 'Spacebar' || e.code === 'Space';
+
+  document.addEventListener('keydown', (e) => {
+    if (!e.target || typeof e.target.closest !== 'function') return;
+    if (previewIsOpen()) {
+      if (e.key === 'Escape') { e.preventDefault(); closePreview(); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); stepPreview(-1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); stepPreview(1); }
+      else if (isSpace(e)) {
+        // The <video> handles Space itself once focused; only take over when
+        // focus is elsewhere, so we never toggle play twice per press.
+        if (document.activeElement === previewVideo) return;
+        e.preventDefault();
+        if (!previewVideo.hidden) { previewVideo.paused ? previewVideo.play().catch(() => {}) : previewVideo.pause(); }
+      }
+      return;
+    }
+    // Escape out of a title field so the row it belongs to can be played
+    // straight away with Space.
+    if (e.key === 'Escape' && e.target.closest('.admin-video-item .title-input')) { e.target.blur(); return; }
+    // List-level shortcuts — never while typing in a field or in another modal.
+    if (e.target.closest('input, textarea, select, [contenteditable]')) return;
+    if (document.querySelector('.modal:not([hidden])')) return;
+    if (thumbPicker.classList.contains('open')) return;
+    if (!document.getElementById('content-list')) return;
+    if (isSpace(e)) {
+      if (!selectedItemId) return;
+      e.preventDefault();
+      openPreview(selectedItemId);
+    } else if (e.key === 'ArrowDown') { e.preventDefault(); moveSelection(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); moveSelection(-1); }
+    else if (e.key === 'Enter' && selectedItemId) { e.preventDefault(); openPreview(selectedItemId); }
+  });
+
   // Delegated content interactions (survive drawer re-renders)
   document.addEventListener('change', async (e) => {
     if (!e.target.classList || !e.target.classList.contains('title-input')) return;
@@ -1301,6 +1434,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
   document.addEventListener('click', async (e) => {
+    const play = e.target.closest('.thumb-play');
+    if (play) { e.preventDefault(); openPreview(play.closest('.admin-video-item').dataset.id); return; }
+    const row = e.target.closest('.admin-video-item');
+    if (row && !e.target.closest('button, input, .drag-handle')) selectItem(row.dataset.id);
+
     const vis = e.target.closest('.toggle-vis');
     if (vis && contentGid) {
       const item = vis.closest('.admin-video-item'); const id = item.dataset.id;

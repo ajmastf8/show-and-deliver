@@ -59,8 +59,11 @@ site-data/             # Runtime data (gitignored)
   the response and appends an HTML error, producing a zip with no
   end-of-central-directory that no unarchiver will open — and PHP cannot detect
   this mid-stream. Hence `PACKAGE_PART_MB` defaults to 900. Files that exist on
-  disk go through `sendStaticFile()`, which hands large ones to the web server
-  and so has no such ceiling. See the block comment above `PACKAGES_DIR` in
+  disk go through `sendStaticFile()`, which hands **every** one of them to the
+  web server — not just large ones. Bytes pushed out of PHP are slow at any
+  size because LiteSpeed buffers the dynamic response instead of letting the
+  kernel copy the file to the socket; the handoff gets sendfile() speed, range
+  resume, and no ceiling. See the block comment above `PACKAGES_DIR` in
   `index.php` before changing any of this — and the byte arithmetic in
   `zipStreamedSize()` must stay in lockstep with what the streaming route
   emits, or downloads truncate.

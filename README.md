@@ -1,4 +1,4 @@
-# VideoReelSite
+# Show & Deliver
 
 Self-hosted portfolio and client-proofing site for photographers and videographers.
 A single-file PHP backend, no database, no build step — designed to run on ordinary
@@ -35,7 +35,7 @@ shared hosting (cPanel, Apache/LiteSpeed) with one-click in-app updates.
 
 ### From a release (recommended)
 
-1. Download the source zip of the [latest release](https://github.com/ajmastf8/VideoReelSite/releases/latest).
+1. Download the source zip of the [latest release](https://github.com/ajmastf8/show-and-deliver/releases/latest).
 2. Extract it into the document root of your domain or subdomain.
 3. Visit `https://your-domain.com/admin` and follow the first-run setup wizard
    to create your admin account.
@@ -46,7 +46,7 @@ automatically on first run.
 ### From git
 
 ```bash
-git clone https://github.com/ajmastf8/VideoReelSite.git
+git clone https://github.com/ajmastf8/show-and-deliver.git
 ```
 
 Point your document root at the checkout and visit `/admin` as above. Git

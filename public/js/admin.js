@@ -1,5 +1,5 @@
 /* ==========================================================================
-   AJ Mast Delivery — Admin (redesign)
+   Show & Deliver — Admin
    State-driven, one render function per region. Vanilla JS, no build step.
    Backend /api/* is unchanged; the proven upload/thumbnail/content/comments
    engines are ported from the previous admin and re-pointed at new DOM.
@@ -1218,12 +1218,19 @@ document.addEventListener('DOMContentLoaded', () => {
     toast('Moved');
   }
 
+  // Sign client emails with whatever this site is branded as in Settings >
+  // Header, so an unconfigured install doesn't sign with someone else's name.
+  function signOff() {
+    const name = (headerConfig && (headerConfig.siteName || (headerConfig.logo || {}).text)) || '';
+    return name ? `\nThanks,\n${name}` : `\nThanks`;
+  }
+
   function buildGalleryMailto(g) {
     if (!g || !g.token) return null;
     const url = window.location.origin + '/gallery/' + g.token;
     const subject = `Your gallery is ready — ${g.name}`;
     const pwLine = effective(g).hasPassword ? `\nPassword: [enter the gallery password here]\n` : '';
-    const body = `Hello,\n\nYour gallery is ready.\n\n${url}\n${pwLine}\nThanks,\nAJ Mast`;
+    const body = `Hello,\n\nYour gallery is ready.\n\n${url}\n${pwLine}${signOff()}`;
     return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   }
   function openMailto(mailto) {
@@ -2100,7 +2107,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const url = window.location.origin + '/collection/' + col.token;
     const subject = `Your galleries are ready — ${col.name}`;
     const pwLine = col.hasPassword ? `\nPassword: [enter the collection password here]\n` : '';
-    const body = `Hello,\n\nYour galleries are ready.\n\n${url}\n${pwLine}\nThanks,\nAJ Mast`;
+    const body = `Hello,\n\nYour galleries are ready.\n\n${url}\n${pwLine}${signOff()}`;
     return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   }
 
@@ -2273,7 +2280,7 @@ document.addEventListener('DOMContentLoaded', () => {
       brandEl.textContent = 'Set in Settings';
       brandEl.onclick = (e) => { e.stopPropagation(); setScreen('settings'); switchSettingsTab('header'); };
     }
-    document.title = (headerConfig.siteName || logo.text || 'AJ Mast') + ' — Delivery Admin';
+    document.title = (headerConfig.siteName || logo.text || 'Show & Deliver') + ' — Admin';
     $('header-site-name').value = headerConfig.siteName || '';
     $('header-logo-text').value = logo.text || '';
     if (logo.src) { const p = $('header-logo-preview'); p.src = logo.src; p.style.display = ''; $('header-logo-none').style.display = 'none'; $('header-logo-remove').style.display = ''; }

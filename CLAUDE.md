@@ -60,4 +60,8 @@ All routes are in `index.php`. Key patterns:
 
 No build step. Edit files directly. The site runs on cPanel with PHP — no local dev server needed unless testing locally with `php -S`.
 
-Deploy via admin Settings > Update tab (git pull from GitHub).
+Deploy via admin Settings > Update tab. Two auto-detected modes (`deployMode()` in
+`index.php`): git installs fetch + hard-reset from GitHub; zip installs (no `.git`
+dir or no shell access) download the latest GitHub Release zipball and overlay it —
+no git binary or credentials required, but the repo must be public and versions
+must be published as GitHub Releases (tag `vX.Y.Z`, matching the `VERSION` file).

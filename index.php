@@ -669,6 +669,26 @@ function writeCollections($data) { jsonWrite(DATA_DIR . '/collections.json', $da
 function readSettings() { return jsonRead(DATA_DIR . '/settings.json') ?: []; }
 function writeSettings($data) { jsonWrite(DATA_DIR . '/settings.json', $data); }
 
+// Collections carry the same type as the galleries they group: 'proofing'
+// (client delivery, gated by password/expiry) or 'reels' (portfolio, public).
+// Collections created before the type existed are proofing collections.
+function collectionType($col) {
+    return ($col['type'] ?? 'proofing') === 'reels' ? 'reels' : 'proofing';
+}
+
+// Reels galleries predating portfolio collections were created with a null
+// token. Mint one so they can be linked from a portfolio collection page.
+// Runs once from the admin gallery list; a no-op on every later call.
+function backfillGalleryTokens() {
+    $galleries = readGalleries();
+    $changed = false;
+    foreach ($galleries as &$g) {
+        if (empty($g['token'])) { $g['token'] = generateToken(); $changed = true; }
+    }
+    unset($g);
+    if ($changed) writeGalleries($galleries);
+}
+
 function galleryDir($gid) { return DATA_DIR . '/gallery-' . $gid; }
 function ensureGalleryDir($gid) {
     $dir = galleryDir($gid);
@@ -847,7 +867,9 @@ function sendEmail($to, $subject, $textBody, $htmlBody) {
         ]);
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
+        // No curl_close(): it has been a no-op since PHP 8.0 and is deprecated
+        // in 8.5, where the notice gets printed into the JSON response body on
+        // hosts that leave display_errors on.
         if ($httpCode >= 400) {
             $err = json_decode($response, true);
             throw new Exception($err['message'] ?? 'Resend API error');
@@ -1083,6 +1105,7 @@ if ($method === 'GET' && $uri === '/api/videos') {
 
 if ($method === 'GET' && $uri === '/api/galleries') {
     requireAuth();
+    backfillGalleryTokens();
     $collections = readCollections();
     // Build gallery-to-collection lookup
     $galColMap = [];
@@ -1126,7 +1149,9 @@ if ($method === 'POST' && $uri === '/api/galleries') {
         'id' => $id,
         'name' => $input['name'] ?? 'New Gallery',
         'type' => $type,
-        'token' => $type === 'proofing' ? generateToken() : null,
+        // Reels galleries get a token too: portfolio collections link to their
+        // member galleries by token, same as client collections do.
+        'token' => generateToken(),
         'password' => $hashedPassword,
         'downloadsEnabled' => !empty($input['downloadsEnabled']),
         'commentingEnabled' => !empty($input['commentingEnabled']),
@@ -1165,7 +1190,7 @@ if ($method === 'PUT' && matchRoute('/api/galleries/{id}', $uri, $params)) {
     if (isset($input['expiresAt'])) $gallery['expiresAt'] = $input['expiresAt'];
     if (isset($input['active'])) $gallery['active'] = $input['active'];
     if (isset($input['favorite'])) $gallery['favorite'] = $input['favorite'];
-    if (!empty($input['regenerateToken']) && $gallery['type'] === 'proofing') {
+    if (!empty($input['regenerateToken'])) {
         $gallery['token'] = generateToken();
     }
 
@@ -2200,6 +2225,7 @@ if ($method === 'GET' && $uri === '/api/collections') {
             }
         }
         $col['galleries'] = $colGalleries;
+        $col['type'] = collectionType($col);
         $col['hasPassword'] = !empty($col['password']);
         unset($col['password']);
         $views = readCollectionStats($col['id'])['views'] ?? [];
@@ -2215,15 +2241,20 @@ if ($method === 'POST' && $uri === '/api/collections') {
     requireAuth();
     $input = getInput();
     $collections = readCollections();
+    $type = ($input['type'] ?? 'proofing') === 'reels' ? 'reels' : 'proofing';
+    // Portfolio collections are public by definition: no password, no expiry,
+    // no client commenting. Downloads stay a per-collection choice.
+    $isPortfolio = $type === 'reels';
     $collection = [
         'id' => generateId('col_'),
         'name' => $input['name'] ?? 'New Collection',
+        'type' => $type,
         'token' => generateToken(),
         'galleryIds' => $input['galleryIds'] ?? [],
-        'password' => !empty($input['password']) ? password_hash($input['password'], PASSWORD_BCRYPT) : null,
+        'password' => (!$isPortfolio && !empty($input['password'])) ? password_hash($input['password'], PASSWORD_BCRYPT) : null,
         'downloadsEnabled' => !empty($input['downloadsEnabled']),
-        'commentingEnabled' => !empty($input['commentingEnabled']),
-        'expiresAt' => $input['expiresAt'] ?? null,
+        'commentingEnabled' => !$isPortfolio && !empty($input['commentingEnabled']),
+        'expiresAt' => $isPortfolio ? null : ($input['expiresAt'] ?? null),
         'active' => !isset($input['active']) || !empty($input['active']),
         'sortOrder' => 'custom',
         'createdAt' => date('c'),
@@ -2245,6 +2276,17 @@ if ($method === 'PUT' && matchRoute('/api/collections/{id}', $uri, $params)) {
     if (!$col) respondError('Not found', 404);
 
     if (isset($input['name'])) $col['name'] = $input['name'];
+    if (isset($input['type'])) {
+        $col['type'] = $input['type'] === 'reels' ? 'reels' : 'proofing';
+        // Switching a collection to portfolio drops the client-gating settings
+        // rather than leaving a password silently attached to a public link.
+        if ($col['type'] === 'reels') {
+            $col['password'] = null;
+            $col['expiresAt'] = null;
+            $col['commentingEnabled'] = false;
+        }
+    }
+    $isPortfolio = collectionType($col) === 'reels';
 
     // Handle gallery removal: copy collection settings into removed galleries that weren't overriding
     if (isset($input['galleryIds'])) {
@@ -2272,12 +2314,12 @@ if ($method === 'PUT' && matchRoute('/api/collections/{id}', $uri, $params)) {
     }
 
     if (!empty($input['regenerateToken'])) $col['token'] = generateToken();
-    if (array_key_exists('password', $input)) {
+    if (array_key_exists('password', $input) && !$isPortfolio) {
         $col['password'] = $input['password'] ? password_hash($input['password'], PASSWORD_BCRYPT) : null;
     }
     if (isset($input['downloadsEnabled'])) $col['downloadsEnabled'] = $input['downloadsEnabled'];
-    if (isset($input['commentingEnabled'])) $col['commentingEnabled'] = $input['commentingEnabled'];
-    if (isset($input['expiresAt'])) $col['expiresAt'] = $input['expiresAt'];
+    if (isset($input['commentingEnabled']) && !$isPortfolio) $col['commentingEnabled'] = $input['commentingEnabled'];
+    if (isset($input['expiresAt']) && !$isPortfolio) $col['expiresAt'] = $input['expiresAt'];
     if (isset($input['active'])) $col['active'] = $input['active'];
     if (isset($input['sortOrder'])) $col['sortOrder'] = $input['sortOrder'];
     if (isset($input['favorite'])) $col['favorite'] = $input['favorite'];
@@ -2309,11 +2351,14 @@ function collectionPublicPayload($col) {
     $galMap = [];
     foreach ($galleries as $g) $galMap[$g['id']] = $g;
 
+    $type = collectionType($col);
     $publicGalleries = [];
     foreach ($col['galleryIds'] as $gid) {
         if (!isset($galMap[$gid])) continue;
         $g = $galMap[$gid];
-        if (($g['active'] ?? true) === false || $g['type'] !== 'proofing') continue;
+        // A collection only ever shows galleries of its own type, and a
+        // gallery with no token has no page to link to.
+        if (($g['active'] ?? true) === false || $g['type'] !== $type || empty($g['token'])) continue;
         $videos = array_filter(readGalleryVideos($g['id']), fn($v) => ($v['type'] ?? '') !== 'header');
         $thumb = !empty($videos) ? (reset($videos)['thumbnail'] ?? null) : null;
         $publicGalleries[] = [
@@ -2338,17 +2383,19 @@ function collectionPublicPayload($col) {
     // Strip createdAt from public response
     $publicGalleries = array_map(fn($g) => array_diff_key($g, ['createdAt' => 1]), $publicGalleries);
 
-    return ['name' => $col['name'], 'galleries' => $publicGalleries];
+    return ['name' => $col['name'], 'type' => $type, 'galleries' => $publicGalleries];
 }
 
 if ($method === 'GET' && matchRoute('/api/collections/public/{token}', $uri, $params)) {
     $col = findCollectionByToken($params['token']);
     if (!$col) respondError('Collection not found', 404);
     if (($col['active'] ?? true) === false) respondError('Collection not found', 404);
-    if (!empty($col['expiresAt']) && strtotime($col['expiresAt']) < time()) {
+    // Portfolio collections are public work — no expiry, no password gate.
+    $gated = collectionType($col) !== 'reels';
+    if ($gated && !empty($col['expiresAt']) && strtotime($col['expiresAt']) < time()) {
         respondError('Collection expired', 410);
     }
-    if (!empty($col['password']) && !isCollectionUnlocked($col['id'])) {
+    if ($gated && !empty($col['password']) && !isCollectionUnlocked($col['id'])) {
         respond(['passwordRequired' => true, 'collectionName' => $col['name']]);
     }
     recordView(collectionStatsPath($col['id']));
@@ -2383,6 +2430,651 @@ if ($method === 'POST' && matchRoute('/api/collections/public/{token}/unlock', $
 }
 
 // ============================================================
+// DELIVERY PACKAGES
+// ============================================================
+//
+// WeTransfer-style handoff: zip a whole gallery (or a whole collection) into
+// numbered parts the client downloads from a token link, optionally emailed to
+// them when the build finishes.
+//
+// Why it's built the way it is:
+//
+//   * ZipArchive rewrites the entire archive on close(), which is O(n) per
+//     added file and hopeless for tens of GB. We write the ZIP format directly
+//     instead, appending each entry to the open part file.
+//   * Media is already compressed, so every entry is STOREd (method 0). That
+//     means the entry's size is known up front and the local header can be
+//     written before the payload — no data descriptors, no second pass.
+//   * The CRC comes from hash_file() before the copy starts, so the copy itself
+//     is resumable: a build slice can stop mid-file and the next one picks up
+//     at `copied` bytes. No request has to survive a multi-GB file.
+//   * Shared hosting can't run background jobs, so the admin drives the build
+//     by calling the build endpoint repeatedly; each call does a short,
+//     time-boxed slice and reports progress.
+
+define('PACKAGES_DIR', SITE_DATA . '/packages');
+// Comfortably under 2^31 so part sizes stay in signed-32-bit range on every
+// filesystem and PHP build, and small enough for any browser to download.
+// Overridable for hosts that want smaller parts (PACKAGE_PART_MB in .env).
+define('PACKAGE_PART_MAX_BYTES', max(1, (int)env('PACKAGE_PART_MB', 1900)) * 1024 * 1024);
+define('PACKAGE_TTL_SECONDS', 7 * 24 * 60 * 60);
+define('PACKAGE_BUILD_SLICE_SECONDS', 12);
+define('PACKAGE_COPY_CHUNK_BYTES', 8 * 1024 * 1024);
+
+function ensurePackagesDir() {
+    if (!is_dir(PACKAGES_DIR)) {
+        @mkdir(PACKAGES_DIR, 0755, true);
+    }
+    // Everything else under site-data/ is served straight off disk by
+    // .htaccess. Packages are token-gated, so deny direct access here too.
+    $guard = PACKAGES_DIR . '/.htaccess';
+    if (!file_exists($guard)) {
+        @file_put_contents($guard, "<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n  Order allow,deny\n  Deny from all\n</IfModule>\n");
+    }
+    return PACKAGES_DIR;
+}
+
+function packageDir($id) { return PACKAGES_DIR . '/' . $id; }
+function packageManifestPath($id) { return packageDir($id) . '/manifest.json'; }
+
+function readPackage($id) {
+    if (!preg_match('/^pkg_[a-f0-9-]{36}$/', (string)$id)) return null;
+    $m = jsonRead(packageManifestPath($id));
+    return is_array($m) ? $m : null;
+}
+function writePackage($m) {
+    if (!is_dir(packageDir($m['id']))) mkdir(packageDir($m['id']), 0755, true);
+    jsonWrite(packageManifestPath($m['id']), $m);
+}
+
+function deletePackageFiles($id) {
+    $dir = packageDir($id);
+    if (!is_dir($dir)) return;
+    foreach (glob($dir . '/*') ?: [] as $f) @unlink($f);
+    @unlink($dir . '/.lock');
+    @rmdir($dir);
+}
+
+// Drop packages past their expiry. Cheap enough to run on every list/create.
+function cleanupExpiredPackages() {
+    foreach (glob(PACKAGES_DIR . '/pkg_*', GLOB_ONLYDIR) ?: [] as $dir) {
+        $m = jsonRead($dir . '/manifest.json');
+        if (!is_array($m)) continue;
+        if (!empty($m['expiresAt']) && strtotime($m['expiresAt']) < time()) {
+            deletePackageFiles(basename($dir));
+        }
+    }
+}
+
+// --- Minimal streaming ZIP writer (STORE only) ---
+
+function zipDosTime($ts) {
+    if ((int)date('Y', $ts) < 1980) $ts = mktime(0, 0, 0, 1, 1, 1980);
+    $time = ((int)date('H', $ts) << 11) | ((int)date('i', $ts) << 5) | ((int)date('s', $ts) >> 1);
+    $date = (((int)date('Y', $ts) - 1980) << 9) | ((int)date('n', $ts) << 5) | (int)date('j', $ts);
+    return [$time, $date];
+}
+
+function zipLocalHeader($name, $crc, $size, $mtime) {
+    [$t, $d] = zipDosTime($mtime);
+    return pack('VvvvvvVVVvv', 0x04034b50, 20, 0, 0, $t, $d, $crc, $size, $size, strlen($name), 0) . $name;
+}
+
+function zipCentralEntry($e) {
+    [$t, $d] = zipDosTime($e['mtime']);
+    return pack('VvvvvvvVVVvvvvvVV',
+        0x02014b50, 20, 20, 0, 0, $t, $d,
+        $e['crc'], $e['size'], $e['size'],
+        strlen($e['name']), 0, 0, 0, 0, 0, $e['offset']
+    ) . $e['name'];
+}
+
+function zipEndOfCentralDirectory($count, $cdSize, $cdOffset) {
+    return pack('VvvvvVVv', 0x06054b50, 0, 0, $count, $count, $cdSize, $cdOffset, 0);
+}
+
+// Entry names must be unique inside a part and safe to extract anywhere.
+function packageEntryName($title, $filename, array &$used) {
+    $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    $base = preg_replace('/[^A-Za-z0-9 ._-]/', '', (string)$title);
+    $base = trim(preg_replace('/\s+/', ' ', $base));
+    // A title of "beach.jpg" must not become "beach.jpg.jpg".
+    if ($ext !== '' && strtolower(substr($base, -strlen($ext) - 1)) === '.' . $ext) {
+        $base = substr($base, 0, -strlen($ext) - 1);
+    }
+    if ($base === '' || $base === '.' || $base === '..') $base = pathinfo($filename, PATHINFO_FILENAME);
+    $base = substr($base, 0, 120);
+    $name = $ext ? "$base.$ext" : $base;
+    $n = 2;
+    while (isset($used[strtolower($name)])) {
+        $name = ($ext ? "$base ($n).$ext" : "$base ($n)");
+        $n++;
+    }
+    $used[strtolower($name)] = true;
+    return $name;
+}
+
+// Every downloadable item in a gallery, in gallery order. Section headers and
+// hidden items are skipped, as are records whose file has gone missing.
+function packageGalleryFiles($gallery, $prefix, array &$used) {
+    $out = [];
+    foreach (readGalleryVideos($gallery['id']) as $v) {
+        if (($v['type'] ?? '') === 'header') continue;
+        if (($v['visible'] ?? true) === false) continue;
+        if (empty($v['filename'])) continue;
+        $path = UPLOADS_DIR . '/' . $v['filename'];
+        if (!is_file($path)) continue;
+        $name = packageEntryName($v['title'] ?? '', $v['filename'], $used);
+        $out[] = [
+            'name'  => $prefix === '' ? $name : ($prefix . '/' . $name),
+            'path'  => $path,
+            'size'  => (int)filesize($path),
+            'mtime' => (int)@filemtime($path) ?: time(),
+        ];
+    }
+    return $out;
+}
+
+// Folder-safe label for a gallery inside a collection package.
+function packageFolderName($name) {
+    $clean = trim(preg_replace('/\s+/', ' ', preg_replace('/[^A-Za-z0-9 ._-]/', '', (string)$name)));
+    return $clean === '' ? 'Gallery' : substr($clean, 0, 80);
+}
+
+// Append as much of the current entry as the time budget allows. Returns true
+// when the entry is fully written.
+function packageWriteSlice(&$m, $deadline) {
+    $p = &$m['parts'][count($m['parts']) - 1];
+    $pending = &$m['pending'];
+    $partPath = packageDir($m['id']) . '/' . $p['file'];
+
+    $fh = fopen($partPath, 'ab');
+    if (!$fh) throw new RuntimeException('Could not open package part for writing');
+
+    try {
+        // `$p['size']` is the authoritative byte count for this part: it is
+        // updated in lockstep with every successful write, so it survives
+        // across build slices and never depends on a cached stat().
+        if (empty($pending['headerWritten'])) {
+            $pending['offset'] = (int)$p['size'];
+            $header = zipLocalHeader($pending['name'], $pending['crc'], $pending['size'], $pending['mtime']);
+            if (fwrite($fh, $header) !== strlen($header)) throw new RuntimeException('Short write on ZIP header');
+            $pending['headerWritten'] = true;
+            $p['size'] += strlen($header);
+        }
+
+        $src = fopen($pending['path'], 'rb');
+        if (!$src) throw new RuntimeException('Could not read ' . basename($pending['path']));
+        if ($pending['copied'] > 0) fseek($src, $pending['copied']);
+
+        while ($pending['copied'] < $pending['size']) {
+            $want = (int)min(PACKAGE_COPY_CHUNK_BYTES, $pending['size'] - $pending['copied']);
+            $buf = fread($src, $want);
+            if ($buf === false || $buf === '') throw new RuntimeException('Unexpected end of ' . basename($pending['path']));
+            if (fwrite($fh, $buf) !== strlen($buf)) throw new RuntimeException('Short write building package part');
+            $pending['copied'] += strlen($buf);
+            $m['doneBytes'] += strlen($buf);
+            $p['size'] += strlen($buf);
+            if (microtime(true) >= $deadline) break;
+        }
+        fclose($src);
+    } finally {
+        fclose($fh);
+    }
+
+    if ($pending['copied'] < $pending['size']) return false;
+
+    $p['entries'][] = [
+        'name'   => $pending['name'],
+        'crc'    => $pending['crc'],
+        'size'   => $pending['size'],
+        'offset' => $pending['offset'],
+        'mtime'  => $pending['mtime'],
+    ];
+    $m['pending'] = null;
+    return true;
+}
+
+// Write the central directory and mark the part finished.
+function packageClosePart(&$m) {
+    if (!$m['parts']) return;
+    $p = &$m['parts'][count($m['parts']) - 1];
+    if (!empty($p['closed'])) return;
+    $partPath = packageDir($m['id']) . '/' . $p['file'];
+
+    $cdOffset = (int)$p['size'];
+    $cd = '';
+    foreach ($p['entries'] as $e) $cd .= zipCentralEntry($e);
+    $cd .= zipEndOfCentralDirectory(count($p['entries']), strlen($cd), $cdOffset);
+
+    $fh = fopen($partPath, 'ab');
+    if (!$fh) throw new RuntimeException('Could not finalize package part');
+    if (fwrite($fh, $cd) !== strlen($cd)) { fclose($fh); throw new RuntimeException('Short write finalizing package part'); }
+    fclose($fh);
+
+    $p['size'] = $cdOffset + strlen($cd);
+    $p['closed'] = true;
+    $p['fileCount'] = count($p['entries']);
+    // The per-entry records were only needed to build the central directory.
+    unset($p['entries']);
+}
+
+function packageOpenPart(&$m) {
+    $index = count($m['parts']) + 1;
+    $file = sprintf('part-%02d.zip', $index);
+    @unlink(packageDir($m['id']) . '/' . $file);
+    touch(packageDir($m['id']) . '/' . $file);
+    $m['parts'][] = ['index' => $index, 'kind' => 'zip', 'file' => $file, 'size' => 0, 'entries' => [], 'closed' => false];
+}
+
+// One time-boxed slice of work. Safe to call repeatedly; each call resumes
+// exactly where the previous one stopped.
+function packageBuildSlice($id) {
+    if (!readPackage($id)) return null;
+
+    // Two admin tabs polling the same package would interleave appends and
+    // corrupt both the part file and the manifest. Whoever loses the race just
+    // reports progress.
+    $lock = @fopen(packageDir($id) . '/.lock', 'c');
+    if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) {
+        if ($lock) fclose($lock);
+        return readPackage($id);
+    }
+
+    // Re-read under the lock: the winner of a previous race may have advanced
+    // the manifest since our first look.
+    $m = readPackage($id);
+    if (!$m || $m['status'] !== 'building') {
+        flock($lock, LOCK_UN);
+        fclose($lock);
+        return $m;
+    }
+
+    @set_time_limit(0);
+    $deadline = microtime(true) + PACKAGE_BUILD_SLICE_SECONDS;
+
+    try {
+        while (true) {
+            // Finish whatever entry was left mid-copy before starting a new one.
+            if (!empty($m['pending'])) {
+                if (!packageWriteSlice($m, $deadline)) break;
+                if (microtime(true) >= $deadline) break;
+                continue;
+            }
+
+            if ($m['cursor'] >= count($m['queue'])) {
+                packageClosePart($m);
+                $m['status'] = 'ready';
+                $m['readyAt'] = date('c');
+                break;
+            }
+
+            $entry = $m['queue'][$m['cursor']];
+            $m['cursor']++;
+
+            if (!is_file($entry['path'])) continue;
+
+            // A file bigger than a whole part can't be split across parts
+            // without producing a multi-volume archive most clients can't open.
+            // Ship it as its own direct download instead — zipping a single
+            // 4 GB video buys the client nothing anyway.
+            if ($entry['size'] > PACKAGE_PART_MAX_BYTES) {
+                packageClosePart($m);
+                $m['parts'][] = [
+                    'index'     => count($m['parts']) + 1,
+                    'kind'      => 'file',
+                    'file'      => basename($entry['path']),
+                    'name'      => basename($entry['name']),
+                    'size'      => $entry['size'],
+                    'fileCount' => 1,
+                    'closed'    => true,
+                ];
+                $m['doneBytes'] += $entry['size'];
+                continue;
+            }
+
+            $open = $m['parts'] ? $m['parts'][count($m['parts']) - 1] : null;
+            $usable = $open && $open['kind'] === 'zip' && empty($open['closed']);
+            // Leave room for the entry plus its headers and this part's share
+            // of the central directory.
+            $overhead = strlen($entry['name']) * 2 + 128;
+            if ($usable && $open['size'] + $entry['size'] + $overhead > PACKAGE_PART_MAX_BYTES) {
+                packageClosePart($m);
+                $usable = false;
+            }
+            if (!$usable) packageOpenPart($m);
+
+            $crc = hash_file('crc32b', $entry['path']);
+            $m['pending'] = [
+                'name'          => $entry['name'],
+                'path'          => $entry['path'],
+                'size'          => $entry['size'],
+                'mtime'         => $entry['mtime'],
+                'crc'           => $crc === false ? 0 : hexdec($crc),
+                'copied'        => 0,
+                'offset'        => 0,
+                'headerWritten' => false,
+            ];
+        }
+    } catch (Throwable $e) {
+        $m['status'] = 'failed';
+        $m['error'] = $e->getMessage();
+    }
+
+    writePackage($m);
+    flock($lock, LOCK_UN);
+    fclose($lock);
+    return $m;
+}
+
+// What the admin UI and the client link both render from.
+function packagePayload($m, $includeInternals = false) {
+    $base = rtrim(getEmailConfig()['baseUrl'] ?: '', '/');
+    $parts = [];
+    foreach ($m['parts'] as $p) {
+        if (empty($p['closed'])) continue;
+        $parts[] = [
+            'index'     => $p['index'],
+            'kind'      => $p['kind'],
+            'label'     => $p['kind'] === 'file' ? ($p['name'] ?? $p['file']) : sprintf('Part %d', $p['index']),
+            'size'      => (int)$p['size'],
+            'fileCount' => (int)($p['fileCount'] ?? 0),
+            'url'       => "$base/api/packages/{$m['token']}/part/{$p['index']}",
+        ];
+    }
+    $out = [
+        'id'         => $m['id'],
+        'name'       => $m['name'],
+        'status'     => $m['status'],
+        'error'      => $m['error'] ?? null,
+        'totalBytes' => (int)$m['totalBytes'],
+        'doneBytes'  => (int)$m['doneBytes'],
+        'fileCount'  => count($m['queue']),
+        'parts'      => $parts,
+        'createdAt'  => $m['createdAt'],
+        'expiresAt'  => $m['expiresAt'],
+        'readyAt'    => $m['readyAt'] ?? null,
+        'lastEmailedAt' => $m['lastEmailedAt'] ?? null,
+        'lastEmailedTo' => $m['lastEmailedTo'] ?? [],
+    ];
+    if ($includeInternals) {
+        $out['sourceType'] = $m['sourceType'];
+        $out['sourceId']   = $m['sourceId'];
+        $out['token']      = $m['token'];
+    }
+    return $out;
+}
+
+function findPackageByToken($token) {
+    foreach (glob(PACKAGES_DIR . '/pkg_*', GLOB_ONLYDIR) ?: [] as $dir) {
+        $m = jsonRead($dir . '/manifest.json');
+        if (is_array($m) && ($m['token'] ?? '') === $token) return $m;
+    }
+    return null;
+}
+
+// --- Admin routes ---
+
+// List packages, newest first. `?sourceId=` narrows to one gallery/collection.
+if ($method === 'GET' && $uri === '/api/admin/packages') {
+    requireAuth();
+    ensurePackagesDir();
+    cleanupExpiredPackages();
+    $sourceId = $_GET['sourceId'] ?? '';
+    $out = [];
+    foreach (glob(PACKAGES_DIR . '/pkg_*', GLOB_ONLYDIR) ?: [] as $dir) {
+        $m = jsonRead($dir . '/manifest.json');
+        if (!is_array($m)) continue;
+        if ($sourceId !== '' && ($m['sourceId'] ?? '') !== $sourceId) continue;
+        $out[] = packagePayload($m, true);
+    }
+    usort($out, fn($a, $b) => strcmp($b['createdAt'], $a['createdAt']));
+    respond($out);
+}
+
+// Create a build job. Returns immediately; the client then calls /build in a
+// loop until status leaves "building".
+if ($method === 'POST' && $uri === '/api/admin/packages') {
+    requireAuth();
+    ensurePackagesDir();
+    cleanupExpiredPackages();
+    $input = getInput();
+    $sourceType = ($input['sourceType'] ?? '') === 'collection' ? 'collection' : 'gallery';
+    $sourceId = trim((string)($input['sourceId'] ?? ''));
+    if ($sourceId === '') respondError('sourceId is required', 400);
+
+    $used = [];
+    $queue = [];
+    $name = '';
+
+    if ($sourceType === 'gallery') {
+        $gallery = null;
+        foreach (readGalleries() as $g) { if ($g['id'] === $sourceId) { $gallery = $g; break; } }
+        if (!$gallery) respondError('Gallery not found', 404);
+        $name = $gallery['name'];
+        $queue = packageGalleryFiles($gallery, '', $used);
+    } else {
+        $col = null;
+        foreach (readCollections() as $c) { if ($c['id'] === $sourceId) { $col = $c; break; } }
+        if (!$col) respondError('Collection not found', 404);
+        $name = $col['name'];
+        $galMap = [];
+        foreach (readGalleries() as $g) $galMap[$g['id']] = $g;
+        // One folder per gallery so the client's extracted tree matches what
+        // they see on the collection page. Names only have to be unique within
+        // a folder, so each gallery gets its own dedupe scope.
+        $usedFolders = [];
+        foreach ($col['galleryIds'] ?? [] as $gid) {
+            if (!isset($galMap[$gid])) continue;
+            // Two galleries can share a name; their folders can't.
+            $folder = packageFolderName($galMap[$gid]['name']);
+            $n = 2;
+            while (isset($usedFolders[strtolower($folder)])) { $folder = packageFolderName($galMap[$gid]['name']) . " ($n)"; $n++; }
+            $usedFolders[strtolower($folder)] = true;
+            $folderUsed = [];
+            $queue = array_merge($queue, packageGalleryFiles($galMap[$gid], $folder, $folderUsed));
+        }
+    }
+
+    if (!$queue) respondError('Nothing to package — this ' . $sourceType . ' has no downloadable files', 400);
+
+    $totalBytes = array_sum(array_column($queue, 'size'));
+    // Zipping duplicates every byte on disk. Refuse up front rather than
+    // filling the account's quota and failing halfway through.
+    $free = @disk_free_space(SITE_DATA);
+    if ($free !== false && $free < $totalBytes * 1.05) {
+        respondError('Not enough free disk space to build this package (needs ~' . round($totalBytes / 1073741824, 1) . ' GB, ' . round($free / 1073741824, 1) . ' GB free)', 507);
+    }
+
+    $m = [
+        'id'         => generateId('pkg_'),
+        'token'      => generateToken(24),
+        'sourceType' => $sourceType,
+        'sourceId'   => $sourceId,
+        'name'       => $name,
+        'status'     => 'building',
+        'error'      => null,
+        'queue'      => $queue,
+        'cursor'     => 0,
+        'pending'    => null,
+        'parts'      => [],
+        'totalBytes' => $totalBytes,
+        'doneBytes'  => 0,
+        'createdAt'  => date('c'),
+        'expiresAt'  => date('c', time() + PACKAGE_TTL_SECONDS),
+        'readyAt'    => null,
+    ];
+    writePackage($m);
+    respond(packagePayload($m, true), 201);
+}
+
+// Do one slice of work. The admin UI calls this on a loop.
+if ($method === 'POST' && matchRoute('/api/admin/packages/{id}/build', $uri, $params)) {
+    requireAuth();
+    $m = packageBuildSlice($params['id']);
+    if (!$m) respondError('Package not found', 404);
+    respond(packagePayload($m, true));
+}
+
+if ($method === 'DELETE' && matchRoute('/api/admin/packages/{id}', $uri, $params)) {
+    requireAuth();
+    $m = readPackage($params['id']);
+    if (!$m) respondError('Package not found', 404);
+    deletePackageFiles($m['id']);
+    respond(['ok' => true]);
+}
+
+function formatByteSize($bytes) {
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    $i = 0;
+    $n = (float)$bytes;
+    while ($n >= 1024 && $i < count($units) - 1) { $n /= 1024; $i++; }
+    return ($i === 0 ? (int)$n : round($n, $n < 10 ? 1 : 0)) . ' ' . $units[$i];
+}
+
+// Email the ready part links to a client. Deliberately plain: a short intro,
+// the optional note, then one clearly labelled link per part.
+function sendPackageLinks($m, $to, $note) {
+    $config = getEmailConfig();
+    if (!$config['resendApiKey'] && !$config['host'] && !$config['from']) {
+        throw new Exception('Email is not configured — set it up in Settings > Email first');
+    }
+
+    $payload = packagePayload($m);
+    $parts = $payload['parts'];
+    $count = count($parts);
+    $expires = date('F j, Y', strtotime($m['expiresAt']));
+    $subject = 'Your files from "' . $m['name'] . '" are ready';
+
+    $text = ['Your files from "' . $m['name'] . '" are ready to download.', ''];
+    if ($note !== '') { $text[] = $note; $text[] = ''; }
+    $text[] = $count === 1
+        ? 'One download (' . formatByteSize($payload['totalBytes']) . '):'
+        : 'The files are split into ' . $count . ' downloads — please grab all of them:';
+    $text[] = '';
+
+    $rows = '';
+    foreach ($parts as $p) {
+        $label = $count === 1 && $p['kind'] === 'zip' ? 'Download' : $p['label'];
+        $meta = formatByteSize($p['size']) . ($p['fileCount'] ? ' · ' . $p['fileCount'] . ' file' . ($p['fileCount'] === 1 ? '' : 's') : '');
+        $text[] = "$label ($meta)";
+        $text[] = '  ' . $p['url'];
+        $rows .= '<tr><td style="padding:10px 0;border-bottom:1px solid #eee;">'
+            . '<a href="' . escHtml($p['url']) . '" style="color:#0019ff;font-weight:600;text-decoration:none;font-size:15px;">' . escHtml($label) . '</a>'
+            . '<div style="color:#8a8a8a;font-size:12px;margin-top:2px;">' . escHtml($meta) . '</div></td></tr>';
+    }
+    $text[] = '';
+    $text[] = "These links expire on $expires.";
+
+    $html = '<div style="font-family:sans-serif;max-width:600px;color:#333;">'
+        . '<h2 style="font-size:18px;margin:0 0 12px;">Your files from &ldquo;' . escHtml($m['name']) . '&rdquo; are ready</h2>'
+        . ($note !== '' ? '<p style="font-size:14px;color:#5f5f5f;white-space:pre-line;">' . escHtml($note) . '</p>' : '')
+        . '<p style="font-size:14px;color:#5f5f5f;">'
+        . ($count === 1
+            ? 'Total size ' . escHtml(formatByteSize($payload['totalBytes'])) . '.'
+            : 'The download is split into ' . $count . ' parts. Please download all of them &mdash; each is a separate zip file.')
+        . '</p>'
+        . '<table style="width:100%;border-collapse:collapse;">' . $rows . '</table>'
+        . '<p style="font-size:12px;color:#8a8a8a;margin-top:18px;">These links expire on ' . escHtml($expires) . '.</p>'
+        . '</div>';
+
+    sendEmail($to, $subject, implode("\n", $text), $html);
+}
+
+if ($method === 'POST' && matchRoute('/api/admin/packages/{id}/email', $uri, $params)) {
+    requireAuth();
+    $m = readPackage($params['id']);
+    if (!$m) respondError('Package not found', 404);
+    if ($m['status'] !== 'ready') respondError('Package is not ready yet', 409);
+
+    $input = getInput();
+    $note = trim((string)($input['message'] ?? ''));
+    $recipients = [];
+    // Accept "a@b.com, c@d.com" as well as a list.
+    foreach (is_array($input['to'] ?? null) ? $input['to'] : preg_split('/[,;\s]+/', (string)($input['to'] ?? '')) as $addr) {
+        $addr = trim((string)$addr);
+        if ($addr === '') continue;
+        if (!filter_var($addr, FILTER_VALIDATE_EMAIL)) respondError('Not a valid email address: ' . $addr, 400);
+        $recipients[] = $addr;
+    }
+    if (!$recipients) respondError('At least one recipient is required', 400);
+
+    $cfg = getEmailConfig();
+    if (!$cfg['resendApiKey'] && !$cfg['host'] && !$cfg['from']) {
+        respondError('Email is not configured — set it up in Settings > Email first', 400);
+    }
+
+    $sent = [];
+    foreach ($recipients as $addr) {
+        try {
+            sendPackageLinks($m, $addr, $note);
+            $sent[] = $addr;
+        } catch (Exception $e) {
+            // Report which addresses did go out rather than losing that on the
+            // first failure.
+            respondError($e->getMessage() . ($sent ? ' (already sent to ' . implode(', ', $sent) . ')' : ''), 500);
+        }
+    }
+
+    $m['lastEmailedAt'] = date('c');
+    $m['lastEmailedTo'] = $recipients;
+    writePackage($m);
+    respond(['ok' => true, 'sent' => $sent]);
+}
+
+// --- Client download routes (token, no login) ---
+
+function getReadyPackage($token) {
+    $m = findPackageByToken($token);
+    if (!$m) respondError('Download not found', 404);
+    if (!empty($m['expiresAt']) && strtotime($m['expiresAt']) < time()) respondError('This download link has expired', 410);
+    if ($m['status'] !== 'ready') respondError('This download is still being prepared', 409);
+    return $m;
+}
+
+if ($method === 'GET' && matchRoute('/api/packages/{token}', $uri, $params)) {
+    $m = getReadyPackage($params['token']);
+    respond(packagePayload($m));
+}
+
+if ($method === 'GET' && matchRoute('/api/packages/{token}/part/{index}', $uri, $params)) {
+    $m = getReadyPackage($params['token']);
+    $part = null;
+    foreach ($m['parts'] as $p) { if ((int)$p['index'] === (int)$params['index']) { $part = $p; break; } }
+    if (!$part || empty($part['closed'])) respondError('Part not found', 404);
+
+    // 'file' parts point at the original upload; 'zip' parts at our own build.
+    $path = $part['kind'] === 'file'
+        ? UPLOADS_DIR . '/' . basename($part['file'])
+        : packageDir($m['id']) . '/' . basename($part['file']);
+    if (!is_file($path)) respondError('Part not found', 404);
+
+    $label = packageFolderName($m['name']);
+    $downloadName = $part['kind'] === 'file'
+        ? ($part['name'] ?? basename($path))
+        : sprintf('%s - part %d of %d.zip', $label, $part['index'], count($m['parts']));
+
+    // Same streaming discipline as single-file downloads: no output buffering,
+    // no compression, no execution-time cap.
+    @set_time_limit(0);
+    @ini_set('zlib.output_compression', '0');
+    while (ob_get_level() > 0) { ob_end_clean(); }
+
+    header('Content-Type: ' . ($part['kind'] === 'file' ? 'application/octet-stream' : 'application/zip'));
+    header('Content-Disposition: attachment; filename="' . str_replace('"', '', $downloadName) . '"');
+    header('Content-Length: ' . filesize($path));
+
+    $fp = fopen($path, 'rb');
+    if ($fp === false) respondError('Part not found', 404);
+    while (!feof($fp)) {
+        echo fread($fp, 65536);
+        flush();
+    }
+    fclose($fp);
+    exit;
+}
+
+// ============================================================
 // SETTINGS
 // ============================================================
 
@@ -2400,6 +3092,9 @@ if ($method === 'GET' && $uri === '/api/settings/email') {
         'adminEmail' => $config['adminEmail'],
         'baseUrl' => $config['baseUrl'],
         'hasPassword' => !!$config['pass'],
+        // Enough of a transport to actually send: lets the UI decide whether
+        // to offer "email these links" without duplicating the rules.
+        'configured' => (bool)($config['resendApiKey'] || $config['host'] || $config['from']),
     ]);
 }
 

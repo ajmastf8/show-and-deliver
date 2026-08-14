@@ -6,6 +6,11 @@ RewriteRule ^admin/?$ public/admin.html [L]
 RewriteRule ^gallery/.+$ public/proofing.html [L]
 RewriteRule ^collection/.+$ public/collection.html [L]
 
+# Delivery packages are token-gated and streamed by index.php. Everything else
+# under site-data/ is a real file Apache would happily serve directly, so block
+# that path explicitly.
+RewriteRule ^site-data/packages/ - [F]
+
 # Serve uploads, thumbnails, proxies, captions, and logo from site-data/
 RewriteRule ^uploads/(.*)$ site-data/uploads/$1 [L]
 RewriteRule ^thumbnails/(.*)$ site-data/thumbnails/$1 [L]

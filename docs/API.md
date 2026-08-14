@@ -82,6 +82,7 @@ Any of these fields can be set:
 ```json
 {
   "name": "string",
+  "type": "proofing | reels",
   "galleryIds": ["g_...", "g_..."],
   "password": "plaintext (will be bcrypted) or null to clear",
   "downloadsEnabled": true,
@@ -92,6 +93,18 @@ Any of these fields can be set:
   "regenerateToken": true
 }
 ```
+
+### Collection type
+
+A collection has the same `type` as the galleries it groups, and only ever
+shows galleries of its own type:
+
+- `proofing` (the default, and what pre-existing collections are treated as) —
+  client delivery. Password, expiry, and commenting apply, and member galleries
+  inherit them.
+- `reels` — portfolio. The collection page is public: no password, no expiry,
+  no commenting. Sending those fields on a portfolio collection is ignored, and
+  switching an existing collection to `reels` clears them.
 
 ## Galleries
 
@@ -255,6 +268,108 @@ PUT    /api/admin/galleries/{gid}/headers/{hid}         # rename header
 DELETE /api/admin/galleries/{gid}/headers/{hid}         # delete header
 ```
 
+## Delivery packages
+
+Zips a whole gallery (or a whole collection) into numbered parts the client
+downloads from a token link — the WeTransfer-style handoff. The client-side
+"Download All" button on the proofing page is unaffected; this is the
+server-side alternative for handing over a finished job.
+
+```
+GET    /api/admin/packages[?sourceId=]     # list (newest first)
+POST   /api/admin/packages                 # create a build job
+POST   /api/admin/packages/{id}/build      # run one build slice
+POST   /api/admin/packages/{id}/email      # email the links
+DELETE /api/admin/packages/{id}            # delete package + parts
+
+GET    /api/packages/{token}               # public: package metadata
+GET    /api/packages/{token}/part/{index}  # public: download one part
+```
+
+### How the build works
+
+Shared hosting has no background jobs and hard request timeouts, so building is
+**driven by the caller**. `POST /api/admin/packages` returns immediately with
+`status: "building"`; you then call `/build` repeatedly until `status` is
+`ready` or `failed`. Each `/build` call does a short, time-boxed slice and
+returns the current progress. Slices resume mid-file, so no single request ever
+has to survive a multi-GB copy, and a concurrent second caller is locked out
+and simply gets progress back.
+
+```bash
+PKG=$(curl -s -X POST https://your.host/api/admin/packages \
+  -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"sourceType":"gallery","sourceId":"g_xxx"}' | jq -r .id)
+
+while :; do
+  STATUS=$(curl -s -X POST "https://your.host/api/admin/packages/$PKG/build" \
+    -H "Authorization: Bearer $API_TOKEN" | jq -r .status)
+  echo "$STATUS"
+  [ "$STATUS" = "building" ] || break
+done
+```
+
+`sourceType` is `gallery` or `collection`. A collection package puts each
+gallery in its own folder inside the archive.
+
+### Parts
+
+Files are stored (not compressed — media doesn't compress) and split into parts
+of at most ~1.9 GB, overridable with `PACKAGE_PART_MB` in `.env`. A single file
+larger than one whole part can't be split across parts without producing a
+multi-volume archive most clients can't open, so it's offered as its own direct
+download instead (`"kind": "file"` rather than `"kind": "zip"`).
+
+Packages expire 7 days after creation and are swept on the next list/create.
+Creating one is refused with `507` if the disk doesn't have room for a copy.
+
+### Package record
+
+```json
+{
+  "id": "pkg_xxx",
+  "name": "Gallery or collection name",
+  "status": "building | ready | failed",
+  "error": "string | null",
+  "totalBytes": 12884901888,
+  "doneBytes": 4294967296,
+  "fileCount": 214,
+  "parts": [
+    {
+      "index": 1,
+      "kind": "zip | file",
+      "label": "Part 1",
+      "size": 1992294400,
+      "fileCount": 38,
+      "url": "https://your.host/api/packages/{token}/part/1"
+    }
+  ],
+  "createdAt": "ISO8601",
+  "expiresAt": "ISO8601",
+  "readyAt": "ISO8601 | null",
+  "lastEmailedAt": "ISO8601 | null",
+  "lastEmailedTo": ["client@example.com"]
+}
+```
+
+Part URLs are built from the Site Base URL in Settings → Email (`BASE_URL`), so
+set that correctly or the emailed links will point at the wrong host.
+
+### Emailing the links
+
+Requires email to be configured (Settings → Email, or `RESEND_API_KEY` /
+`SMTP_*` in `.env`); returns `400` if it isn't and `409` if the package isn't
+ready.
+
+```bash
+curl -X POST "https://your.host/api/admin/packages/$PKG/email" \
+  -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"to":"client@example.com, second@example.com","message":"Final files from Saturday."}'
+```
+
+`to` accepts a comma/space-separated string or an array. Every address is
+validated before anything is sent.
+
 ## End-to-end example
 
 Create a collection, create a gallery, attach it, upload a photo and a
@@ -332,6 +447,7 @@ curl -s -X POST "$HOST/api/admin/uploads/$UPLOAD_ID/finalize" "${AUTH[@]}" "${JS
 {
   "id": "col_xxx",
   "name": "string",
+  "type": "proofing | reels",
   "token": "string",
   "galleryIds": ["g_xxx"],
   "password": "bcrypt hash | null",

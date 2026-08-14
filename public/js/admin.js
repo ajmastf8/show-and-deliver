@@ -17,7 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     sort: { key: 'name', dir: 'asc' }, // key: name|items|views|access|expires
     filter: { type: 'all', hasPassword: false, expiringDays: 0 },
     search: '',
-    rail: 'all',                       // all | ungrouped | archive | <collectionId>
+    rail: 'all',                       // all | portfolio | client | ungrouped | archive | <collectionId>
     collapsed: new Set(),              // collapsed collection ids
     selection: new Set(),              // selected gallery ids
     drawer: { galleryId: null, tab: 'settings', draft: null, dirty: false },
@@ -313,13 +313,22 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================================================
   // Data pipeline (filter / group / sort)
   // ==========================================================================
+  // Rail scopes that aren't a collection id.
+  const RAIL_SCOPES = ['all', 'archive', 'portfolio', 'client', 'ungrouped'];
+  // Scopes that span more than one collection, so "Group: Collection" has
+  // something to group by.
+  const GROUPABLE_SCOPES = ['all', 'portfolio', 'client'];
   function railGalleries() {
     let list = state.galleries.slice();
     if (state.rail === 'archive') {
       list = list.filter(g => g.active === false);
     } else {
       list = list.filter(g => g.active !== false);
-      if (state.rail === 'ungrouped') list = list.filter(g => !g.collectionId);
+      if (state.rail === 'portfolio') list = list.filter(g => g.type === 'reels');
+      else if (state.rail === 'client') list = list.filter(g => g.type === 'proofing');
+      // "Ungrouped" lives under Client delivery, so it means client galleries
+      // that aren't in a collection — not every gallery without one.
+      else if (state.rail === 'ungrouped') list = list.filter(g => g.type === 'proofing' && !g.collectionId);
       else if (state.rail !== 'all') list = list.filter(g => g.collectionId === state.rail);
     }
     // filter facet
@@ -388,10 +397,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================================================
   // Rail
   // ==========================================================================
+  // The rail is split by audience: portfolio work (public) and client delivery
+  // (token links), each with its own galleries and collections, plus a Library
+  // section for the cross-type views.
   function renderRail() {
     const rail = $('rail');
     const all = state.galleries.filter(g => g.active !== false);
-    const ungrouped = all.filter(g => !g.collectionId).length;
+    const portfolio = all.filter(g => g.type === 'reels');
+    const client = all.filter(g => g.type === 'proofing');
+    const ungrouped = client.filter(g => !g.collectionId).length;
     const archived = state.galleries.filter(g => g.active === false).length;
 
     const railRow = (id, label, count) =>
@@ -399,22 +413,30 @@ document.addEventListener('DOMContentLoaded', () => {
         <span class="rail-name">${escapeHtml(label)}</span>
         ${count != null ? `<span class="rail-count">${count}</span>` : ''}
       </div>`;
+    const collectionRows = (type) => sortByFavorite(state.collections.filter(c => (c.type || 'proofing') === type))
+      .map(c => {
+        const count = all.filter(g => g.collectionId === c.id).length;
+        return `<div class="rail-row compact${state.rail === c.id ? ' active' : ''}${c.active === false ? ' inactive' : ''}" data-rail="${c.id}" title="${c.active === false ? 'Inactive' : ''}">
+          <span class="rail-name">${escapeHtml(titleCase(c.name))}</span>
+          <span class="rail-count">${count}</span>
+          ${starBtn(c, 'collection')}
+        </div>`;
+      }).join('');
 
-    let html = `<div class="rail-section-label">Library</div>`;
-    html += railRow('all', 'All galleries', all.length);
+    let html = `<div class="rail-section-label">Portfolio</div>`;
+    html += railRow('portfolio', 'All portfolio', portfolio.length);
+    html += collectionRows('reels');
+    html += `<div class="rail-row compact new-collection" data-new-collection="reels">+ New portfolio collection</div>`;
+
+    html += `<div class="rail-section-label">Client delivery</div>`;
+    html += railRow('client', 'All client galleries', client.length);
     html += railRow('ungrouped', 'Ungrouped', ungrouped);
-    html += railRow('archive', 'Archive', archived);
+    html += collectionRows('proofing');
+    html += `<div class="rail-row compact new-collection" data-new-collection="proofing">+ New collection</div>`;
 
-    html += `<div class="rail-section-label">Collections</div>`;
-    sortByFavorite(state.collections).forEach(c => {
-      const count = all.filter(g => g.collectionId === c.id).length;
-      html += `<div class="rail-row compact${state.rail === c.id ? ' active' : ''}${c.active === false ? ' inactive' : ''}" data-rail="${c.id}" title="${c.active === false ? 'Inactive' : ''}">
-        <span class="rail-name">${escapeHtml(titleCase(c.name))}</span>
-        <span class="rail-count">${count}</span>
-        ${starBtn(c, 'collection')}
-      </div>`;
-    });
-    html += `<div class="rail-row compact new-collection" data-new-collection>+ New collection</div>`;
+    html += `<div class="rail-section-label">Library</div>`;
+    html += railRow('all', 'Everything', all.length);
+    html += railRow('archive', 'Archive', archived);
     rail.innerHTML = html;
 
     wireFavButtons(rail);
@@ -428,21 +450,25 @@ document.addEventListener('DOMContentLoaded', () => {
         if (window.innerWidth < 1100) rail.classList.remove('open');
       });
     });
-    rail.querySelector('[data-new-collection]').addEventListener('click', () => openCollectionModal());
+    rail.querySelectorAll('[data-new-collection]').forEach(el => {
+      el.addEventListener('click', () => openCollectionModal(null, el.getAttribute('data-new-collection')));
+    });
   }
 
   // ==========================================================================
   // Centre (header + table/grid + bulk bar)
   // ==========================================================================
   function centreTitle() {
-    if (state.rail === 'all') return 'ALL GALLERIES';
+    if (state.rail === 'all') return 'EVERYTHING';
+    if (state.rail === 'portfolio') return 'ALL PORTFOLIO';
+    if (state.rail === 'client') return 'ALL CLIENT GALLERIES';
     if (state.rail === 'ungrouped') return 'UNGROUPED';
     if (state.rail === 'archive') return 'ARCHIVE';
     const c = state.collections.find(x => x.id === state.rail);
     return c ? c.name.toUpperCase() : 'GALLERIES';
   }
   function currentRailCollection() {
-    if (['all', 'ungrouped', 'archive'].includes(state.rail)) return null;
+    if (RAIL_SCOPES.includes(state.rail)) return null;
     return state.collections.find(c => c.id === state.rail) || null;
   }
   function renderCentre() {
@@ -467,10 +493,12 @@ document.addEventListener('DOMContentLoaded', () => {
     $('ctrl-col-copy').hidden = !railCol;
     $('ctrl-col-visit').hidden = !railCol;
     $('ctrl-col-settings').hidden = !railCol;
+    $('ctrl-col-deliver').hidden = !railCol;
     if (railCol) {
       $('ctrl-col-copy').onclick = () => copyCollectionLink(railCol.id);
       $('ctrl-col-visit').onclick = () => openCollectionLink(railCol.id);
       $('ctrl-col-settings').onclick = () => openCollectionModal(railCol.id);
+      $('ctrl-col-deliver').onclick = () => openPackageModal('collection', railCol.id, railCol.name);
     }
 
     if (state.view === 'grid') renderGrid(list);
@@ -479,10 +507,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ---------- Grouping ----------
-  // For the "all" scope with Group: Collection we render per-collection groups
-  // plus an Ungrouped group. Any other rail scope is a single flat list.
+  // In a multi-collection scope with Group: Collection we render per-collection
+  // groups plus an Ungrouped group. Any other rail scope is a single flat list.
   function buildGroups(list) {
-    const grouped = state.rail === 'all' && state.groupBy === 'collection';
+    const grouped = GROUPABLE_SCOPES.includes(state.rail) && state.groupBy === 'collection';
     if (!grouped) return [{ col: null, galleries: sortGalleries(list) }];
     const groups = [];
     sortByFavorite(state.collections).forEach(c => {
@@ -521,7 +549,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     groups.forEach(grp => {
       const showHead = !!grp.col && grp.col.id !== null;
-      const groupedScope = state.rail === 'all' && state.groupBy === 'collection';
+      const groupedScope = GROUPABLE_SCOPES.includes(state.rail) && state.groupBy === 'collection';
       if (groupedScope && grp.col) {
         const collapsed = state.collapsed.has(grp.col.id);
         const isCol = grp.col.id !== '__ungrouped__';
@@ -569,8 +597,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (g.thumbnail) return `<img class="${cls}" src="/thumbnails/${encodeURIComponent(g.thumbnail)}" alt="" loading="lazy">`;
     return `<${tag} class="${cls}"></${tag}>`;
   }
+  // Portfolio galleries are linkable too now — a portfolio collection links to
+  // its members by token exactly the way a client collection does.
   function galleryPublicUrl(g) {
-    return g.type === 'proofing' && g.token ? window.location.origin + '/gallery/' + g.token : null;
+    return g.token ? window.location.origin + '/gallery/' + g.token : null;
   }
   function openLinkBtnHtml(g) {
     return galleryPublicUrl(g) ? `<button class="row-open" data-open-link="${g.id}" title="Open public link">&#8599;</button>` : '';
@@ -654,7 +684,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     let html = `<div class="grid-wrap">`;
-    const groupedScope = state.rail === 'all' && state.groupBy === 'collection';
+    const groupedScope = GROUPABLE_SCOPES.includes(state.rail) && state.groupBy === 'collection';
     groups.forEach(grp => {
       if (groupedScope && grp.col) {
         const isCol = grp.col.id !== '__ungrouped__';
@@ -864,7 +894,7 @@ document.addEventListener('DOMContentLoaded', () => {
     selectedItemId = null;
     const isProofing = g.type === 'proofing';
     const badge = isProofing ? 'Client gallery' : 'Portfolio';
-    const link = isProofing && g.token ? window.location.origin + '/gallery/' + g.token : '';
+    const link = galleryPublicUrl(g) || '';
     const meta = [`${g.videoCount || 0} items`, `${g.viewCount || 0} views`];
     if (g.lastViewedAt) meta.push('last viewed ' + shortDate(g.lastViewedAt));
 
@@ -879,6 +909,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="gv-actions">
               <button class="link-btn accent" data-gv="settings">Settings</button>
               ${isProofing ? `<button class="link-btn accent" data-gv="comments">Comments</button>` : ''}
+              ${isProofing ? `<button class="link-btn accent" data-gv="deliver">Deliver</button>` : ''}
             </div>
           </div>
           <div class="gv-sub">
@@ -918,6 +949,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function gvAction(g, act) {
     if (act === 'settings') openDrawer('settings');
     else if (act === 'comments') openDrawer('comments');
+    else if (act === 'deliver') openPackageModal('gallery', g.id, g.name);
     else if (act === 'import') { contentGid = g.id; openImportModal(); }
     else if (act === 'copy') { copyText(window.location.origin + '/gallery/' + g.token); }
     else if (act === 'open') { window.open(window.location.origin + '/gallery/' + g.token, '_blank', 'noopener'); }
@@ -1534,6 +1566,12 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================================================
   const CONCURRENCY = 3;
   const MAX_RETRIES = 3;
+  // Files at or under this go up as one multipart POST (one round trip, no
+  // session bookkeeping). Anything bigger uses the resumable chunked API so a
+  // multi-GB video never has to survive a single request under the host's
+  // post_max_size / timeout limits.
+  const CHUNK_THRESHOLD_BYTES = 64 * 1024 * 1024;
+  const PREFERRED_CHUNK_BYTES = 16 * 1024 * 1024;
 
   function setUploadDestinationForGallery(g) {
     state.upload.destination = { collectionId: g.collectionId || '', galleryId: g.id };
@@ -1606,6 +1644,8 @@ document.addEventListener('DOMContentLoaded', () => {
         id: 'u' + Date.now() + Math.random().toString(36).slice(2, 6),
         file, name: file.name, size: file.size, title: titleFromFilename(file.name),
         galleryId: gid, pct: 0, status: 'waiting', error: '', retries: 0, xhr: null, uploaded: null,
+        // Chunked-upload bookkeeping; unused for small multipart uploads.
+        uploadId: null, sent: 0, chunkBytes: PREFERRED_CHUNK_BYTES,
       });
     });
     renderQueues(); pumpQueue();
@@ -1621,6 +1661,99 @@ document.addEventListener('DOMContentLoaded', () => {
     updateUploadsCount();
   }
   function startUpload(item) {
+    if (item.size > CHUNK_THRESHOLD_BYTES) { startChunkedUpload(item); return; }
+    startMultipartUpload(item);
+  }
+
+  // Promise wrapper around XHR so the chunked loop below reads sequentially.
+  // Keeps `item.xhr` pointed at the in-flight request so Pause/Cancel can abort
+  // it, and distinguishes an abort (user action) from a real failure.
+  function xhrSend({ method, url, body, headers, item, onProgress }) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      if (item) item.xhr = xhr;
+      xhr.open(method, url);
+      Object.entries(headers || {}).forEach(([k, v]) => xhr.setRequestHeader(k, v));
+      if (onProgress) xhr.upload.addEventListener('progress', onProgress);
+      const done = () => { if (item) item.xhr = null; };
+      xhr.addEventListener('load', () => {
+        done();
+        let data = null;
+        try { data = JSON.parse(xhr.responseText); } catch (_) {}
+        if (xhr.status >= 200 && xhr.status < 300) { resolve(data); return; }
+        const err = new Error((data && data.error) || `HTTP ${xhr.status}`);
+        err.status = xhr.status;
+        reject(err);
+      });
+      xhr.addEventListener('error', () => { done(); reject(new Error('Connection dropped')); });
+      xhr.addEventListener('abort', () => { done(); const e = new Error('Aborted'); e.aborted = true; reject(e); });
+      xhr.send(body);
+    });
+  }
+
+  // Resumable upload: initiate a session, PUT contiguous chunks, then finalize.
+  // A dropped connection leaves `item.sent` at the last byte the server
+  // acknowledged, so a retry picks up from there instead of restarting.
+  async function startChunkedUpload(item) {
+    item.status = 'uploading'; item.error = '';
+    renderQueues();
+    try {
+      if (!item.uploadId) {
+        const init = await xhrSend({
+          method: 'POST', url: '/api/admin/uploads', item,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: item.name, totalSize: item.size, contentType: item.file.type || '' }),
+        });
+        item.uploadId = init.uploadId;
+        item.chunkBytes = Math.min(init.chunkMaxBytes || PREFERRED_CHUNK_BYTES, PREFERRED_CHUNK_BYTES);
+        item.sent = 0;
+      }
+
+      while (item.sent < item.size) {
+        // Pause/cancel between chunks: bail without touching the session so a
+        // later Retry resumes from the same byte offset.
+        if (item.status !== 'uploading') return;
+        const start = item.sent;
+        const end = Math.min(start + item.chunkBytes, item.size) - 1;
+        const ack = await xhrSend({
+          method: 'PUT', url: `/api/admin/uploads/${item.uploadId}/chunk`, item,
+          headers: { 'Content-Range': `bytes ${start}-${end}/${item.size}`, 'Content-Type': 'application/octet-stream' },
+          body: item.file.slice(start, end + 1),
+          onProgress: (e) => {
+            if (!e.lengthComputable) return;
+            item.pct = Math.round((start + e.loaded) / item.size * 100);
+            updateQueueProgress(item);
+          },
+        });
+        item.sent = typeof ack.received === 'number' ? ack.received : end + 1;
+        item.pct = Math.round(item.sent / item.size * 100);
+        updateQueueProgress(item);
+        // Real progress was made, so a later stall gets a fresh retry budget
+        // rather than burning through it over a multi-hour transfer.
+        item.retries = 0;
+      }
+
+      const uploaded = await xhrSend({
+        method: 'POST', url: `/api/admin/uploads/${item.uploadId}/finalize`, item,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ galleryId: item.galleryId, title: item.title }),
+      });
+      item.uploadId = null;
+      item.pct = 100; item.status = 'done'; item.uploaded = uploaded;
+      renderQueues();
+      if (uploaded && uploaded.type === 'video' && !uploaded.thumbnail) autoGenerateVideoThumbnail(uploaded, item.galleryId).catch(() => {});
+      refreshCountsSoon();
+    } catch (err) {
+      if (err.aborted) return;
+      // Session swept by the server's 24 h cleanup (or never created) — start over.
+      if (err.status === 404) { item.uploadId = null; item.sent = 0; item.pct = 0; }
+      failItem(item, err.message || 'Upload failed');
+    } finally {
+      pumpQueue();
+    }
+  }
+
+  function startMultipartUpload(item) {
     item.status = 'uploading'; item.error = '';
     const fd = new FormData(); fd.append('video', item.file); fd.append('title', item.title);
     const xhr = new XMLHttpRequest(); item.xhr = xhr;
@@ -1655,7 +1788,16 @@ document.addEventListener('DOMContentLoaded', () => {
   function refreshCountsSoon() { clearTimeout(_refreshTimer); _refreshTimer = setTimeout(async () => { await loadData(); renderRail(); if (state.screen === 'library' && !state.centreGalleryId) renderCentre(); if (contentGid) loadContent(); }, 1200); }
 
   $('queue-pause-all').addEventListener('click', () => { state.upload.queue.forEach(i => { if (i.status === 'uploading' || i.status === 'waiting') { if (i.xhr) i.xhr.abort(); i.status = 'paused'; } }); renderQueues(); });
-  $('queue-cancel-all').addEventListener('click', () => { state.upload.queue.forEach(i => { if (i.xhr) i.xhr.abort(); }); state.upload.queue = []; renderQueues(); });
+  $('queue-cancel-all').addEventListener('click', () => {
+    state.upload.queue.forEach(i => {
+      if (i.xhr) i.xhr.abort();
+      // Don't leave half-written .part files sitting on the host until the
+      // server's 24 h sweep picks them up.
+      if (i.uploadId) fetch(`/api/admin/uploads/${i.uploadId}`, { method: 'DELETE' }).catch(() => {});
+    });
+    state.upload.queue = [];
+    renderQueues();
+  });
 
   // The queue is module-level state; it renders into the Upload screen and,
   // when a gallery is open, into that gallery view's inline queue too.
@@ -1700,6 +1842,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const statusText = { waiting: 'Waiting', uploading: 'Uploading', done: 'Done', failed: 'Failed', paused: 'Paused' }[item.status];
     const sub = item.status === 'failed' ? `<div class="qr-sub err">${escapeHtml(item.error || 'Failed')}</div>`
       : item.error && item.status === 'waiting' ? `<div class="qr-sub err">${escapeHtml(item.error)}</div>`
+      : item.uploadId && item.status !== 'done' ? `<div class="qr-sub">${fmtBytes(item.sent)} of ${fmtBytes(item.size)} · resumable</div>`
       : `<div class="qr-sub">${fmtBytes(item.size)}</div>`;
     let action = '';
     if (item.status === 'uploading') action = `<button data-qa="pause">Pause</button>`;
@@ -1715,7 +1858,14 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   function queueRowAction(item, act) {
     if (act === 'pause') { if (item.xhr) item.xhr.abort(); item.status = 'paused'; renderQueues(); }
-    else if (act === 'retry') { item.retries = 0; item.pct = 0; item.status = 'waiting'; item.error = ''; renderQueues(); pumpQueue(); }
+    else if (act === 'retry') {
+      item.retries = 0;
+      // A chunked upload resumes from the last acknowledged byte, so keep the
+      // bar where it was instead of snapping back to zero.
+      item.pct = item.uploadId && item.size ? Math.round(item.sent / item.size * 100) : 0;
+      item.status = 'waiting'; item.error = '';
+      renderQueues(); pumpQueue();
+    }
     else if (act === 'frame') { openThumbForUploaded(item); }
   }
 
@@ -1916,9 +2066,16 @@ document.addEventListener('DOMContentLoaded', () => {
       ${row('Expires', formatDate(col.expiresAt))}
     </div>`;
   }
+  // Only collections of the same type can hold this gallery, so the dropdown
+  // is rebuilt whenever the type radio changes.
+  function populateNgCollections(type, preselect) {
+    const colSel = $('ng-collection');
+    const opts = state.collections.filter(c => (c.type || 'proofing') === type);
+    colSel.innerHTML = `<option value="">— None —</option>` + opts.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    if (preselect && opts.some(c => c.id === preselect)) colSel.value = preselect;
+  }
   function updateNgSettingsUI() {
     const type = document.querySelector('input[name="ng-type"]:checked').value;
-    $('ng-collection-group').style.display = type === 'reels' ? 'none' : '';
     $('ng-settings-block').hidden = type !== 'proofing';
     if (type !== 'proofing') return;
     const colId = $('ng-collection').value;
@@ -1937,10 +2094,10 @@ document.addEventListener('DOMContentLoaded', () => {
   function openNewGallery(collectionId) {
     const modal = $('new-gallery-modal');
     $('ng-name').value = 'Client Gallery';
-    modal.querySelectorAll('input[name="ng-type"]').forEach(r => r.checked = r.value === 'proofing');
-    const colSel = $('ng-collection');
-    colSel.innerHTML = `<option value="">— None —</option>` + state.collections.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
-    if (collectionId) colSel.value = collectionId;
+    const preCol = collectionId ? state.collections.find(c => c.id === collectionId) : null;
+    const initialType = preCol ? (preCol.type || 'proofing') : 'proofing';
+    modal.querySelectorAll('input[name="ng-type"]').forEach(r => r.checked = r.value === initialType);
+    populateNgCollections(initialType, collectionId);
     ngState = { downloads: false, commenting: false, useCollection: true };
     $('ng-password').value = ''; $('ng-password').placeholder = 'No password';
     $('ng-expires').value = '';
@@ -1951,7 +2108,10 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   $('ng-cancel').addEventListener('click', () => $('new-gallery-modal').hidden = true);
   $('new-gallery-modal').querySelector('.modal-backdrop').addEventListener('click', () => $('new-gallery-modal').hidden = true);
-  document.querySelectorAll('input[name="ng-type"]').forEach(r => r.addEventListener('change', updateNgSettingsUI));
+  document.querySelectorAll('input[name="ng-type"]').forEach(r => r.addEventListener('change', () => {
+    populateNgCollections(r.value);
+    updateNgSettingsUI();
+  }));
   $('ng-collection').addEventListener('change', () => { ngState.useCollection = true; updateNgSettingsUI(); });
   $('ng-use-collection').addEventListener('click', () => { ngState.useCollection = !ngState.useCollection; updateNgSettingsUI(); });
   $('ng-downloads').addEventListener('click', () => { ngState.downloads = !ngState.downloads; $('ng-downloads').classList.toggle('on'); });
@@ -1959,7 +2119,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('ng-create').addEventListener('click', async () => {
     const name = $('ng-name').value.trim(); if (!name) { $('ng-name').focus(); return; }
     const type = document.querySelector('input[name="ng-type"]:checked').value;
-    const colId = type === 'proofing' ? $('ng-collection').value : '';
+    const colId = $('ng-collection').value;
     const body = { name, type };
     if (type === 'proofing' && (!colId || !ngState.useCollection)) {
       body.overrideCollectionSettings = !!colId;
@@ -1986,17 +2146,50 @@ document.addEventListener('DOMContentLoaded', () => {
   let ncEditingId = null;
   let ncClearPassword = false;
 
-  function openCollectionModal(id) {
+  function ncType() {
+    return document.querySelector('input[name="nc-type"]:checked').value;
+  }
+  // Portfolio collections are public, so the client-gating fields don't apply;
+  // the gallery picker also has to switch between reels and proofing galleries.
+  function updateNcTypeUI() {
+    const portfolio = ncType() === 'reels';
+    $('nc-type-hint').textContent = portfolio
+      ? 'Groups portfolio galleries under one public link — no password or expiry.'
+      : 'Groups client galleries behind one shareable link.';
+    $('nc-inherit-hint').textContent = portfolio
+      ? 'Inherited settings — galleries in this collection follow these unless they override.'
+      : 'Inherited settings — galleries in this collection follow these unless they override.';
+    $('nc-password-group').hidden = portfolio;
+    $('nc-commenting-row').hidden = portfolio;
+    $('nc-expires-group').hidden = portfolio;
+    $('nc-galleries-label').textContent = portfolio ? 'Add Portfolio Galleries' : 'Add Galleries';
+    renderNcGalleryPicker();
+  }
+  function renderNcGalleryPicker() {
+    const gl = $('nc-galleries');
+    const wantType = ncType();
+    const col = ncEditingId ? state.collections.find(c => c.id === ncEditingId) : null;
+    const avail = state.galleries.filter(g => g.type === wantType && g.active !== false);
+    const memberIds = new Set(col ? (col.galleryIds || []) : []);
+    gl.innerHTML = avail.length
+      ? avail.map(g => `<label class="gal-check-row"><input type="checkbox" value="${g.id}"${memberIds.has(g.id) ? ' checked' : ''}><span>${escapeHtml(g.name)}</span></label>`).join('')
+      : `<p class="setting-hint" style="padding:8px;">No ${wantType === 'reels' ? 'portfolio' : 'client'} galleries yet.</p>`;
+  }
+
+  function openCollectionModal(id, presetType) {
     closeAllMenus();
     ncEditingId = id || null;
     ncClearPassword = false;
     const col = ncEditingId ? state.collections.find(c => c.id === ncEditingId) : null;
 
     $('nc-title').textContent = col ? 'Edit collection' : 'New collection';
-    $('nc-sub').textContent = col ? 'Update sharing settings for this collection.' : 'Group client galleries under one shareable link.';
+    $('nc-sub').textContent = col ? 'Update sharing settings for this collection.' : 'Group galleries under one shareable link.';
     $('nc-create').textContent = col ? 'Save Changes' : 'Create Collection';
     $('nc-delete').hidden = !col;
     $('nc-link-group').hidden = !col;
+
+    const type = col ? (col.type || 'proofing') : (presetType === 'reels' ? 'reels' : 'proofing');
+    ncModal.querySelectorAll('input[name="nc-type"]').forEach(r => r.checked = r.value === type);
 
     $('nc-name').value = col ? col.name : '';
     $('nc-link').value = col ? window.location.origin + '/collection/' + col.token : '';
@@ -2015,16 +2208,12 @@ document.addEventListener('DOMContentLoaded', () => {
     $('nc-commenting').classList.toggle('on', ncState.commenting);
     $('nc-active').classList.toggle('on', ncState.active);
 
-    const gl = $('nc-galleries');
-    const avail = state.galleries.filter(g => g.type === 'proofing' && g.active !== false);
-    const memberIds = new Set(col ? (col.galleryIds || []) : []);
-    gl.innerHTML = avail.length
-      ? avail.map(g => `<label class="gal-check-row"><input type="checkbox" value="${g.id}"${memberIds.has(g.id) ? ' checked' : ''}><span>${escapeHtml(g.name)}</span></label>`).join('')
-      : `<p class="setting-hint" style="padding:8px;">No client galleries yet.</p>`;
+    updateNcTypeUI();
 
     ncModal.hidden = false;
     $('nc-name').focus();
   }
+  ncModal.querySelectorAll('input[name="nc-type"]').forEach(r => r.addEventListener('change', updateNcTypeUI));
   $('nc-downloads').addEventListener('click', () => { ncState.downloads = !ncState.downloads; $('nc-downloads').classList.toggle('on'); });
   $('nc-commenting').addEventListener('click', () => { ncState.commenting = !ncState.commenting; $('nc-commenting').classList.toggle('on'); });
   $('nc-active').addEventListener('click', () => { ncState.active = !ncState.active; $('nc-active').classList.toggle('on'); });
@@ -2069,15 +2258,17 @@ document.addEventListener('DOMContentLoaded', () => {
   $('nc-create').addEventListener('click', async () => {
     const name = $('nc-name').value.trim(); if (!name) { $('nc-name').focus(); return; }
     const galleryIds = Array.from($('nc-galleries').querySelectorAll('input:checked')).map(c => c.value);
-    const body = {
-      name, galleryIds,
-      downloadsEnabled: ncState.downloads, commentingEnabled: ncState.commenting,
-      active: ncState.active,
-      expiresAt: $('nc-expires').value ? new Date($('nc-expires').value + 'T23:59:59').toISOString() : null,
-    };
-    const pw = $('nc-password').value.trim();
-    if (pw) body.password = pw;
-    else if (ncEditingId && ncClearPassword) body.password = '';
+    const type = ncType();
+    const body = { name, type, galleryIds, downloadsEnabled: ncState.downloads, active: ncState.active };
+    // The server ignores these on a portfolio collection anyway; not sending
+    // them keeps an accidental password out of the request entirely.
+    if (type !== 'reels') {
+      body.commentingEnabled = ncState.commenting;
+      body.expiresAt = $('nc-expires').value ? new Date($('nc-expires').value + 'T23:59:59').toISOString() : null;
+      const pw = $('nc-password').value.trim();
+      if (pw) body.password = pw;
+      else if (ncEditingId && ncClearPassword) body.password = '';
+    }
 
     const url = ncEditingId ? `/api/collections/${ncEditingId}` : '/api/collections';
     const method = ncEditingId ? 'PUT' : 'POST';
@@ -2089,6 +2280,200 @@ document.addEventListener('DOMContentLoaded', () => {
     state.rail = col.id;
     renderRail(); renderCentre();
     toast(ncEditingId ? 'Collection saved' : 'Collection created');
+  });
+
+  // ==========================================================================
+  // Delivery packages (server-side zip → client download links)
+  // ==========================================================================
+  // The server builds in short, resumable slices because shared hosting has no
+  // background jobs, so the browser drives the build by calling /build in a
+  // loop until the package leaves the "building" state.
+  const pkgModal = $('package-modal');
+  let pkgSource = null;         // { type, id, name }
+  let pkgCurrent = null;        // latest payload for the open source
+  let pkgBuilding = false;      // one build loop at a time per tab
+  let pkgEmailConfigured = false;
+
+  async function openPackageModal(sourceType, sourceId, name) {
+    closeAllMenus();
+    pkgSource = { type: sourceType, id: sourceId, name };
+    pkgCurrent = null;
+    $('pk-title').textContent = 'Deliver ' + name;
+    $('pk-sub').textContent = sourceType === 'collection'
+      ? 'Zips every gallery in this collection into numbered downloads, one folder per gallery.'
+      : 'Zips this whole gallery into numbered downloads your client can grab from a link.';
+    $('pk-body').innerHTML = `<p class="setting-hint" style="padding:8px;">Loading…</p>`;
+    $('pk-build').hidden = true;
+    $('pk-delete').hidden = true;
+    pkgModal.hidden = false;
+
+    try {
+      const [packages, email] = await Promise.all([
+        fetch('/api/admin/packages?sourceId=' + encodeURIComponent(sourceId)).then(r => r.ok ? r.json() : []),
+        fetch('/api/settings/email').then(r => r.ok ? r.json() : {}),
+      ]);
+      pkgEmailConfigured = !!email.configured;
+      pkgCurrent = packages[0] || null;
+      renderPackage();
+      if (pkgCurrent && pkgCurrent.status === 'building') drivePackageBuild(pkgCurrent.id);
+    } catch (_) {
+      $('pk-body').innerHTML = `<p class="setting-hint" style="padding:8px;">Could not load delivery packages.</p>`;
+    }
+  }
+
+  function renderPackage() {
+    const body = $('pk-body');
+    const p = pkgCurrent;
+    $('pk-delete').hidden = !p;
+    $('pk-build').hidden = !!(p && p.status === 'building');
+    $('pk-build').textContent = p ? 'Rebuild' : 'Prepare Download';
+
+    if (!p) {
+      body.innerHTML = `<p class="setting-hint" style="padding:8px;">No download package yet. Preparing one zips every visible file and gives you links to share — the originals stay untouched.</p>`;
+      return;
+    }
+
+    if (p.status === 'failed') {
+      body.innerHTML = `<div class="empty-note">Build failed: ${escapeHtml(p.error || 'unknown error')}</div>`;
+      return;
+    }
+
+    if (p.status === 'building') {
+      const pct = p.totalBytes ? Math.round(p.doneBytes / p.totalBytes * 100) : 0;
+      body.innerHTML = `
+        <div class="setting-group">
+          <label>Building — ${pct}%</label>
+          <div class="qr-track"><div class="qr-fill" style="width:${pct}%"></div></div>
+          <p class="setting-hint">${fmtBytes(p.doneBytes)} of ${fmtBytes(p.totalBytes)} · ${p.fileCount} file${p.fileCount === 1 ? '' : 's'}. Keep this window open until it finishes.</p>
+        </div>`;
+      return;
+    }
+
+    // Ready.
+    const parts = p.parts.map(part => `
+      <div class="gal-check-row" style="justify-content:space-between;">
+        <span>
+          <strong>${escapeHtml(part.label)}</strong>
+          <span class="setting-hint" style="margin-left:8px;">${fmtBytes(part.size)}${part.fileCount ? ' · ' + part.fileCount + ' file' + (part.fileCount === 1 ? '' : 's') : ''}</span>
+        </span>
+        <span>
+          <button class="link-btn" data-pk-copy="${escapeHtml(part.url)}">Copy link</button>
+          <button class="link-btn" data-pk-open="${escapeHtml(part.url)}">Open</button>
+        </span>
+      </div>`).join('');
+
+    const emailBlock = pkgEmailConfigured ? `
+      <hr class="settings-divider">
+      <div class="setting-group">
+        <label>Email these links</label>
+        <input type="text" id="pk-email-to" class="setting-input" placeholder="client@example.com, second@example.com">
+      </div>
+      <div class="setting-group">
+        <textarea id="pk-email-msg" class="setting-input" rows="3" placeholder="Optional note to include"></textarea>
+        <p class="setting-hint" id="pk-email-status">${p.lastEmailedAt ? 'Last sent ' + formatDate(p.lastEmailedAt) + (p.lastEmailedTo && p.lastEmailedTo.length ? ' to ' + escapeHtml(p.lastEmailedTo.join(', ')) : '') : ''}</p>
+        <button class="btn-ghost" id="pk-email-send">Send links</button>
+      </div>`
+      : `<hr class="settings-divider">
+      <p class="setting-hint">Set up Settings &rsaquo; Email to send these links to your client from here. The links above work regardless.</p>`;
+
+    body.innerHTML = `
+      <p class="setting-hint" style="margin-bottom:10px;">
+        ${p.parts.length} download${p.parts.length === 1 ? '' : 's'} · ${fmtBytes(p.totalBytes)} total · expires ${formatDate(p.expiresAt)}
+      </p>
+      ${parts}
+      ${emailBlock}`;
+
+    body.querySelectorAll('[data-pk-copy]').forEach(b => b.addEventListener('click', () => {
+      copyText(b.getAttribute('data-pk-copy'), 'Download link copied');
+    }));
+    body.querySelectorAll('[data-pk-open]').forEach(b => b.addEventListener('click', () => {
+      window.open(b.getAttribute('data-pk-open'), '_blank', 'noopener');
+    }));
+    const send = $('pk-email-send');
+    if (send) send.addEventListener('click', sendPackageEmail);
+  }
+
+  // Each call does one time-boxed slice server-side; loop until it's done.
+  // Guarded by id so reopening the modal on another source can't hijack it.
+  async function drivePackageBuild(id) {
+    if (pkgBuilding) return;
+    pkgBuilding = true;
+    try {
+      for (;;) {
+        const res = await fetch(`/api/admin/packages/${id}/build`, { method: 'POST' });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          if (pkgCurrent && pkgCurrent.id === id) {
+            pkgCurrent = { ...pkgCurrent, status: 'failed', error: d.error || `HTTP ${res.status}` };
+            renderPackage();
+          }
+          toast('Package build failed');
+          return;
+        }
+        const data = await res.json();
+        if (pkgCurrent && pkgCurrent.id === id) { pkgCurrent = data; renderPackage(); }
+        if (data.status !== 'building') {
+          toast(data.status === 'ready' ? 'Download package ready' : 'Package build failed');
+          return;
+        }
+      }
+    } catch (_) {
+      toast('Package build interrupted');
+    } finally {
+      pkgBuilding = false;
+    }
+  }
+
+  async function sendPackageEmail() {
+    const to = $('pk-email-to').value.trim();
+    if (!to) { $('pk-email-to').focus(); return; }
+    const btn = $('pk-email-send');
+    btn.disabled = true; btn.textContent = 'Sending…';
+    const res = await fetch(`/api/admin/packages/${pkgCurrent.id}/email`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, message: $('pk-email-msg').value.trim() }),
+    });
+    const data = await res.json().catch(() => ({}));
+    btn.disabled = false; btn.textContent = 'Send links';
+    if (!res.ok) { toast(data.error || 'Could not send'); return; }
+    pkgCurrent.lastEmailedAt = new Date().toISOString();
+    pkgCurrent.lastEmailedTo = data.sent || [];
+    renderPackage();
+    toast('Links sent to ' + (data.sent || []).join(', '));
+  }
+
+  $('pk-close').addEventListener('click', () => pkgModal.hidden = true);
+  pkgModal.querySelector('.modal-backdrop').addEventListener('click', () => pkgModal.hidden = true);
+  $('pk-build').addEventListener('click', async () => {
+    if (!pkgSource) return;
+    // Rebuilding replaces the old package (and invalidates its links) rather
+    // than leaving stale zips filling the disk.
+    if (pkgCurrent && !await confirmModal({
+      title: 'Rebuild package',
+      message: 'This replaces the current download package. The links you already shared will stop working.',
+      okText: 'Rebuild',
+    })) return;
+
+    $('pk-build').disabled = true;
+    if (pkgCurrent) await fetch(`/api/admin/packages/${pkgCurrent.id}`, { method: 'DELETE' }).catch(() => {});
+    const res = await fetch('/api/admin/packages', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceType: pkgSource.type, sourceId: pkgSource.id }),
+    });
+    $('pk-build').disabled = false;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.error || 'Could not start packaging'); return; }
+    pkgCurrent = data;
+    renderPackage();
+    drivePackageBuild(data.id);
+  });
+  $('pk-delete').addEventListener('click', async () => {
+    if (!pkgCurrent) return;
+    if (!await confirmModal({ title: 'Delete package', message: 'The download links will stop working immediately.', okText: 'Delete', danger: true })) return;
+    await fetch(`/api/admin/packages/${pkgCurrent.id}`, { method: 'DELETE' });
+    pkgCurrent = null;
+    renderPackage();
+    toast('Package deleted');
   });
 
   function copyCollectionLink(colId) {

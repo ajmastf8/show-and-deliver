@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0 — 2026-08-14
+- Renamed the project to **Show & Deliver** — it both stands work up publicly (portfolio reels) and hands it off privately (client proofing), and the old name only described half of that
+- Updates no longer require a GitHub token. Installs made from a release zip now check GitHub Releases and install the update in pure PHP, so no git binary, shell access, or credentials are needed. Clones keep updating via git; the mode is auto-detected and can be forced with `DEPLOY_MODE`.
+- Client share emails now sign off with the site name from Settings → Header instead of a hardcoded name, and the admin tab title and topbar brand no longer fall back to one
+- Added a README with install instructions and an MIT license, for running this on your own server
+
 ## 1.4.0 — 2026-08-06
 - Redesigned the admin dashboard UI: state-driven library/upload/settings screens, list and grid views, bulk actions
 - Collections can now be edited after creation — password, downloads, commenting, expiry, and gallery membership, plus copy/regenerate share link and delete — via "Collection settings" wherever collections appear. Previously that button only filtered the list, and settings were fixed at creation time.

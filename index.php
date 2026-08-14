@@ -2558,7 +2558,7 @@ define('PACKAGES_DIR', SITE_DATA . '/packages');
 // why individual-file downloads have no such ceiling.
 define('PACKAGE_PART_MAX_BYTES', max(0, (int)env('PACKAGE_PART_MB', 900)) * 1024 * 1024);
 define('PACKAGE_TTL_SECONDS', 7 * 24 * 60 * 60);
-define('PACKAGE_STREAM_CHUNK_BYTES', 1024 * 1024);
+define('PACKAGE_STREAM_CHUNK_BYTES', 4 * 1024 * 1024);
 
 // Fixed sizes of the ZIP structures we emit, used to compute Content-Length.
 // A streamed Zip64 entry carries a 16-byte placeholder extra field in its local
@@ -3102,7 +3102,6 @@ function sendStaticFile($path, $downloadName, $contentType) {
     $size = filesize($path);
     $isLiteSpeed = stripos($_SERVER['SERVER_SOFTWARE'] ?? '', 'litespeed') !== false;
     $handoffAllowed = strtolower((string)env('SENDFILE', 'auto')) !== 'off';
-    $overDynamicCap = $size > PACKAGE_PART_MAX_BYTES && PACKAGE_PART_MAX_BYTES > 0;
 
     @set_time_limit(0);
     @ini_set('zlib.output_compression', '0');
@@ -3111,20 +3110,25 @@ function sendStaticFile($path, $downloadName, $contentType) {
     header('Content-Type: ' . $contentType);
     header('Content-Disposition: attachment; filename="' . str_replace('"', '', $downloadName) . '"');
 
-    if ($isLiteSpeed && $handoffAllowed && $overDynamicCap) {
-        // LiteSpeed serves the file itself from here; it sets its own
-        // Content-Length and handles Range.
+    // Hand off EVERY file, not just ones too big to stream. Pushing bytes out
+    // of PHP is slow at any size: the response goes through LiteSpeed's dynamic
+    // pipeline, which buffers it — that buffer is what the 1 GiB cap measures —
+    // instead of letting the kernel copy the file straight to the socket.
+    // Handing over the path gets sendfile() speed, byte-range resume, and no cap.
+    if ($isLiteSpeed && $handoffAllowed) {
         header('X-LiteSpeed-Send-File: ' . $path);
         exit;
     }
 
     header('Content-Length: ' . $size);
-    header('X-Accel-Buffering: no');
+    header('Accept-Ranges: bytes');
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'HEAD') exit;
 
+    // Not LiteSpeed: stream it ourselves. fpassthru() copies in C rather than
+    // shuttling every chunk through a PHP variable, with no per-chunk flush().
     $fp = fopen($path, 'rb');
     if ($fp === false) respondError('File not found', 404);
-    while (!feof($fp)) { echo fread($fp, PACKAGE_STREAM_CHUNK_BYTES); flush(); }
+    fpassthru($fp);
     fclose($fp);
     exit;
 }
@@ -3218,7 +3222,6 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
             if ($buf === false || $buf === '') break;
             hash_update($crc, $buf);
             echo $buf;
-            flush();
             $written += strlen($buf);
         }
         fclose($fp);

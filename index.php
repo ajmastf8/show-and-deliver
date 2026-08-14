@@ -1,6 +1,6 @@
 <?php
 /**
- * VideoReelSite — Single-file PHP API
+ * Show & Deliver — Single-file PHP API
  * Replaces the entire Express.js backend. All 30+ endpoints in one file.
  */
 
@@ -15,6 +15,11 @@ define('THUMBS_DIR', SITE_DATA . '/thumbnails');
 define('PROXY_DIR', SITE_DATA . '/proxies');
 define('CAPTIONS_DIR', SITE_DATA . '/captions');
 define('IMPORT_DIR', SITE_DATA . '/imports');
+
+// Upstream repo for update checks and the optional first-run git init. Defined
+// during bootstrap because both the setup handler and the updater read it, and
+// handlers exit before later lines in this file would run.
+define('GITHUB_REPO_DEFAULT', 'ajmastf8/show-and-deliver');
 
 // Ensure directories exist
 foreach ([DATA_DIR, UPLOADS_DIR, THUMBS_DIR, PROXY_DIR, CAPTIONS_DIR, IMPORT_DIR, DATA_DIR . '/sessions', DATA_DIR . '/ratelimit'] as $dir) {
@@ -1008,7 +1013,7 @@ if ($method === 'POST' && $uri === '/api/auth/setup') {
     // Initialize git repo on first setup if PAT is configured
     $gitPat = env('GIT_PAT');
     $gitUser = env('GIT_USERNAME', 'ajmastf8');
-    $gitRepo = env('GIT_REPO', 'ajmastf8/VideoReelSite');
+    $gitRepo = env('GIT_REPO', GITHUB_REPO_DEFAULT);
     $gitBranch = env('DEPLOY_BRANCH', 'main');
     $gitLog = [];
     if ($gitPat && !is_dir(__DIR__ . '/.git')) {
@@ -2451,8 +2456,6 @@ if ($method === 'POST' && $uri === '/api/settings/email/test') {
 // Release mode needs no git binary, no shell_exec, and no credentials, so a
 // distributed copy updates itself without any secret. The repo must be public.
 
-define('GITHUB_REPO_DEFAULT', 'ajmastf8/VideoReelSite');
-
 function githubRepo() {
     $repo = env('GIT_REPO', GITHUB_REPO_DEFAULT);
     return preg_match('#^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$#', $repo) ? $repo : GITHUB_REPO_DEFAULT;
@@ -2474,7 +2477,7 @@ function deployMode() {
 // GET a GitHub URL (API or zipball download). GitHub rejects requests without
 // a User-Agent, and zipball URLs redirect to codeload.github.com.
 function githubHttpGet($url, $toFile = null) {
-    $headers = ['User-Agent: VideoReelSite-Updater', 'Accept: application/vnd.github+json'];
+    $headers = ['User-Agent: ShowAndDeliver-Updater', 'Accept: application/vnd.github+json'];
     if (function_exists('curl_init')) {
         $ch = curl_init($url);
         curl_setopt_array($ch, [

@@ -1,6 +1,8 @@
-# VideoReelSite
+# Show & Deliver
 
-Portfolio and client proofing site for photographer AJ Mast.
+Self-hosted portfolio and client-proofing site for photographers and
+videographers. Distributed publicly, so keep install-specific branding and
+credentials out of the code — per-site identity comes from Settings > Header.
 
 ## Stack
 

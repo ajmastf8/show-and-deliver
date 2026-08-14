@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AJ Mast — Delivery Admin</title>
+  <title>Show &amp; Deliver — Admin</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/admin.css?v=12">
+  <link rel="stylesheet" href="/css/admin.css?v=13">
 </head>
 <body>
 
@@ -41,7 +41,7 @@
     <!-- Top bar -->
     <header class="topbar">
       <div class="brand" id="brand-home" title="Library" style="cursor:pointer;">
-        <span class="brand-mast" id="brand-mast">AJ MAST</span>
+        <span class="brand-mast" id="brand-mast"></span>
         <span class="brand-delivery">DELIVERY</span>
       </div>
       <div class="topbar-search">
@@ -163,7 +163,7 @@
           <div class="setting-group"><label>SMTP Password</label><input type="password" id="smtp-pass" class="setting-input" placeholder="SMTP password"></div>
           <hr class="settings-divider">
           <p class="setting-hint" style="font-weight:600;color:var(--text-3);margin-bottom:12px;">Sender &amp; delivery (used by both Resend and SMTP)</p>
-          <div class="setting-group"><label>From Address</label><input type="text" id="smtp-from" class="setting-input" placeholder='"AJ Mast" <support@example.com>'><p class="setting-hint">With Resend, the domain must be verified in your Resend account.</p></div>
+          <div class="setting-group"><label>From Address</label><input type="text" id="smtp-from" class="setting-input" placeholder='"Your Studio" <hello@example.com>'><p class="setting-hint">With Resend, the domain must be verified in your Resend account.</p></div>
           <div class="setting-group"><label>Notification Email (To)</label><input type="email" id="smtp-admin-email" class="setting-input" placeholder="you@example.com"><p class="setting-hint">Where comment notifications are sent</p></div>
           <div class="setting-group"><label>Site Base URL</label><input type="text" id="smtp-base-url" class="setting-input" placeholder="https://gallery.example.com"><p class="setting-hint">Used for links in notification emails</p></div>
           <div class="settings-actions">
@@ -199,11 +199,11 @@
         <!-- Header -->
         <div id="settings-tab-header" class="settings-tab-content" hidden>
           <p class="setting-hint" style="margin-bottom:16px;">Configure the header that appears on all public pages.</p>
-          <div class="setting-group"><label>Site Name</label><input type="text" id="header-site-name" class="setting-input" placeholder="e.g. AJ Mast Photography"><p class="setting-hint">Used in browser tab titles</p></div>
+          <div class="setting-group"><label>Site Name</label><input type="text" id="header-site-name" class="setting-input" placeholder="e.g. Riverbend Photography"><p class="setting-hint">Used in browser tab titles</p></div>
           <hr class="settings-divider">
           <h4>Header Branding</h4>
           <p class="setting-hint" style="margin-bottom:12px;">Use a logo image, text, or both. If no image is uploaded, the header text displays instead.</p>
-          <div class="setting-group"><label>Header Text</label><input type="text" id="header-logo-text" class="setting-input" placeholder="e.g. AJ MAST"></div>
+          <div class="setting-group"><label>Header Text</label><input type="text" id="header-logo-text" class="setting-input" placeholder="e.g. RIVERBEND"></div>
           <div class="setting-group">
             <label>Logo Image</label>
             <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px;">
@@ -214,7 +214,7 @@
             <p class="setting-hint">PNG or SVG recommended. Displays at max 74px height. Overrides header text if set.</p>
             <button type="button" id="header-logo-remove" class="btn-ghost" style="margin-top:8px;display:none;">Remove Logo Image</button>
           </div>
-          <div class="setting-group"><label>Logo Alt Text</label><input type="text" id="header-logo-alt" class="setting-input" placeholder="e.g. AJ Mast"></div>
+          <div class="setting-group"><label>Logo Alt Text</label><input type="text" id="header-logo-alt" class="setting-input" placeholder="e.g. Riverbend Photography"></div>
           <div class="setting-group"><label>Logo Link URL</label><input type="text" id="header-logo-link" class="setting-input" placeholder="https://www.yoursite.com"></div>
           <hr class="settings-divider">
           <h4>Contact Info</h4>
@@ -475,6 +475,6 @@
   <div id="toast" class="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=113"></script>
+  <script src="/js/admin.js?v=114"></script>
 </body>
 </html>

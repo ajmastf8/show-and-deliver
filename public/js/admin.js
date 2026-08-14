@@ -423,10 +423,9 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>`;
       }).join('');
 
-    let html = `<div class="rail-section-label">Portfolio</div>`;
-    html += railRow('portfolio', 'All portfolio', portfolio.length);
-    html += collectionRows('reels');
-    html += `<div class="rail-row compact new-collection" data-new-collection="reels">+ New portfolio collection</div>`;
+    let html = `<div class="rail-section-label">Library</div>`;
+    html += railRow('all', 'Everything', all.length);
+    html += railRow('archive', 'Archive', archived);
 
     html += `<div class="rail-section-label">Client delivery</div>`;
     html += railRow('client', 'All client galleries', client.length);
@@ -434,9 +433,10 @@ document.addEventListener('DOMContentLoaded', () => {
     html += collectionRows('proofing');
     html += `<div class="rail-row compact new-collection" data-new-collection="proofing">+ New collection</div>`;
 
-    html += `<div class="rail-section-label">Library</div>`;
-    html += railRow('all', 'Everything', all.length);
-    html += railRow('archive', 'Archive', archived);
+    html += `<div class="rail-section-label">Portfolio</div>`;
+    html += railRow('portfolio', 'All portfolio', portfolio.length);
+    html += collectionRows('reels');
+    html += `<div class="rail-row compact new-collection" data-new-collection="reels">+ New portfolio collection</div>`;
     rail.innerHTML = html;
 
     wireFavButtons(rail);
@@ -2283,29 +2283,32 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // ==========================================================================
-  // Delivery packages (server-side zip → client download links)
+  // Delivery — send a gallery or collection to a client
   // ==========================================================================
-  // The server builds in short, resumable slices because shared hosting has no
-  // background jobs, so the browser drives the build by calling /build in a
-  // loop until the package leaves the "building" state.
+  // There is no build step: the server only writes a plan and zips on the fly
+  // as the client downloads. So this is a plain send form — fill in who and
+  // what, press once, done. No progress bar, nothing to wait for.
   const pkgModal = $('package-modal');
   let pkgSource = null;         // { type, id, name }
-  let pkgCurrent = null;        // latest payload for the open source
-  let pkgBuilding = false;      // one build loop at a time per tab
+  let pkgCurrent = null;        // most recent package for this source
   let pkgEmailConfigured = false;
 
   async function openPackageModal(sourceType, sourceId, name) {
     closeAllMenus();
     pkgSource = { type: sourceType, id: sourceId, name };
     pkgCurrent = null;
-    $('pk-title').textContent = 'Deliver ' + name;
+
+    $('pk-title').textContent = 'Send ' + name;
     $('pk-sub').textContent = sourceType === 'collection'
-      ? 'Zips every gallery in this collection into numbered downloads, one folder per gallery.'
-      : 'Zips this whole gallery into numbered downloads your client can grab from a link.';
-    $('pk-body').innerHTML = `<p class="setting-hint" style="padding:8px;">Loading…</p>`;
-    $('pk-build').hidden = true;
+      ? 'Shares every gallery in this collection as one download, a folder per gallery.'
+      : 'Shares this whole gallery as one download.';
+    $('pk-to').value = '';
+    $('pk-message').value = '';
+    $('pk-result').hidden = true;
+    $('pk-existing').hidden = true;
     $('pk-delete').hidden = true;
     pkgModal.hidden = false;
+    $('pk-to').focus();
 
     try {
       const [packages, email] = await Promise.all([
@@ -2313,167 +2316,101 @@ document.addEventListener('DOMContentLoaded', () => {
         fetch('/api/settings/email').then(r => r.ok ? r.json() : {}),
       ]);
       pkgEmailConfigured = !!email.configured;
-      pkgCurrent = packages[0] || null;
-      renderPackage();
-      if (pkgCurrent && pkgCurrent.status === 'building') drivePackageBuild(pkgCurrent.id);
-    } catch (_) {
-      $('pk-body').innerHTML = `<p class="setting-hint" style="padding:8px;">Could not load delivery packages.</p>`;
-    }
+      applyEmailAvailability();
+      if (packages[0]) {
+        pkgCurrent = packages[0];
+        renderExistingPackage();
+      }
+    } catch (_) { /* the form still works; sending will surface any error */ }
   }
 
-  function renderPackage() {
-    const body = $('pk-body');
+  function applyEmailAvailability() {
+    $('pk-to').disabled = !pkgEmailConfigured;
+    $('pk-to-hint').textContent = pkgEmailConfigured
+      ? 'Separate several addresses with commas. Leave blank to just get a link.'
+      : 'Set up Settings › Email to send from here. You can still create a link and share it yourself.';
+    updateSendLabel();
+  }
+
+  function updateSendLabel() {
+    const hasRecipients = pkgEmailConfigured && $('pk-to').value.trim() !== '';
+    $('pk-send').textContent = hasRecipients ? 'Send Link' : 'Create Link';
+  }
+
+  // A link already exists for this gallery. Offer it rather than silently
+  // making a second one, since creating another doesn't revoke the first.
+  function renderExistingPackage() {
     const p = pkgCurrent;
-    $('pk-delete').hidden = !p;
-    $('pk-build').hidden = !!(p && p.status === 'building');
-    $('pk-build').textContent = p ? 'Rebuild' : 'Prepare Download';
-
-    if (!p) {
-      body.innerHTML = `<p class="setting-hint" style="padding:8px;">No download package yet. Preparing one zips every visible file and gives you links to share — the originals stay untouched.</p>`;
-      return;
-    }
-
-    if (p.status === 'failed') {
-      body.innerHTML = `<div class="empty-note">Build failed: ${escapeHtml(p.error || 'unknown error')}</div>`;
-      return;
-    }
-
-    if (p.status === 'building') {
-      const pct = p.totalBytes ? Math.round(p.doneBytes / p.totalBytes * 100) : 0;
-      body.innerHTML = `
-        <div class="setting-group">
-          <label>Building — ${pct}%</label>
-          <div class="qr-track"><div class="qr-fill" style="width:${pct}%"></div></div>
-          <p class="setting-hint">${fmtBytes(p.doneBytes)} of ${fmtBytes(p.totalBytes)} · ${p.fileCount} file${p.fileCount === 1 ? '' : 's'}. Keep this window open until it finishes.</p>
-        </div>`;
-      return;
-    }
-
-    // Ready.
-    const parts = p.parts.map(part => `
-      <div class="gal-check-row" style="justify-content:space-between;">
-        <span>
-          <strong>${escapeHtml(part.label)}</strong>
-          <span class="setting-hint" style="margin-left:8px;">${fmtBytes(part.size)}${part.fileCount ? ' · ' + part.fileCount + ' file' + (part.fileCount === 1 ? '' : 's') : ''}</span>
-        </span>
-        <span>
-          <button class="link-btn" data-pk-copy="${escapeHtml(part.url)}">Copy link</button>
-          <button class="link-btn" data-pk-open="${escapeHtml(part.url)}">Open</button>
-        </span>
-      </div>`).join('');
-
-    const emailBlock = pkgEmailConfigured ? `
+    if (!p) { $('pk-existing').hidden = true; $('pk-delete').hidden = true; return; }
+    const sent = p.lastEmailedAt
+      ? `Sent ${formatDate(p.lastEmailedAt)}${p.lastEmailedTo && p.lastEmailedTo.length ? ' to ' + escapeHtml(p.lastEmailedTo.join(', ')) : ''}.`
+      : 'Not emailed yet.';
+    $('pk-existing').innerHTML = `
       <hr class="settings-divider">
       <div class="setting-group">
-        <label>Email these links</label>
-        <input type="text" id="pk-email-to" class="setting-input" placeholder="client@example.com, second@example.com">
-      </div>
-      <div class="setting-group">
-        <textarea id="pk-email-msg" class="setting-input" rows="3" placeholder="Optional note to include"></textarea>
-        <p class="setting-hint" id="pk-email-status">${p.lastEmailedAt ? 'Last sent ' + formatDate(p.lastEmailedAt) + (p.lastEmailedTo && p.lastEmailedTo.length ? ' to ' + escapeHtml(p.lastEmailedTo.join(', ')) : '') : ''}</p>
-        <button class="btn-ghost" id="pk-email-send">Send links</button>
-      </div>`
-      : `<hr class="settings-divider">
-      <p class="setting-hint">Set up Settings &rsaquo; Email to send these links to your client from here. The links above work regardless.</p>`;
-
-    body.innerHTML = `
-      <p class="setting-hint" style="margin-bottom:10px;">
-        ${p.parts.length} download${p.parts.length === 1 ? '' : 's'} · ${fmtBytes(p.totalBytes)} total · expires ${formatDate(p.expiresAt)}
-      </p>
-      ${parts}
-      ${emailBlock}`;
-
-    body.querySelectorAll('[data-pk-copy]').forEach(b => b.addEventListener('click', () => {
-      copyText(b.getAttribute('data-pk-copy'), 'Download link copied');
-    }));
-    body.querySelectorAll('[data-pk-open]').forEach(b => b.addEventListener('click', () => {
-      window.open(b.getAttribute('data-pk-open'), '_blank', 'noopener');
-    }));
-    const send = $('pk-email-send');
-    if (send) send.addEventListener('click', sendPackageEmail);
+        <label>Existing link</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" class="setting-input" id="pk-existing-link" readonly value="${escapeHtml(p.shareUrl)}">
+          <button class="btn-ghost" id="pk-existing-copy">Copy</button>
+          <button class="btn-ghost" id="pk-existing-open">Open</button>
+        </div>
+        <p class="setting-hint">${p.fileCount} file${p.fileCount === 1 ? '' : 's'} · ${fmtBytes(p.totalBytes)} · expires ${formatDate(p.expiresAt)}. ${sent}</p>
+      </div>`;
+    $('pk-existing').hidden = false;
+    $('pk-delete').hidden = false;
+    $('pk-existing-copy').addEventListener('click', () => copyText(p.shareUrl, 'Download link copied'));
+    $('pk-existing-open').addEventListener('click', () => window.open(p.shareUrl, '_blank', 'noopener'));
   }
 
-  // Each call does one time-boxed slice server-side; loop until it's done.
-  // Guarded by id so reopening the modal on another source can't hijack it.
-  async function drivePackageBuild(id) {
-    if (pkgBuilding) return;
-    pkgBuilding = true;
-    try {
-      for (;;) {
-        const res = await fetch(`/api/admin/packages/${id}/build`, { method: 'POST' });
-        if (!res.ok) {
-          const d = await res.json().catch(() => ({}));
-          if (pkgCurrent && pkgCurrent.id === id) {
-            pkgCurrent = { ...pkgCurrent, status: 'failed', error: d.error || `HTTP ${res.status}` };
-            renderPackage();
-          }
-          toast('Package build failed');
-          return;
-        }
-        const data = await res.json();
-        if (pkgCurrent && pkgCurrent.id === id) { pkgCurrent = data; renderPackage(); }
-        if (data.status !== 'building') {
-          toast(data.status === 'ready' ? 'Download package ready' : 'Package build failed');
-          return;
-        }
-      }
-    } catch (_) {
-      toast('Package build interrupted');
-    } finally {
-      pkgBuilding = false;
-    }
-  }
+  $('pk-to').addEventListener('input', updateSendLabel);
 
-  async function sendPackageEmail() {
-    const to = $('pk-email-to').value.trim();
-    if (!to) { $('pk-email-to').focus(); return; }
-    const btn = $('pk-email-send');
-    btn.disabled = true; btn.textContent = 'Sending…';
-    const res = await fetch(`/api/admin/packages/${pkgCurrent.id}/email`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to, message: $('pk-email-msg').value.trim() }),
-    });
-    const data = await res.json().catch(() => ({}));
-    btn.disabled = false; btn.textContent = 'Send links';
-    if (!res.ok) { toast(data.error || 'Could not send'); return; }
-    pkgCurrent.lastEmailedAt = new Date().toISOString();
-    pkgCurrent.lastEmailedTo = data.sent || [];
-    renderPackage();
-    toast('Links sent to ' + (data.sent || []).join(', '));
-  }
-
-  $('pk-close').addEventListener('click', () => pkgModal.hidden = true);
-  pkgModal.querySelector('.modal-backdrop').addEventListener('click', () => pkgModal.hidden = true);
-  $('pk-build').addEventListener('click', async () => {
+  $('pk-send').addEventListener('click', async () => {
     if (!pkgSource) return;
-    // Rebuilding replaces the old package (and invalidates its links) rather
-    // than leaving stale zips filling the disk.
-    if (pkgCurrent && !await confirmModal({
-      title: 'Rebuild package',
-      message: 'This replaces the current download package. The links you already shared will stop working.',
-      okText: 'Rebuild',
-    })) return;
+    const to = pkgEmailConfigured ? $('pk-to').value.trim() : '';
+    const message = $('pk-message').value.trim();
+    const btn = $('pk-send');
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = to ? 'Sending…' : 'Creating…';
 
-    $('pk-build').disabled = true;
-    if (pkgCurrent) await fetch(`/api/admin/packages/${pkgCurrent.id}`, { method: 'DELETE' }).catch(() => {});
     const res = await fetch('/api/admin/packages', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sourceType: pkgSource.type, sourceId: pkgSource.id }),
+      body: JSON.stringify({ sourceType: pkgSource.type, sourceId: pkgSource.id, to, message }),
     });
-    $('pk-build').disabled = false;
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) { toast(data.error || 'Could not start packaging'); return; }
+    btn.disabled = false;
+    btn.textContent = label;
+    if (!res.ok) { toast(data.error || 'Could not create the link'); return; }
+
     pkgCurrent = data;
-    renderPackage();
-    drivePackageBuild(data.id);
+    $('pk-link').value = data.shareUrl;
+    $('pk-result-hint').textContent =
+      `${data.fileCount} file${data.fileCount === 1 ? '' : 's'} · ${fmtBytes(data.totalBytes)} · expires ${formatDate(data.expiresAt)}`
+      + (data.lastEmailedTo && data.lastEmailedTo.length ? ` · emailed to ${data.lastEmailedTo.join(', ')}` : '');
+    $('pk-result').hidden = false;
+    $('pk-existing').hidden = true;
+    $('pk-delete').hidden = false;
+    toast(to ? 'Sent to ' + to : 'Download link ready');
   });
+
+  $('pk-copy').addEventListener('click', () => copyText($('pk-link').value, 'Download link copied'));
+  $('pk-open').addEventListener('click', () => window.open($('pk-link').value, '_blank', 'noopener'));
+  $('pk-close').addEventListener('click', () => pkgModal.hidden = true);
+  pkgModal.querySelector('.modal-backdrop').addEventListener('click', () => pkgModal.hidden = true);
+
   $('pk-delete').addEventListener('click', async () => {
     if (!pkgCurrent) return;
-    if (!await confirmModal({ title: 'Delete package', message: 'The download links will stop working immediately.', okText: 'Delete', danger: true })) return;
+    if (!await confirmModal({
+      title: 'Revoke link',
+      message: 'The link stops working immediately. Your files are not touched.',
+      okText: 'Revoke', danger: true,
+    })) return;
     await fetch(`/api/admin/packages/${pkgCurrent.id}`, { method: 'DELETE' });
     pkgCurrent = null;
-    renderPackage();
-    toast('Package deleted');
+    $('pk-result').hidden = true;
+    $('pk-existing').hidden = true;
+    $('pk-delete').hidden = true;
+    toast('Link revoked');
   });
 
   function copyCollectionLink(colId) {

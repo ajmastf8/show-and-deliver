@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Download</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/download.css?v=1">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner"></div>
+  </header>
+  <div id="mobile-nav" class="mobile-nav">
+    <div class="mobile-nav-links"></div>
+  </div>
+
+  <!-- Error / expired -->
+  <div id="error-view" class="state-view" style="display:none;">
+    <div class="state-inner">
+      <h1 id="error-title">Download Not Found</h1>
+      <p id="error-message">This link may have expired or been removed.</p>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div id="loading-view" class="state-view">
+    <div class="state-inner"><p>Loading…</p></div>
+  </div>
+
+  <!-- Download -->
+  <main id="download-view" class="dl-wrap" style="display:none;">
+    <h1 class="dl-title" id="dl-title"></h1>
+    <p class="dl-summary" id="dl-summary"></p>
+    <p class="dl-message" id="dl-message" hidden></p>
+
+    <div class="dl-parts" id="dl-parts"></div>
+
+    <div class="dl-individual">
+      <button class="dl-toggle" id="dl-toggle" aria-expanded="false">
+        <span class="dl-toggle-caret">▸</span>
+        <span id="dl-toggle-label">Or download files individually</span>
+      </button>
+      <div class="dl-file-list" id="dl-file-list" hidden></div>
+    </div>
+
+    <p class="dl-expiry" id="dl-expiry"></p>
+  </main>
+
+  <script src="/js/header.js?v=1"></script>
+  <script src="/js/download.js?v=1"></script>
+</body>
+</html>

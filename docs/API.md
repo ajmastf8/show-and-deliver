@@ -270,58 +270,80 @@ DELETE /api/admin/galleries/{gid}/headers/{hid}         # delete header
 
 ## Delivery packages
 
-Zips a whole gallery (or a whole collection) into numbered parts the client
-downloads from a token link — the WeTransfer-style handoff. The client-side
-"Download All" button on the proofing page is unaffected; this is the
-server-side alternative for handing over a finished job.
+Hands a whole gallery (or collection) to a client as one download link — the
+WeTransfer-style handoff. The client-side "Download All" button on the proofing
+page is unaffected; this is the server-side alternative for handing over a
+finished job.
 
 ```
 GET    /api/admin/packages[?sourceId=]     # list (newest first)
-POST   /api/admin/packages                 # create a build job
-POST   /api/admin/packages/{id}/build      # run one build slice
-POST   /api/admin/packages/{id}/email      # email the links
-DELETE /api/admin/packages/{id}            # delete package + parts
+POST   /api/admin/packages                 # create a link (and optionally send it)
+POST   /api/admin/packages/{id}/email      # re-send an existing link
+DELETE /api/admin/packages/{id}            # revoke
 
 GET    /api/packages/{token}               # public: package metadata
-GET    /api/packages/{token}/part/{index}  # public: download one part
+GET    /api/packages/{token}/part/{index}  # public: download a zip
+GET    /api/packages/{token}/file/{index}  # public: download one original file
 ```
 
-### How the build works
+### Nothing is zipped ahead of time
 
-Shared hosting has no background jobs and hard request timeouts, so building is
-**driven by the caller**. `POST /api/admin/packages` returns immediately with
-`status: "building"`; you then call `/build` repeatedly until `status` is
-`ready` or `failed`. Each `/build` call does a short, time-boxed slice and
-returns the current progress. Slices resume mid-file, so no single request ever
-has to survive a multi-GB copy, and a concurrent second caller is locked out
-and simply gets progress back.
+Creating a package writes a **plan** — which files are included, in what order —
+and returns immediately. It is a few stat() calls, so a 200 GB delivery is
+created as fast as a 200 MB one, and the link and its email go out at once.
+
+The zip is generated while the client downloads it and never touches the
+server's disk. That makes serving cost one read of each file. (Building the
+archive up front would cost three — a CRC pass, a copy pass, and the zip
+write — plus a fourth to serve it, plus the disk to hold it, which is what
+makes pre-built archives crawl on I/O-throttled shared hosting.)
+
+Entries are STOREd, never deflated: media is already compressed, so deflate
+burns CPU for nothing. That's also what makes the total size predictable, so
+these downloads send a real `Content-Length` and clients get an accurate
+progress bar. CRCs aren't known until the bytes have been read, so each entry
+carries a trailing data descriptor; every standard extractor reads the central
+directory at the end, where the real values live.
+
+### One link, any size
+
+Archives past the 4 GB zip32 ceiling switch to **Zip64** automatically, so a
+delivery of any size stays a single download. Smaller archives stay plain zip32,
+byte-for-byte as before, for the widest compatibility.
+
+Splitting into numbered parts is opt-in: set `PACKAGE_PART_MB` in `.env`
+(`0`, the default, never splits). When splitting is on, a file larger than one
+whole part is handed over as the original file rather than a multi-volume
+archive most clients can't open — that part reports `"kind": "file"`.
+
+Packages expire 7 days after creation and are swept on the next list/create.
+Expiring one deletes a plan, not gigabytes of archive.
+
+### Create and send
+
+`to` is optional. Include it and the link is emailed in the same call; omit it
+and you just get the link back to share yourself. `to` accepts a comma/space
+separated string or an array, and every address is validated before anything is
+sent. Sending requires email to be configured (Settings → Email, or
+`RESEND_API_KEY` / `SMTP_*` in `.env`).
 
 ```bash
-PKG=$(curl -s -X POST https://your.host/api/admin/packages \
+curl -X POST https://your.host/api/admin/packages \
   -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
-  -d '{"sourceType":"gallery","sourceId":"g_xxx"}' | jq -r .id)
-
-while :; do
-  STATUS=$(curl -s -X POST "https://your.host/api/admin/packages/$PKG/build" \
-    -H "Authorization: Bearer $API_TOKEN" | jq -r .status)
-  echo "$STATUS"
-  [ "$STATUS" = "building" ] || break
-done
+  -d '{
+        "sourceType": "gallery",
+        "sourceId": "g_xxx",
+        "to": "client@example.com",
+        "message": "Final files from Saturday."
+      }'
 ```
 
 `sourceType` is `gallery` or `collection`. A collection package puts each
-gallery in its own folder inside the archive.
+gallery in its own folder inside the archive. `message` is shown on the download
+page as well as in the email.
 
-### Parts
-
-Files are stored (not compressed — media doesn't compress) and split into parts
-of at most ~1.9 GB, overridable with `PACKAGE_PART_MB` in `.env`. A single file
-larger than one whole part can't be split across parts without producing a
-multi-volume archive most clients can't open, so it's offered as its own direct
-download instead (`"kind": "file"` rather than `"kind": "zip"`).
-
-Packages expire 7 days after creation and are swept on the next list/create.
-Creating one is refused with `507` if the disk doesn't have room for a copy.
+Errors: `400` if the source has no downloadable files or email isn't configured,
+`502` if the mail provider rejected the send (the package is not created).
 
 ### Package record
 
@@ -329,46 +351,63 @@ Creating one is refused with `507` if the disk doesn't have room for a copy.
 {
   "id": "pkg_xxx",
   "name": "Gallery or collection name",
-  "status": "building | ready | failed",
-  "error": "string | null",
+  "status": "ready",
   "totalBytes": 12884901888,
-  "doneBytes": 4294967296,
   "fileCount": 214,
+  "shareUrl": "https://your.host/d/{token}",
+  "message": "Final files from Saturday.",
   "parts": [
     {
       "index": 1,
       "kind": "zip | file",
       "label": "Part 1",
-      "size": 1992294400,
-      "fileCount": 38,
-      "url": "https://your.host/api/packages/{token}/part/1"
+      "size": 12884903422,
+      "fileCount": 214,
+      "url": "https://your.host/api/packages/{token}/part/1",
+      "files": [
+        {
+          "index": 0,
+          "name": "Opening Shot.mp4",
+          "size": 734003200,
+          "url": "https://your.host/api/packages/{token}/file/0"
+        }
+      ]
     }
   ],
   "createdAt": "ISO8601",
   "expiresAt": "ISO8601",
-  "readyAt": "ISO8601 | null",
   "lastEmailedAt": "ISO8601 | null",
   "lastEmailedTo": ["client@example.com"]
 }
 ```
 
-Part URLs are built from the Site Base URL in Settings → Email (`BASE_URL`), so
-set that correctly or the emailed links will point at the wrong host.
+`status` is always `ready` and exists only so older clients don't break — there
+is no build state to poll.
 
-### Emailing the links
+`shareUrl` and every download URL are built from the Site Base URL in
+Settings → Email (`BASE_URL`), so set that correctly or shared links will point
+at the wrong host.
 
-Requires email to be configured (Settings → Email, or `RESEND_API_KEY` /
-`SMTP_*` in `.env`); returns `400` if it isn't and `409` if the package isn't
-ready.
+### The download page
+
+`shareUrl` (`/d/{token}`) is a real page, and it's what the email links to. It
+shows the sender's message, one button for the whole transfer, and the full file
+list so a client who only wants one clip can take it on its own — no zip
+involved. The `part` and `file` endpoints are also usable directly, and both
+answer `HEAD` with the correct `Content-Length` for download managers.
+
+Note that downloads are not resumable: a client whose connection drops restarts
+that download. The per-file links keep that cheap.
+
+### Re-sending
 
 ```bash
 curl -X POST "https://your.host/api/admin/packages/$PKG/email" \
   -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
-  -d '{"to":"client@example.com, second@example.com","message":"Final files from Saturday."}'
+  -d '{"to":"client@example.com","message":"Resending — link expires Friday."}'
 ```
 
-`to` accepts a comma/space-separated string or an array. Every address is
-validated before anything is sent.
+Omit `message` to reuse the one stored on the package.
 
 ## End-to-end example
 

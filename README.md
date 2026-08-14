@@ -11,17 +11,24 @@ shared hosting (cPanel, Apache/LiteSpeed) with one-click in-app updates.
   optional password protection and expiry dates
 - **Collections** — group multiple galleries under one shareable link, with
   collection-level password, download, commenting, and expiry settings that
-  galleries inherit
+  galleries inherit. Collections are either client delivery or portfolio;
+  portfolio collections are public, with no password or expiry.
 - **Photos and videos** in the same gallery, with section headers, auto-generated
   thumbnails, and 2048px proxy images for a fast lightbox
 - **Client comments** with email notifications (Resend or SMTP)
 - **Downloads** — per-file or whole-gallery zip, with download tracking and view counts
+- **Delivery packages** — a WeTransfer-style handoff: zip a whole gallery or
+  collection server-side into numbered parts, then share the links or email
+  them to the client. Links expire after 7 days.
 - **Captions** — multi-language WebVTT support; captions embedded in MP4s are
   extracted automatically (one-click static ffmpeg installer for hosts without it)
 - **Import from server** — stage large files over FTP/SFTP and import them,
   bypassing web upload limits
-- **Upload API** — token-authenticated endpoint for third-party tools, with
-  chunked resumable uploads (see [docs/API.md](docs/API.md))
+- **Chunked uploads** — large files upload in resumable chunks from the admin
+  drag-and-drop as well as the API, so multi-GB video isn't capped by
+  `post_max_size` or killed by a request timeout
+- **Upload API** — token-authenticated endpoint for third-party tools
+  (see [docs/API.md](docs/API.md))
 - **In-app updates** — an Update button in the admin checks GitHub for new
   releases and installs them; no shell access needed
 
@@ -30,6 +37,18 @@ shared hosting (cPanel, Apache/LiteSpeed) with one-click in-app updates.
 - PHP 8.0+ with the `zip` extension (`curl` recommended)
 - Apache or LiteSpeed with `.htaccess` support (`mod_rewrite`)
 - No database, no Node.js, no composer — runtime data is stored as JSON files
+
+Any ordinary cPanel shared-hosting plan meets this. Providers people run it on
+include Hosting.com, GoDaddy, Hostinger, Bluehost, SiteGround, Namecheap,
+DreamHost, HostGator, InMotion, A2 Hosting, and GreenGeeks — but nothing here is
+provider-specific, so any host that gives you cPanel (or plain Apache/LiteSpeed
+with `.htaccess`) works. A VPS or dedicated box works too; you just don't need
+one.
+
+Two host settings are worth checking before you upload multi-GB video:
+`upload_max_filesize` / `post_max_size` (raise them in cPanel's MultiPHP INI
+Editor, or let the admin's chunked uploader work around them) and the disk quota
+on your plan.
 
 ## Install
 
@@ -77,6 +96,7 @@ site-data/
   thumbnails/   # auto-generated 640px thumbnails
   proxies/      # auto-generated 2048px lightbox images
   captions/     # WebVTT caption files
+  packages/     # built delivery packages (regenerable; safe to skip in backups)
 ```
 
 Back up `site-data/` (plus `.env` if you created one) and you have everything.

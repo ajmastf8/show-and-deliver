@@ -35,12 +35,21 @@ site-data/             # Runtime data (gitignored)
   proxies/             # 2048px web-optimized images for lightbox (auto-generated)
   logo/                # Site logo image
   imports/             # FTP import staging directory
+  packages/            # Built delivery packages (zip parts + manifest.json)
 ```
 
 ## Key Concepts
 
 - **Galleries** have a type: `reels` (portfolio) or `proofing` (client review)
-- **Collections** group multiple proofing galleries under one shareable link
+- **Collections** have the same two types and group galleries of their own type
+  under one shareable link. `proofing` collections are gated (password, expiry,
+  commenting, inherited by member galleries); `reels` collections are public.
+  Collections without a `type` are treated as `proofing`.
+- **Delivery packages** zip a gallery or collection into ~1.9 GB parts under
+  `site-data/packages/`, served from token links that expire after 7 days.
+  Built in caller-driven slices (`POST /api/admin/packages/{id}/build` in a
+  loop) because shared hosting has no background jobs — see the block comment
+  above `PACKAGES_DIR` in `index.php`.
 - **Items** in galleries can be videos or photos, plus section headers
 - **Proxy images** (2048px JPEG) are generated alongside thumbnails for fast lightbox loading
 - **Header config** is stored in `site-data/data/header.json` and rendered by `header.js`

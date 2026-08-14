@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.0 — 2026-08-14
+- **Delivery packages** — a WeTransfer-style handoff. "Deliver" on a client gallery or collection zips everything server-side into numbered parts (~1.9 GB each) and gives you links to share, with a one-click option to email them to the client when email is configured. Links expire after 7 days. Built in short resumable slices so multi-GB jobs don't hit shared hosting's request timeouts, and a file too big to fit in a part is offered as its own direct download rather than a multi-volume archive. The client-side "Download All" button is unchanged.
+- Large files dragged into the admin now upload in resumable chunks instead of one request, so multi-GB video no longer fails against `post_max_size` or a request timeout. A dropped connection resumes from the last acknowledged byte rather than restarting.
+- **Collections can be portfolio collections.** A collection now has a type, the same as galleries do: client delivery (the default) or portfolio. Portfolio collections group portfolio galleries under one public link — no password, no expiry, no commenting. Portfolio galleries get a share token so a portfolio collection can link to them.
+- The admin's left column is now split into Portfolio and Client delivery sections, each with its own galleries and collections, plus a Library section for Everything and Archive. Previously portfolio and client work were mixed into one list.
+- README now names the kind of hosting this runs on (Hosting.com, GoDaddy, Hostinger, Bluehost, SiteGround, and other cPanel plans) instead of only saying "shared hosting"
+- Fixed email errors being reported as a generic failure on PHP 8.5 hosts with `display_errors` on — a deprecation notice was being printed into the JSON response body
+
 ## 1.5.0 — 2026-08-14
 - Renamed the project to **Show & Deliver** — it both stands work up publicly (portfolio reels) and hands it off privately (client proofing), and the old name only described half of that
 - Updates no longer require a GitHub token. Installs made from a release zip now check GitHub Releases and install the update in pure PHP, so no git binary, shell access, or credentials are needed. Clones keep updating via git; the mode is auto-detected and can be forced with `DEPLOY_MODE`.

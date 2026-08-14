@@ -17,9 +17,12 @@ shared hosting (cPanel, Apache/LiteSpeed) with one-click in-app updates.
   thumbnails, and 2048px proxy images for a fast lightbox
 - **Client comments** with email notifications (Resend or SMTP)
 - **Downloads** — per-file or whole-gallery zip, with download tracking and view counts
-- **Delivery packages** — a WeTransfer-style handoff: zip a whole gallery or
-  collection server-side into numbered parts, then share the links or email
-  them to the client. Links expire after 7 days.
+- **Send files to clients** — a WeTransfer-style handoff: share a whole gallery
+  or collection as one download link, emailed to the client if you like. There's
+  no packaging wait at any size, because nothing is zipped onto the server —
+  the archive is generated as the client downloads it. The link is a real
+  download page, with the whole transfer on one button and the individual files
+  listed underneath. Links expire after 7 days.
 - **Captions** — multi-language WebVTT support; captions embedded in MP4s are
   extracted automatically (one-click static ffmpeg installer for hosts without it)
 - **Import from server** — stage large files over FTP/SFTP and import them,
@@ -96,7 +99,7 @@ site-data/
   thumbnails/   # auto-generated 640px thumbnails
   proxies/      # auto-generated 2048px lightbox images
   captions/     # WebVTT caption files
-  packages/     # built delivery packages (regenerable; safe to skip in backups)
+  packages/     # delivery link plans (tiny JSON; zips are never stored)
 ```
 
 Back up `site-data/` (plus `.env` if you created one) and you have everything.

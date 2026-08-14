@@ -2433,40 +2433,60 @@ if ($method === 'POST' && matchRoute('/api/collections/public/{token}/unlock', $
 // DELIVERY PACKAGES
 // ============================================================
 //
-// WeTransfer-style handoff: zip a whole gallery (or a whole collection) into
-// numbered parts the client downloads from a token link, optionally emailed to
-// them when the build finishes.
+// WeTransfer-style handoff: share one link, the client gets the whole gallery
+// (or collection) as numbered zip downloads — or picks off individual files.
 //
-// Why it's built the way it is:
+// Nothing is ever zipped on disk. Preparing a package only writes a plan: which
+// files go in which part, and in what order. The zip is generated on the fly
+// while the client downloads it, so:
 //
-//   * ZipArchive rewrites the entire archive on close(), which is O(n) per
-//     added file and hopeless for tens of GB. We write the ZIP format directly
-//     instead, appending each entry to the open part file.
-//   * Media is already compressed, so every entry is STOREd (method 0). That
-//     means the entry's size is known up front and the local header can be
-//     written before the payload — no data descriptors, no second pass.
-//   * The CRC comes from hash_file() before the copy starts, so the copy itself
-//     is resumable: a build slice can stop mid-file and the next one picks up
-//     at `copied` bytes. No request has to survive a multi-GB file.
-//   * Shared hosting can't run background jobs, so the admin drives the build
-//     by calling the build endpoint repeatedly; each call does a short,
-//     time-boxed slice and reports progress.
+//   * Preparing is instant — no build step, so the link and its email go out
+//     the moment you hit send, however many terabytes are involved.
+//   * Serving costs one read of each file. Pre-building cost three (CRC pass,
+//     copy pass, zip write) plus a fourth to serve it, which is what made it
+//     crawl on I/O-throttled shared hosting.
+//   * Zero extra disk. No temp files, no quota, nothing to clean up.
+//
+// Entries are STOREd, never deflated: media is already compressed, so deflate
+// would burn CPU to save nothing. Because STORE means the compressed size
+// equals the file size, the exact byte length of the whole archive is known
+// before a single byte is sent — so we send a real Content-Length and the
+// client gets a true progress bar rather than an unbounded spinner.
+//
+// CRCs aren't known until the bytes have been read, so each entry uses a
+// trailing data descriptor (general-purpose bit 3). Every standard extractor
+// reads the central directory at the end, where the real values live.
 
 define('PACKAGES_DIR', SITE_DATA . '/packages');
-// Comfortably under 2^31 so part sizes stay in signed-32-bit range on every
-// filesystem and PHP build, and small enough for any browser to download.
-// Overridable for hosts that want smaller parts (PACKAGE_PART_MB in .env).
-define('PACKAGE_PART_MAX_BYTES', max(1, (int)env('PACKAGE_PART_MB', 1900)) * 1024 * 1024);
+// A zip32 archive addresses its contents with 32-bit offsets, so a part has to
+// One link is one download, at any size: archives past the 4 GB zip32 ceiling
+// switch to Zip64 rather than being split. Splitting is opt-in for anyone who
+// would rather hand a client several smaller files — set PACKAGE_PART_MB in
+// .env; 0 (the default) means never split.
+define('PACKAGE_PART_MAX_BYTES', max(0, (int)env('PACKAGE_PART_MB', 0)) * 1024 * 1024);
 define('PACKAGE_TTL_SECONDS', 7 * 24 * 60 * 60);
-define('PACKAGE_BUILD_SLICE_SECONDS', 12);
-define('PACKAGE_COPY_CHUNK_BYTES', 8 * 1024 * 1024);
+define('PACKAGE_STREAM_CHUNK_BYTES', 1024 * 1024);
+
+// Fixed sizes of the ZIP structures we emit, used to compute Content-Length.
+define('ZIP_LOCAL_HEADER_BYTES', 30);
+define('ZIP_DATA_DESCRIPTOR_BYTES', 16);
+define('ZIP_CENTRAL_ENTRY_BYTES', 46);
+define('ZIP_EOCD_BYTES', 22);
+// Zip64 counterparts. A streamed Zip64 entry carries a 16-byte placeholder
+// extra field in its local header, an 8-byte-per-size data descriptor, and a
+// 24-byte extra field in its central directory record.
+define('ZIP64_LOCAL_EXTRA_BYTES', 20);
+define('ZIP64_DATA_DESCRIPTOR_BYTES', 24);
+define('ZIP64_CENTRAL_EXTRA_BYTES', 28);
+define('ZIP64_EOCD_BYTES', 56);
+define('ZIP64_LOCATOR_BYTES', 20);
+define('ZIP32_MAX', 0xFFFFFFFF);
 
 function ensurePackagesDir() {
-    if (!is_dir(PACKAGES_DIR)) {
-        @mkdir(PACKAGES_DIR, 0755, true);
-    }
-    // Everything else under site-data/ is served straight off disk by
-    // .htaccess. Packages are token-gated, so deny direct access here too.
+    if (!is_dir(PACKAGES_DIR)) @mkdir(PACKAGES_DIR, 0755, true);
+    // Manifests carry the share token, and everything else under site-data/ is
+    // served straight off disk. Deny direct access here as well as in the root
+    // .htaccess, in case a host ignores one of them.
     $guard = PACKAGES_DIR . '/.htaccess';
     if (!file_exists($guard)) {
         @file_put_contents($guard, "<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n  Order allow,deny\n  Deny from all\n</IfModule>\n");
@@ -2486,16 +2506,15 @@ function writePackage($m) {
     if (!is_dir(packageDir($m['id']))) mkdir(packageDir($m['id']), 0755, true);
     jsonWrite(packageManifestPath($m['id']), $m);
 }
-
 function deletePackageFiles($id) {
     $dir = packageDir($id);
     if (!is_dir($dir)) return;
     foreach (glob($dir . '/*') ?: [] as $f) @unlink($f);
-    @unlink($dir . '/.lock');
     @rmdir($dir);
 }
 
-// Drop packages past their expiry. Cheap enough to run on every list/create.
+// A package holds only a manifest, so expiring one is just deleting a plan —
+// there are no gigabytes of zip to reclaim.
 function cleanupExpiredPackages() {
     foreach (glob(PACKAGES_DIR . '/pkg_*', GLOB_ONLYDIR) ?: [] as $dir) {
         $m = jsonRead($dir . '/manifest.json');
@@ -2506,7 +2525,7 @@ function cleanupExpiredPackages() {
     }
 }
 
-// --- Minimal streaming ZIP writer (STORE only) ---
+// --- ZIP structures (STORE, streamed) ---
 
 function zipDosTime($ts) {
     if ((int)date('Y', $ts) < 1980) $ts = mktime(0, 0, 0, 1, 1, 1980);
@@ -2515,25 +2534,85 @@ function zipDosTime($ts) {
     return [$time, $date];
 }
 
-function zipLocalHeader($name, $crc, $size, $mtime) {
+// Whether this archive has to use Zip64. Decided once for the whole archive
+// rather than per entry: a uniform layout keeps the Content-Length arithmetic
+// honest and avoids a class of off-by-one bugs. Plain zip32 stays byte-for-byte
+// what it was, so small transfers keep the widest possible compatibility.
+function zipNeedsZip64(array $entries) {
+    $total = ZIP_EOCD_BYTES;
+    foreach ($entries as $e) {
+        if ((int)$e['size'] >= ZIP32_MAX) return true;
+        $nameLen = strlen($e['name']);
+        $total += ZIP_LOCAL_HEADER_BYTES + $nameLen + (int)$e['size'] + ZIP_DATA_DESCRIPTOR_BYTES
+                + ZIP_CENTRAL_ENTRY_BYTES + $nameLen;
+    }
+    return $total >= ZIP32_MAX;
+}
+
+// Bit 3 set: sizes and CRC follow the data in a descriptor, because we don't
+// know the CRC until we've streamed the file. Under Zip64 the local header also
+// carries a placeholder extra field, which is how a reader knows the descriptor
+// that follows uses 8-byte sizes.
+function zipStreamLocalHeader($name, $mtime, $z64 = false) {
     [$t, $d] = zipDosTime($mtime);
-    return pack('VvvvvvVVVvv', 0x04034b50, 20, 0, 0, $t, $d, $crc, $size, $size, strlen($name), 0) . $name;
+    $extra = $z64 ? pack('vvPP', 0x0001, 16, 0, 0) : '';
+    return pack('VvvvvvVVVvv',
+        0x04034b50, $z64 ? 45 : 20, 0x0008, 0, $t, $d,
+        0, 0, 0, strlen($name), strlen($extra)
+    ) . $name . $extra;
 }
 
-function zipCentralEntry($e) {
+function zipDataDescriptor($crc, $size, $z64 = false) {
+    return $z64
+        ? pack('VV', 0x08074b50, $crc) . pack('PP', $size, $size)
+        : pack('VVVV', 0x08074b50, $crc, $size, $size);
+}
+
+function zipCentralEntry($e, $z64 = false) {
     [$t, $d] = zipDosTime($e['mtime']);
+    // Under Zip64 the 32-bit size and offset fields are sentinels; the real
+    // 64-bit values live in the extra field.
+    $extra = $z64 ? pack('vv', 0x0001, 24) . pack('PPP', $e['size'], $e['size'], $e['offset']) : '';
     return pack('VvvvvvvVVVvvvvvVV',
-        0x02014b50, 20, 20, 0, 0, $t, $d,
-        $e['crc'], $e['size'], $e['size'],
-        strlen($e['name']), 0, 0, 0, 0, 0, $e['offset']
-    ) . $e['name'];
+        0x02014b50, $z64 ? 45 : 20, $z64 ? 45 : 20, 0x0008, 0, $t, $d,
+        $e['crc'],
+        $z64 ? ZIP32_MAX : $e['size'],
+        $z64 ? ZIP32_MAX : $e['size'],
+        strlen($e['name']), strlen($extra), 0, 0, 0, 0,
+        $z64 ? ZIP32_MAX : $e['offset']
+    ) . $e['name'] . $extra;
 }
 
-function zipEndOfCentralDirectory($count, $cdSize, $cdOffset) {
-    return pack('VvvvvVVv', 0x06054b50, 0, 0, $count, $count, $cdSize, $cdOffset, 0);
+function zipEndOfCentralDirectory($count, $cdSize, $cdOffset, $z64 = false) {
+    if (!$z64) {
+        return pack('VvvvvVVv', 0x06054b50, 0, 0, $count, $count, $cdSize, $cdOffset, 0);
+    }
+    // Zip64 EOCD record, then its locator, then a classic EOCD full of
+    // sentinels so zip32-only readers still find something well-formed.
+    $eocd64 = pack('V', 0x06064b50) . pack('P', 44) . pack('vvVV', 45, 45, 0, 0)
+        . pack('PPPP', $count, $count, $cdSize, $cdOffset);
+    $locator = pack('VV', 0x07064b50, 0) . pack('P', $cdOffset + $cdSize) . pack('V', 1);
+    $eocd = pack('VvvvvVVv', 0x06054b50, 0, 0, 0xFFFF, 0xFFFF, ZIP32_MAX, ZIP32_MAX, 0);
+    return $eocd64 . $locator . $eocd;
 }
 
-// Entry names must be unique inside a part and safe to extract anywhere.
+// Exact byte length of the archive for a set of entries. Deterministic because
+// STORE means compressed size == file size, which is what lets us send a real
+// Content-Length on a zip that doesn't exist yet.
+function zipStreamedSize(array $entries, $z64 = null) {
+    if ($z64 === null) $z64 = zipNeedsZip64($entries);
+    $total = ZIP_EOCD_BYTES + ($z64 ? ZIP64_EOCD_BYTES + ZIP64_LOCATOR_BYTES : 0);
+    foreach ($entries as $e) {
+        $nameLen = strlen($e['name']);
+        $total += ZIP_LOCAL_HEADER_BYTES + $nameLen + (int)$e['size']
+                + ($z64 ? ZIP64_LOCAL_EXTRA_BYTES + ZIP64_DATA_DESCRIPTOR_BYTES : ZIP_DATA_DESCRIPTOR_BYTES);
+        $total += ZIP_CENTRAL_ENTRY_BYTES + $nameLen + ($z64 ? ZIP64_CENTRAL_EXTRA_BYTES : 0);
+    }
+    return $total;
+}
+
+// --- Planning ---
+
 function packageEntryName($title, $filename, array &$used) {
     $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
     $base = preg_replace('/[^A-Za-z0-9 ._-]/', '', (string)$title);
@@ -2554,8 +2633,14 @@ function packageEntryName($title, $filename, array &$used) {
     return $name;
 }
 
+function packageFolderName($name) {
+    $clean = trim(preg_replace('/\s+/', ' ', preg_replace('/[^A-Za-z0-9 ._-]/', '', (string)$name)));
+    return $clean === '' ? 'Gallery' : substr($clean, 0, 80);
+}
+
 // Every downloadable item in a gallery, in gallery order. Section headers and
 // hidden items are skipped, as are records whose file has gone missing.
+// `file` is stored relative to UPLOADS_DIR so the manifest survives a move.
 function packageGalleryFiles($gallery, $prefix, array &$used) {
     $out = [];
     foreach (readGalleryVideos($gallery['id']) as $v) {
@@ -2567,7 +2652,7 @@ function packageGalleryFiles($gallery, $prefix, array &$used) {
         $name = packageEntryName($v['title'] ?? '', $v['filename'], $used);
         $out[] = [
             'name'  => $prefix === '' ? $name : ($prefix . '/' . $name),
-            'path'  => $path,
+            'file'  => $v['filename'],
             'size'  => (int)filesize($path),
             'mtime' => (int)@filemtime($path) ?: time(),
         ];
@@ -2575,225 +2660,96 @@ function packageGalleryFiles($gallery, $prefix, array &$used) {
     return $out;
 }
 
-// Folder-safe label for a gallery inside a collection package.
-function packageFolderName($name) {
-    $clean = trim(preg_replace('/\s+/', ' ', preg_replace('/[^A-Za-z0-9 ._-]/', '', (string)$name)));
-    return $clean === '' ? 'Gallery' : substr($clean, 0, 80);
-}
+// By default the whole transfer is a single download — Zip64 removes the 4 GB
+// reason to split. Splitting only happens when PACKAGE_PART_MB is set.
+function packagePlanParts(array $entries) {
+    $parts = [];
 
-// Append as much of the current entry as the time budget allows. Returns true
-// when the entry is fully written.
-function packageWriteSlice(&$m, $deadline) {
-    $p = &$m['parts'][count($m['parts']) - 1];
-    $pending = &$m['pending'];
-    $partPath = packageDir($m['id']) . '/' . $p['file'];
+    if (PACKAGE_PART_MAX_BYTES <= 0) {
+        $parts[] = ['kind' => 'zip', 'entries' => $entries];
+    } else {
+        $current = [];
+        $currentBytes = ZIP_EOCD_BYTES;
 
-    $fh = fopen($partPath, 'ab');
-    if (!$fh) throw new RuntimeException('Could not open package part for writing');
+        $flush = function () use (&$parts, &$current, &$currentBytes) {
+            if (!$current) return;
+            $parts[] = ['kind' => 'zip', 'entries' => $current];
+            $current = [];
+            $currentBytes = ZIP_EOCD_BYTES;
+        };
 
-    try {
-        // `$p['size']` is the authoritative byte count for this part: it is
-        // updated in lockstep with every successful write, so it survives
-        // across build slices and never depends on a cached stat().
-        if (empty($pending['headerWritten'])) {
-            $pending['offset'] = (int)$p['size'];
-            $header = zipLocalHeader($pending['name'], $pending['crc'], $pending['size'], $pending['mtime']);
-            if (fwrite($fh, $header) !== strlen($header)) throw new RuntimeException('Short write on ZIP header');
-            $pending['headerWritten'] = true;
-            $p['size'] += strlen($header);
-        }
-
-        $src = fopen($pending['path'], 'rb');
-        if (!$src) throw new RuntimeException('Could not read ' . basename($pending['path']));
-        if ($pending['copied'] > 0) fseek($src, $pending['copied']);
-
-        while ($pending['copied'] < $pending['size']) {
-            $want = (int)min(PACKAGE_COPY_CHUNK_BYTES, $pending['size'] - $pending['copied']);
-            $buf = fread($src, $want);
-            if ($buf === false || $buf === '') throw new RuntimeException('Unexpected end of ' . basename($pending['path']));
-            if (fwrite($fh, $buf) !== strlen($buf)) throw new RuntimeException('Short write building package part');
-            $pending['copied'] += strlen($buf);
-            $m['doneBytes'] += strlen($buf);
-            $p['size'] += strlen($buf);
-            if (microtime(true) >= $deadline) break;
-        }
-        fclose($src);
-    } finally {
-        fclose($fh);
-    }
-
-    if ($pending['copied'] < $pending['size']) return false;
-
-    $p['entries'][] = [
-        'name'   => $pending['name'],
-        'crc'    => $pending['crc'],
-        'size'   => $pending['size'],
-        'offset' => $pending['offset'],
-        'mtime'  => $pending['mtime'],
-    ];
-    $m['pending'] = null;
-    return true;
-}
-
-// Write the central directory and mark the part finished.
-function packageClosePart(&$m) {
-    if (!$m['parts']) return;
-    $p = &$m['parts'][count($m['parts']) - 1];
-    if (!empty($p['closed'])) return;
-    $partPath = packageDir($m['id']) . '/' . $p['file'];
-
-    $cdOffset = (int)$p['size'];
-    $cd = '';
-    foreach ($p['entries'] as $e) $cd .= zipCentralEntry($e);
-    $cd .= zipEndOfCentralDirectory(count($p['entries']), strlen($cd), $cdOffset);
-
-    $fh = fopen($partPath, 'ab');
-    if (!$fh) throw new RuntimeException('Could not finalize package part');
-    if (fwrite($fh, $cd) !== strlen($cd)) { fclose($fh); throw new RuntimeException('Short write finalizing package part'); }
-    fclose($fh);
-
-    $p['size'] = $cdOffset + strlen($cd);
-    $p['closed'] = true;
-    $p['fileCount'] = count($p['entries']);
-    // The per-entry records were only needed to build the central directory.
-    unset($p['entries']);
-}
-
-function packageOpenPart(&$m) {
-    $index = count($m['parts']) + 1;
-    $file = sprintf('part-%02d.zip', $index);
-    @unlink(packageDir($m['id']) . '/' . $file);
-    touch(packageDir($m['id']) . '/' . $file);
-    $m['parts'][] = ['index' => $index, 'kind' => 'zip', 'file' => $file, 'size' => 0, 'entries' => [], 'closed' => false];
-}
-
-// One time-boxed slice of work. Safe to call repeatedly; each call resumes
-// exactly where the previous one stopped.
-function packageBuildSlice($id) {
-    if (!readPackage($id)) return null;
-
-    // Two admin tabs polling the same package would interleave appends and
-    // corrupt both the part file and the manifest. Whoever loses the race just
-    // reports progress.
-    $lock = @fopen(packageDir($id) . '/.lock', 'c');
-    if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) {
-        if ($lock) fclose($lock);
-        return readPackage($id);
-    }
-
-    // Re-read under the lock: the winner of a previous race may have advanced
-    // the manifest since our first look.
-    $m = readPackage($id);
-    if (!$m || $m['status'] !== 'building') {
-        flock($lock, LOCK_UN);
-        fclose($lock);
-        return $m;
-    }
-
-    @set_time_limit(0);
-    $deadline = microtime(true) + PACKAGE_BUILD_SLICE_SECONDS;
-
-    try {
-        while (true) {
-            // Finish whatever entry was left mid-copy before starting a new one.
-            if (!empty($m['pending'])) {
-                if (!packageWriteSlice($m, $deadline)) break;
-                if (microtime(true) >= $deadline) break;
-                continue;
-            }
-
-            if ($m['cursor'] >= count($m['queue'])) {
-                packageClosePart($m);
-                $m['status'] = 'ready';
-                $m['readyAt'] = date('c');
-                break;
-            }
-
-            $entry = $m['queue'][$m['cursor']];
-            $m['cursor']++;
-
-            if (!is_file($entry['path'])) continue;
+        foreach ($entries as $e) {
+            $nameLen = strlen($e['name']);
+            $cost = ZIP_LOCAL_HEADER_BYTES + $nameLen + $e['size'] + ZIP64_DATA_DESCRIPTOR_BYTES
+                  + ZIP_CENTRAL_ENTRY_BYTES + $nameLen;
 
             // A file bigger than a whole part can't be split across parts
-            // without producing a multi-volume archive most clients can't open.
-            // Ship it as its own direct download instead — zipping a single
-            // 4 GB video buys the client nothing anyway.
-            if ($entry['size'] > PACKAGE_PART_MAX_BYTES) {
-                packageClosePart($m);
-                $m['parts'][] = [
-                    'index'     => count($m['parts']) + 1,
-                    'kind'      => 'file',
-                    'file'      => basename($entry['path']),
-                    'name'      => basename($entry['name']),
-                    'size'      => $entry['size'],
-                    'fileCount' => 1,
-                    'closed'    => true,
-                ];
-                $m['doneBytes'] += $entry['size'];
+            // without a multi-volume archive most clients can't open. Hand it
+            // over as the original file instead — zipping a single 6 GB video
+            // buys nothing anyway.
+            if ($cost + ZIP_EOCD_BYTES > PACKAGE_PART_MAX_BYTES) {
+                $flush();
+                $parts[] = ['kind' => 'file', 'entries' => [$e]];
                 continue;
             }
-
-            $open = $m['parts'] ? $m['parts'][count($m['parts']) - 1] : null;
-            $usable = $open && $open['kind'] === 'zip' && empty($open['closed']);
-            // Leave room for the entry plus its headers and this part's share
-            // of the central directory.
-            $overhead = strlen($entry['name']) * 2 + 128;
-            if ($usable && $open['size'] + $entry['size'] + $overhead > PACKAGE_PART_MAX_BYTES) {
-                packageClosePart($m);
-                $usable = false;
-            }
-            if (!$usable) packageOpenPart($m);
-
-            $crc = hash_file('crc32b', $entry['path']);
-            $m['pending'] = [
-                'name'          => $entry['name'],
-                'path'          => $entry['path'],
-                'size'          => $entry['size'],
-                'mtime'         => $entry['mtime'],
-                'crc'           => $crc === false ? 0 : hexdec($crc),
-                'copied'        => 0,
-                'offset'        => 0,
-                'headerWritten' => false,
-            ];
+            if ($currentBytes + $cost > PACKAGE_PART_MAX_BYTES) $flush();
+            $current[] = $e;
+            $currentBytes += $cost;
         }
-    } catch (Throwable $e) {
-        $m['status'] = 'failed';
-        $m['error'] = $e->getMessage();
+        $flush();
     }
 
-    writePackage($m);
-    flock($lock, LOCK_UN);
-    fclose($lock);
-    return $m;
+    foreach ($parts as $i => &$p) {
+        $p['index'] = $i + 1;
+        $p['size'] = $p['kind'] === 'file' ? (int)$p['entries'][0]['size'] : zipStreamedSize($p['entries']);
+    }
+    unset($p);
+    return $parts;
 }
 
-// What the admin UI and the client link both render from.
+// --- Payloads ---
+
+function packageBaseUrl() {
+    return rtrim(getEmailConfig()['baseUrl'] ?: '', '/');
+}
+
 function packagePayload($m, $includeInternals = false) {
-    $base = rtrim(getEmailConfig()['baseUrl'] ?: '', '/');
+    $base = packageBaseUrl();
     $parts = [];
+    $fileIndex = 0;
     foreach ($m['parts'] as $p) {
-        if (empty($p['closed'])) continue;
+        $files = [];
+        foreach ($p['entries'] as $e) {
+            $files[] = [
+                'index' => $fileIndex,
+                'name'  => $e['name'],
+                'size'  => (int)$e['size'],
+                'url'   => "$base/api/packages/{$m['token']}/file/$fileIndex",
+            ];
+            $fileIndex++;
+        }
         $parts[] = [
             'index'     => $p['index'],
             'kind'      => $p['kind'],
-            'label'     => $p['kind'] === 'file' ? ($p['name'] ?? $p['file']) : sprintf('Part %d', $p['index']),
+            'label'     => $p['kind'] === 'file' ? basename($p['entries'][0]['name']) : sprintf('Part %d', $p['index']),
             'size'      => (int)$p['size'],
-            'fileCount' => (int)($p['fileCount'] ?? 0),
+            'fileCount' => count($p['entries']),
             'url'       => "$base/api/packages/{$m['token']}/part/{$p['index']}",
+            'files'     => $files,
         ];
     }
     $out = [
-        'id'         => $m['id'],
-        'name'       => $m['name'],
-        'status'     => $m['status'],
-        'error'      => $m['error'] ?? null,
-        'totalBytes' => (int)$m['totalBytes'],
-        'doneBytes'  => (int)$m['doneBytes'],
-        'fileCount'  => count($m['queue']),
-        'parts'      => $parts,
-        'createdAt'  => $m['createdAt'],
-        'expiresAt'  => $m['expiresAt'],
-        'readyAt'    => $m['readyAt'] ?? null,
+        'id'            => $m['id'],
+        'name'          => $m['name'],
+        // Kept for API compatibility: a package is ready the moment it exists.
+        'status'        => 'ready',
+        'totalBytes'    => (int)$m['totalBytes'],
+        'fileCount'     => (int)$m['fileCount'],
+        'parts'         => $parts,
+        'shareUrl'      => "$base/d/{$m['token']}",
+        'createdAt'     => $m['createdAt'],
+        'expiresAt'     => $m['expiresAt'],
+        'message'       => $m['message'] ?? '',
         'lastEmailedAt' => $m['lastEmailedAt'] ?? null,
         'lastEmailedTo' => $m['lastEmailedTo'] ?? [],
     ];
@@ -2813,9 +2769,46 @@ function findPackageByToken($token) {
     return null;
 }
 
+// Build the plan for a gallery or collection. Pure bookkeeping — no file reads
+// beyond stat(), so this returns immediately whatever the size.
+function buildPackagePlan($sourceType, $sourceId) {
+    $used = [];
+    $entries = [];
+    $name = '';
+
+    if ($sourceType === 'gallery') {
+        $gallery = null;
+        foreach (readGalleries() as $g) { if ($g['id'] === $sourceId) { $gallery = $g; break; } }
+        if (!$gallery) respondError('Gallery not found', 404);
+        $name = $gallery['name'];
+        $entries = packageGalleryFiles($gallery, '', $used);
+    } else {
+        $col = null;
+        foreach (readCollections() as $c) { if ($c['id'] === $sourceId) { $col = $c; break; } }
+        if (!$col) respondError('Collection not found', 404);
+        $name = $col['name'];
+        $galMap = [];
+        foreach (readGalleries() as $g) $galMap[$g['id']] = $g;
+        // One folder per gallery so the extracted tree matches what the client
+        // sees on the collection page. Names only need to be unique within a
+        // folder, so each gallery gets its own dedupe scope.
+        $usedFolders = [];
+        foreach ($col['galleryIds'] ?? [] as $gid) {
+            if (!isset($galMap[$gid])) continue;
+            $folder = packageFolderName($galMap[$gid]['name']);
+            $n = 2;
+            while (isset($usedFolders[strtolower($folder)])) { $folder = packageFolderName($galMap[$gid]['name']) . " ($n)"; $n++; }
+            $usedFolders[strtolower($folder)] = true;
+            $folderUsed = [];
+            $entries = array_merge($entries, packageGalleryFiles($galMap[$gid], $folder, $folderUsed));
+        }
+    }
+
+    return [$name, $entries];
+}
+
 // --- Admin routes ---
 
-// List packages, newest first. `?sourceId=` narrows to one gallery/collection.
 if ($method === 'GET' && $uri === '/api/admin/packages') {
     requireAuth();
     ensurePackagesDir();
@@ -2832,8 +2825,8 @@ if ($method === 'GET' && $uri === '/api/admin/packages') {
     respond($out);
 }
 
-// Create a build job. Returns immediately; the client then calls /build in a
-// loop until status leaves "building".
+// Create a share link. Returns a ready package immediately; pass `to` to email
+// it in the same call, which is the normal path from the admin.
 if ($method === 'POST' && $uri === '/api/admin/packages') {
     requireAuth();
     ensurePackagesDir();
@@ -2843,77 +2836,44 @@ if ($method === 'POST' && $uri === '/api/admin/packages') {
     $sourceId = trim((string)($input['sourceId'] ?? ''));
     if ($sourceId === '') respondError('sourceId is required', 400);
 
-    $used = [];
-    $queue = [];
-    $name = '';
+    [$name, $entries] = buildPackagePlan($sourceType, $sourceId);
+    if (!$entries) respondError('Nothing to send — this ' . $sourceType . ' has no downloadable files', 400);
 
-    if ($sourceType === 'gallery') {
-        $gallery = null;
-        foreach (readGalleries() as $g) { if ($g['id'] === $sourceId) { $gallery = $g; break; } }
-        if (!$gallery) respondError('Gallery not found', 404);
-        $name = $gallery['name'];
-        $queue = packageGalleryFiles($gallery, '', $used);
-    } else {
-        $col = null;
-        foreach (readCollections() as $c) { if ($c['id'] === $sourceId) { $col = $c; break; } }
-        if (!$col) respondError('Collection not found', 404);
-        $name = $col['name'];
-        $galMap = [];
-        foreach (readGalleries() as $g) $galMap[$g['id']] = $g;
-        // One folder per gallery so the client's extracted tree matches what
-        // they see on the collection page. Names only have to be unique within
-        // a folder, so each gallery gets its own dedupe scope.
-        $usedFolders = [];
-        foreach ($col['galleryIds'] ?? [] as $gid) {
-            if (!isset($galMap[$gid])) continue;
-            // Two galleries can share a name; their folders can't.
-            $folder = packageFolderName($galMap[$gid]['name']);
-            $n = 2;
-            while (isset($usedFolders[strtolower($folder)])) { $folder = packageFolderName($galMap[$gid]['name']) . " ($n)"; $n++; }
-            $usedFolders[strtolower($folder)] = true;
-            $folderUsed = [];
-            $queue = array_merge($queue, packageGalleryFiles($galMap[$gid], $folder, $folderUsed));
-        }
-    }
+    $recipients = parseEmailRecipients($input['to'] ?? '');
+    $note = trim((string)($input['message'] ?? ''));
 
-    if (!$queue) respondError('Nothing to package — this ' . $sourceType . ' has no downloadable files', 400);
-
-    $totalBytes = array_sum(array_column($queue, 'size'));
-    // Zipping duplicates every byte on disk. Refuse up front rather than
-    // filling the account's quota and failing halfway through.
-    $free = @disk_free_space(SITE_DATA);
-    if ($free !== false && $free < $totalBytes * 1.05) {
-        respondError('Not enough free disk space to build this package (needs ~' . round($totalBytes / 1073741824, 1) . ' GB, ' . round($free / 1073741824, 1) . ' GB free)', 507);
-    }
-
+    $parts = packagePlanParts($entries);
     $m = [
         'id'         => generateId('pkg_'),
         'token'      => generateToken(24),
         'sourceType' => $sourceType,
         'sourceId'   => $sourceId,
         'name'       => $name,
-        'status'     => 'building',
-        'error'      => null,
-        'queue'      => $queue,
-        'cursor'     => 0,
-        'pending'    => null,
-        'parts'      => [],
-        'totalBytes' => $totalBytes,
-        'doneBytes'  => 0,
+        'message'    => $note,
+        'parts'      => $parts,
+        'fileCount'  => count($entries),
+        'totalBytes' => array_sum(array_column($entries, 'size')),
         'createdAt'  => date('c'),
         'expiresAt'  => date('c', time() + PACKAGE_TTL_SECONDS),
-        'readyAt'    => null,
     ];
+
+    if ($recipients) {
+        requireEmailConfigured();
+        // Send before persisting: a package whose email bounced shouldn't be
+        // recorded as sent.
+        foreach ($recipients as $addr) {
+            try {
+                sendPackageLinks($m, $addr, $note);
+            } catch (Exception $e) {
+                respondError($e->getMessage(), 502);
+            }
+        }
+        $m['lastEmailedAt'] = date('c');
+        $m['lastEmailedTo'] = $recipients;
+    }
+
     writePackage($m);
     respond(packagePayload($m, true), 201);
-}
-
-// Do one slice of work. The admin UI calls this on a loop.
-if ($method === 'POST' && matchRoute('/api/admin/packages/{id}/build', $uri, $params)) {
-    requireAuth();
-    $m = packageBuildSlice($params['id']);
-    if (!$m) respondError('Package not found', 404);
-    respond(packagePayload($m, true));
 }
 
 if ($method === 'DELETE' && matchRoute('/api/admin/packages/{id}', $uri, $params)) {
@@ -2932,77 +2892,65 @@ function formatByteSize($bytes) {
     return ($i === 0 ? (int)$n : round($n, $n < 10 ? 1 : 0)) . ' ' . $units[$i];
 }
 
-// Email the ready part links to a client. Deliberately plain: a short intro,
-// the optional note, then one clearly labelled link per part.
-function sendPackageLinks($m, $to, $note) {
-    $config = getEmailConfig();
-    if (!$config['resendApiKey'] && !$config['host'] && !$config['from']) {
-        throw new Exception('Email is not configured — set it up in Settings > Email first');
+function parseEmailRecipients($raw) {
+    $list = is_array($raw) ? $raw : preg_split('/[,;\s]+/', (string)$raw);
+    $out = [];
+    foreach ($list as $addr) {
+        $addr = trim((string)$addr);
+        if ($addr === '') continue;
+        if (!filter_var($addr, FILTER_VALIDATE_EMAIL)) respondError('Not a valid email address: ' . $addr, 400);
+        $out[] = $addr;
     }
+    return $out;
+}
 
+function requireEmailConfigured() {
+    $cfg = getEmailConfig();
+    if (!$cfg['resendApiKey'] && !$cfg['host'] && !$cfg['from']) {
+        respondError('Email is not configured — set it up in Settings > Email first', 400);
+    }
+}
+
+// One link to the download page, the way a transfer service does it. The page
+// lists the parts and the individual files.
+function sendPackageLinks($m, $to, $note) {
     $payload = packagePayload($m);
-    $parts = $payload['parts'];
-    $count = count($parts);
     $expires = date('F j, Y', strtotime($m['expiresAt']));
     $subject = 'Your files from "' . $m['name'] . '" are ready';
+    $count = $payload['fileCount'];
+    $summary = $count . ' file' . ($count === 1 ? '' : 's') . ' · ' . formatByteSize($payload['totalBytes']);
 
     $text = ['Your files from "' . $m['name'] . '" are ready to download.', ''];
     if ($note !== '') { $text[] = $note; $text[] = ''; }
-    $text[] = $count === 1
-        ? 'One download (' . formatByteSize($payload['totalBytes']) . '):'
-        : 'The files are split into ' . $count . ' downloads — please grab all of them:';
+    $text[] = $summary;
     $text[] = '';
-
-    $rows = '';
-    foreach ($parts as $p) {
-        $label = $count === 1 && $p['kind'] === 'zip' ? 'Download' : $p['label'];
-        $meta = formatByteSize($p['size']) . ($p['fileCount'] ? ' · ' . $p['fileCount'] . ' file' . ($p['fileCount'] === 1 ? '' : 's') : '');
-        $text[] = "$label ($meta)";
-        $text[] = '  ' . $p['url'];
-        $rows .= '<tr><td style="padding:10px 0;border-bottom:1px solid #eee;">'
-            . '<a href="' . escHtml($p['url']) . '" style="color:#0019ff;font-weight:600;text-decoration:none;font-size:15px;">' . escHtml($label) . '</a>'
-            . '<div style="color:#8a8a8a;font-size:12px;margin-top:2px;">' . escHtml($meta) . '</div></td></tr>';
-    }
+    $text[] = 'Download: ' . $payload['shareUrl'];
     $text[] = '';
-    $text[] = "These links expire on $expires.";
+    $text[] = "This link expires on $expires.";
 
     $html = '<div style="font-family:sans-serif;max-width:600px;color:#333;">'
         . '<h2 style="font-size:18px;margin:0 0 12px;">Your files from &ldquo;' . escHtml($m['name']) . '&rdquo; are ready</h2>'
         . ($note !== '' ? '<p style="font-size:14px;color:#5f5f5f;white-space:pre-line;">' . escHtml($note) . '</p>' : '')
-        . '<p style="font-size:14px;color:#5f5f5f;">'
-        . ($count === 1
-            ? 'Total size ' . escHtml(formatByteSize($payload['totalBytes'])) . '.'
-            : 'The download is split into ' . $count . ' parts. Please download all of them &mdash; each is a separate zip file.')
-        . '</p>'
-        . '<table style="width:100%;border-collapse:collapse;">' . $rows . '</table>'
-        . '<p style="font-size:12px;color:#8a8a8a;margin-top:18px;">These links expire on ' . escHtml($expires) . '.</p>'
+        . '<p style="font-size:14px;color:#5f5f5f;">' . escHtml($summary) . '</p>'
+        . '<p style="margin:22px 0;"><a href="' . escHtml($payload['shareUrl']) . '" style="background:#0019ff;color:#fff;padding:12px 22px;border-radius:4px;text-decoration:none;font-weight:600;font-size:15px;display:inline-block;">Download your files</a></p>'
+        . '<p style="font-size:12px;color:#8a8a8a;">Or paste this into your browser:<br>' . escHtml($payload['shareUrl']) . '</p>'
+        . '<p style="font-size:12px;color:#8a8a8a;margin-top:18px;">This link expires on ' . escHtml($expires) . '.</p>'
         . '</div>';
 
     sendEmail($to, $subject, implode("\n", $text), $html);
 }
 
+// Re-send an existing package.
 if ($method === 'POST' && matchRoute('/api/admin/packages/{id}/email', $uri, $params)) {
     requireAuth();
     $m = readPackage($params['id']);
     if (!$m) respondError('Package not found', 404);
-    if ($m['status'] !== 'ready') respondError('Package is not ready yet', 409);
 
     $input = getInput();
-    $note = trim((string)($input['message'] ?? ''));
-    $recipients = [];
-    // Accept "a@b.com, c@d.com" as well as a list.
-    foreach (is_array($input['to'] ?? null) ? $input['to'] : preg_split('/[,;\s]+/', (string)($input['to'] ?? '')) as $addr) {
-        $addr = trim((string)$addr);
-        if ($addr === '') continue;
-        if (!filter_var($addr, FILTER_VALIDATE_EMAIL)) respondError('Not a valid email address: ' . $addr, 400);
-        $recipients[] = $addr;
-    }
+    $note = trim((string)($input['message'] ?? $m['message'] ?? ''));
+    $recipients = parseEmailRecipients($input['to'] ?? '');
     if (!$recipients) respondError('At least one recipient is required', 400);
-
-    $cfg = getEmailConfig();
-    if (!$cfg['resendApiKey'] && !$cfg['host'] && !$cfg['from']) {
-        respondError('Email is not configured — set it up in Settings > Email first', 400);
-    }
+    requireEmailConfigured();
 
     $sent = [];
     foreach ($recipients as $addr) {
@@ -3010,69 +2958,150 @@ if ($method === 'POST' && matchRoute('/api/admin/packages/{id}/email', $uri, $pa
             sendPackageLinks($m, $addr, $note);
             $sent[] = $addr;
         } catch (Exception $e) {
-            // Report which addresses did go out rather than losing that on the
-            // first failure.
-            respondError($e->getMessage() . ($sent ? ' (already sent to ' . implode(', ', $sent) . ')' : ''), 500);
+            respondError($e->getMessage() . ($sent ? ' (already sent to ' . implode(', ', $sent) . ')' : ''), 502);
         }
     }
 
+    $m['message'] = $note;
     $m['lastEmailedAt'] = date('c');
     $m['lastEmailedTo'] = $recipients;
     writePackage($m);
     respond(['ok' => true, 'sent' => $sent]);
 }
 
-// --- Client download routes (token, no login) ---
+// --- Client routes (token, no login) ---
 
-function getReadyPackage($token) {
+function getLivePackage($token) {
     $m = findPackageByToken($token);
     if (!$m) respondError('Download not found', 404);
     if (!empty($m['expiresAt']) && strtotime($m['expiresAt']) < time()) respondError('This download link has expired', 410);
-    if ($m['status'] !== 'ready') respondError('This download is still being prepared', 409);
     return $m;
 }
 
-if ($method === 'GET' && matchRoute('/api/packages/{token}', $uri, $params)) {
-    $m = getReadyPackage($params['token']);
-    respond(packagePayload($m));
+if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{token}', $uri, $params)) {
+    respond(packagePayload(getLivePackage($params['token'])));
 }
 
-if ($method === 'GET' && matchRoute('/api/packages/{token}/part/{index}', $uri, $params)) {
-    $m = getReadyPackage($params['token']);
-    $part = null;
-    foreach ($m['parts'] as $p) { if ((int)$p['index'] === (int)$params['index']) { $part = $p; break; } }
-    if (!$part || empty($part['closed'])) respondError('Part not found', 404);
-
-    // 'file' parts point at the original upload; 'zip' parts at our own build.
-    $path = $part['kind'] === 'file'
-        ? UPLOADS_DIR . '/' . basename($part['file'])
-        : packageDir($m['id']) . '/' . basename($part['file']);
-    if (!is_file($path)) respondError('Part not found', 404);
-
-    $label = packageFolderName($m['name']);
-    $downloadName = $part['kind'] === 'file'
-        ? ($part['name'] ?? basename($path))
-        : sprintf('%s - part %d of %d.zip', $label, $part['index'], count($m['parts']));
-
-    // Same streaming discipline as single-file downloads: no output buffering,
-    // no compression, no execution-time cap.
+// Prepare a response for streaming: no buffering, no compression, no time cap.
+// Exits after the headers on a HEAD, which download managers send first to
+// size up the transfer.
+function beginBinaryResponse($filename, $contentType, $length) {
     @set_time_limit(0);
     @ini_set('zlib.output_compression', '0');
     while (ob_get_level() > 0) { ob_end_clean(); }
+    header('Content-Type: ' . $contentType);
+    header('Content-Disposition: attachment; filename="' . str_replace('"', '', $filename) . '"');
+    if ($length !== null) header('Content-Length: ' . $length);
+    // Proxies that buffer would defeat the point of streaming.
+    header('X-Accel-Buffering: no');
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'HEAD') exit;
+}
 
-    header('Content-Type: ' . ($part['kind'] === 'file' ? 'application/octet-stream' : 'application/zip'));
-    header('Content-Disposition: attachment; filename="' . str_replace('"', '', $downloadName) . '"');
-    header('Content-Length: ' . filesize($path));
+// One original file, straight from uploads/. This is the "no zip at all" path.
+if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{token}/file/{fileIndex}', $uri, $params)) {
+    $m = getLivePackage($params['token']);
+    $flat = [];
+    foreach ($m['parts'] as $p) foreach ($p['entries'] as $e) $flat[] = $e;
+    $entry = $flat[(int)$params['fileIndex']] ?? null;
+    if (!$entry) respondError('File not found', 404);
 
+    $path = UPLOADS_DIR . '/' . basename($entry['file']);
+    if (!is_file($path)) respondError('File not found', 404);
+
+    beginBinaryResponse(basename($entry['name']), 'application/octet-stream', filesize($path));
     $fp = fopen($path, 'rb');
-    if ($fp === false) respondError('Part not found', 404);
-    while (!feof($fp)) {
-        echo fread($fp, 65536);
-        flush();
-    }
+    if ($fp === false) respondError('File not found', 404);
+    while (!feof($fp)) { echo fread($fp, PACKAGE_STREAM_CHUNK_BYTES); flush(); }
     fclose($fp);
     exit;
 }
+
+// One part, zipped as it goes out. Never touches disk.
+if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{token}/part/{index}', $uri, $params)) {
+    $m = getLivePackage($params['token']);
+    $part = null;
+    foreach ($m['parts'] as $p) { if ((int)$p['index'] === (int)$params['index']) { $part = $p; break; } }
+    if (!$part) respondError('Part not found', 404);
+
+    $label = packageFolderName($m['name']);
+
+    // A single oversized file is handed over as-is rather than wrapped.
+    if ($part['kind'] === 'file') {
+        $entry = $part['entries'][0];
+        $path = UPLOADS_DIR . '/' . basename($entry['file']);
+        if (!is_file($path)) respondError('Part not found', 404);
+        beginBinaryResponse(basename($entry['name']), 'application/octet-stream', filesize($path));
+        $fp = fopen($path, 'rb');
+        while (!feof($fp)) { echo fread($fp, PACKAGE_STREAM_CHUNK_BYTES); flush(); }
+        fclose($fp);
+        exit;
+    }
+
+    // Re-stat everything first. If the gallery has changed since the plan was
+    // made, the precomputed length would be a lie — so fall back to a chunked
+    // response (no Content-Length) rather than truncating the client's file.
+    $entries = [];
+    $planIntact = true;
+    foreach ($part['entries'] as $e) {
+        $path = UPLOADS_DIR . '/' . basename($e['file']);
+        if (!is_file($path)) { $planIntact = false; continue; }
+        $size = (int)filesize($path);
+        if ($size !== (int)$e['size']) { $planIntact = false; $e['size'] = $size; }
+        $e['path'] = $path;
+        $entries[] = $e;
+    }
+    if (!$entries) respondError('Part not found', 404);
+
+    $partCount = count($m['parts']);
+    $filename = $partCount === 1
+        ? "$label.zip"
+        : sprintf('%s - part %d of %d.zip', $label, $part['index'], $partCount);
+
+    $z64 = zipNeedsZip64($entries);
+    beginBinaryResponse($filename, 'application/zip', $planIntact ? zipStreamedSize($entries, $z64) : null);
+
+    // Abandon the stream if the client disconnects; there's nothing to clean up.
+    ignore_user_abort(false);
+
+    $offset = 0;
+    $central = [];
+    foreach ($entries as $e) {
+        $header = zipStreamLocalHeader($e['name'], $e['mtime'], $z64);
+        echo $header;
+        $entryOffset = $offset;
+        $offset += strlen($header);
+
+        $fp = fopen($e['path'], 'rb');
+        if ($fp === false) continue;
+        $crc = hash_init('crc32b');
+        $written = 0;
+        while (!feof($fp) && $written < $e['size']) {
+            $buf = fread($fp, (int)min(PACKAGE_STREAM_CHUNK_BYTES, $e['size'] - $written));
+            if ($buf === false || $buf === '') break;
+            hash_update($crc, $buf);
+            echo $buf;
+            flush();
+            $written += strlen($buf);
+        }
+        fclose($fp);
+        $crcValue = hexdec(hash_final($crc));
+
+        $descriptor = zipDataDescriptor($crcValue, $written, $z64);
+        echo $descriptor;
+        $offset += $written + strlen($descriptor);
+
+        $central[] = ['name' => $e['name'], 'crc' => $crcValue, 'size' => $written, 'offset' => $entryOffset, 'mtime' => $e['mtime']];
+    }
+
+    $cdOffset = $offset;
+    $cd = '';
+    foreach ($central as $e) $cd .= zipCentralEntry($e, $z64);
+    echo $cd;
+    echo zipEndOfCentralDirectory(count($central), strlen($cd), $cdOffset, $z64);
+    flush();
+    exit;
+}
+
 
 // ============================================================
 // SETTINGS

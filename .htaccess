@@ -5,6 +5,7 @@ RewriteBase /
 RewriteRule ^admin/?$ public/admin.html [L]
 RewriteRule ^gallery/.+$ public/proofing.html [L]
 RewriteRule ^collection/.+$ public/collection.html [L]
+RewriteRule ^d/.+$ public/download.html [L]
 
 # Delivery packages are token-gated and streamed by index.php. Everything else
 # under site-data/ is a real file Apache would happily serve directly, so block

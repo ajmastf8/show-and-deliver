@@ -21,12 +21,14 @@ public/
   admin.html           # Admin dashboard (galleries, settings, header config)
   proofing.html        # Client proofing gallery (token-based access)
   collection.html      # Collection landing page (groups of galleries)
-  css/                 # Stylesheets (style.css, proofing.css, collection.css)
+  download.html        # Client delivery download page (/d/{token})
+  css/                 # Stylesheets (style.css, proofing.css, collection.css, download.css)
   js/
     admin.js           # Admin UI logic
     public.js          # Public portfolio page logic
     proofing.js        # Client proofing page logic
     collection.js      # Collection page logic
+    download.js        # Delivery download page logic
     header.js          # Dynamic header rendering from /api/header config
 site-data/             # Runtime data (gitignored)
   data/                # JSON data files (galleries, collections, settings, header, admin config)
@@ -35,7 +37,7 @@ site-data/             # Runtime data (gitignored)
   proxies/             # 2048px web-optimized images for lightbox (auto-generated)
   logo/                # Site logo image
   imports/             # FTP import staging directory
-  packages/            # Built delivery packages (zip parts + manifest.json)
+  packages/            # Delivery plans (manifest.json only — zips are streamed, never stored)
 ```
 
 ## Key Concepts
@@ -45,11 +47,16 @@ site-data/             # Runtime data (gitignored)
   under one shareable link. `proofing` collections are gated (password, expiry,
   commenting, inherited by member galleries); `reels` collections are public.
   Collections without a `type` are treated as `proofing`.
-- **Delivery packages** zip a gallery or collection into ~1.9 GB parts under
-  `site-data/packages/`, served from token links that expire after 7 days.
-  Built in caller-driven slices (`POST /api/admin/packages/{id}/build` in a
-  loop) because shared hosting has no background jobs — see the block comment
-  above `PACKAGES_DIR` in `index.php`.
+- **Delivery packages** hand a gallery or collection to a client as one link
+  (`/d/{token}`, expires after 7 days). Creating one writes only a *plan* to
+  `site-data/packages/{id}/manifest.json` — no zip is ever built on disk. The
+  archive is streamed as the client downloads, STOREd (never deflated), which
+  keeps the total size predictable enough to send a real `Content-Length`, and
+  switches to Zip64 past 4 GB so one link stays one download. Splitting into
+  parts is opt-in via `PACKAGE_PART_MB`. See the block comment above
+  `PACKAGES_DIR` in `index.php` before changing any of this — the byte
+  arithmetic in `zipStreamedSize()` must stay in lockstep with what the
+  streaming route actually emits, or downloads truncate.
 - **Items** in galleries can be videos or photos, plus section headers
 - **Proxy images** (2048px JPEG) are generated alongside thumbnails for fast lightbox loading
 - **Header config** is stored in `site-data/data/header.json` and rendered by `header.js`

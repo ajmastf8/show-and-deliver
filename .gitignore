@@ -1,3 +1,6 @@
 .env
 site-data/
 .DS_Store
+deploy.log
+Admin interface redesign.zip
+design_handoff_admin_redesign/

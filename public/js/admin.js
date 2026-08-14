@@ -2205,14 +2205,20 @@ document.addEventListener('DOMContentLoaded', () => {
     loading.style.display = ''; info.hidden = true;
     try {
       const data = await (await fetch('/api/settings/update')).json();
+      if (data.checkError) { loading.textContent = `Update check failed: ${data.checkError}`; return; }
       $('update-local-version').textContent = data.localVersion || 'unknown';
       $('update-local-commit').textContent = data.localCommit ? `(${data.localCommit})` : '';
       if (data.updateAvailable) {
         $('update-available-section').hidden = false; $('update-current-section').hidden = true;
         $('update-remote-version').textContent = data.remoteVersion || '';
         $('update-remote-commit').textContent = data.remoteCommit ? `(${data.remoteCommit})` : '';
+        if (data.releaseUrl) { const link = $('update-release-link'); link.href = data.releaseUrl; link.hidden = false; }
         if (data.commitLog) { $('update-commit-log').hidden = false; $('update-commits').textContent = data.commitLog; }
-        if (data.changelog) { $('update-changelog-section').hidden = false; $('update-changelog').textContent = data.changelog; }
+        if (data.changelog) {
+          $('update-changelog-section').hidden = false;
+          $('update-changelog-label').textContent = data.mode === 'release' ? 'Release Notes' : 'Changelog';
+          $('update-changelog').textContent = data.changelog;
+        }
       } else { $('update-available-section').hidden = true; $('update-current-section').hidden = false; }
       if (!data.enabled) $('deploy-btn').style.display = 'none';
     } catch (_) { loading.textContent = 'Failed to check for updates.'; return; }

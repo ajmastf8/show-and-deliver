@@ -179,9 +179,9 @@
           <div id="update-info" hidden>
             <div class="setting-group"><label>Current Version</label><p class="setting-value"><span id="update-local-version"></span> <span id="update-local-commit" style="color:var(--text-5);font-size:12px;"></span></p></div>
             <div id="update-available-section" hidden>
-              <div class="setting-group"><label>Available Version</label><p class="setting-value"><span id="update-remote-version" style="color:var(--accent);"></span> <span id="update-remote-commit" style="color:var(--text-5);font-size:12px;"></span></p></div>
+              <div class="setting-group"><label>Available Version</label><p class="setting-value"><span id="update-remote-version" style="color:var(--accent);"></span> <span id="update-remote-commit" style="color:var(--text-5);font-size:12px;"></span> <a id="update-release-link" href="#" target="_blank" rel="noopener" style="font-size:12px;" hidden>View on GitHub</a></p></div>
               <div id="update-commit-log" class="setting-group" hidden><label>Changes</label><pre id="update-commits"></pre></div>
-              <div id="update-changelog-section" class="setting-group" hidden><label>Changelog</label><pre id="update-changelog" style="max-height:300px;overflow-y:auto;"></pre></div>
+              <div id="update-changelog-section" class="setting-group" hidden><label id="update-changelog-label">Changelog</label><pre id="update-changelog" style="max-height:300px;overflow-y:auto;"></pre></div>
               <div class="settings-actions"><button id="deploy-btn" class="btn-primary">Update to Latest Version</button></div>
             </div>
             <div id="update-current-section" hidden><p class="setting-hint" style="color:#4caf50;font-weight:600;">You are running the latest version.</p></div>

@@ -2443,6 +2443,185 @@ if ($method === 'POST' && $uri === '/api/settings/email/test') {
     }
 }
 
+// ---- Updater ----------------------------------------------------------------
+// Two deploy modes:
+//   git     — this install is a clone; fetch + hard-reset to origin/$branch.
+//   release — installed from a zip (no .git, or no shell access); check GitHub
+//             Releases on the public repo and overlay the latest zipball.
+// Release mode needs no git binary, no shell_exec, and no credentials, so a
+// distributed copy updates itself without any secret. The repo must be public.
+
+define('GITHUB_REPO_DEFAULT', 'ajmastf8/VideoReelSite');
+
+function githubRepo() {
+    $repo = env('GIT_REPO', GITHUB_REPO_DEFAULT);
+    return preg_match('#^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$#', $repo) ? $repo : GITHUB_REPO_DEFAULT;
+}
+
+function shellExecAllowed() {
+    if (!function_exists('shell_exec')) return false;
+    $disabled = array_map('trim', explode(',', (string)ini_get('disable_functions')));
+    return !in_array('shell_exec', $disabled, true);
+}
+
+// DEPLOY_MODE=git|release in .env forces a mode (mainly for testing).
+function deployMode() {
+    $forced = env('DEPLOY_MODE');
+    if ($forced === 'git' || $forced === 'release') return $forced;
+    return (is_dir(__DIR__ . '/.git') && shellExecAllowed()) ? 'git' : 'release';
+}
+
+// GET a GitHub URL (API or zipball download). GitHub rejects requests without
+// a User-Agent, and zipball URLs redirect to codeload.github.com.
+function githubHttpGet($url, $toFile = null) {
+    $headers = ['User-Agent: VideoReelSite-Updater', 'Accept: application/vnd.github+json'];
+    if (function_exists('curl_init')) {
+        $ch = curl_init($url);
+        curl_setopt_array($ch, [
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_MAXREDIRS => 5,
+            CURLOPT_CONNECTTIMEOUT => 15,
+            CURLOPT_TIMEOUT => 300,
+            CURLOPT_HTTPHEADER => $headers,
+        ]);
+        $out = null;
+        if ($toFile) {
+            $out = fopen($toFile, 'wb');
+            if (!$out) return ['ok' => false, 'error' => 'Cannot write to temp file.'];
+            curl_setopt($ch, CURLOPT_FILE, $out);
+        } else {
+            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        }
+        $body = curl_exec($ch);
+        $status = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+        $err = curl_error($ch);
+        unset($ch);
+        if ($out) fclose($out);
+        if ($body === false && !$toFile) return ['ok' => false, 'error' => "Request failed: $err"];
+        if ($status < 200 || $status >= 300) return ['ok' => false, 'error' => "GitHub returned HTTP $status for $url"];
+        return ['ok' => true, 'body' => $toFile ? '' : $body];
+    }
+    // Streams fallback (follows redirects by default).
+    $ctx = stream_context_create(['http' => ['header' => implode("\r\n", $headers), 'timeout' => 300]]);
+    $body = @file_get_contents($url, false, $ctx);
+    if ($body === false) return ['ok' => false, 'error' => "Request failed (allow_url_fopen may be off): $url"];
+    if ($toFile && file_put_contents($toFile, $body) === false) return ['ok' => false, 'error' => 'Cannot write to temp file.'];
+    return ['ok' => true, 'body' => $toFile ? '' : $body];
+}
+
+// Latest published GitHub Release: tag, bare version, notes, zipball URL.
+function latestRelease() {
+    $repo = githubRepo();
+    $res = githubHttpGet("https://api.github.com/repos/$repo/releases/latest");
+    if (!$res['ok']) return ['error' => $res['error']];
+    $rel = json_decode($res['body'], true);
+    if (!is_array($rel) || empty($rel['tag_name'])) {
+        return ['error' => "No published releases found for $repo."];
+    }
+    return [
+        'tag' => $rel['tag_name'],
+        'version' => ltrim($rel['tag_name'], 'vV'),
+        'notes' => trim($rel['body'] ?? ''),
+        'zipUrl' => $rel['zipball_url'] ?? "https://api.github.com/repos/$repo/zipball/{$rel['tag_name']}",
+        'htmlUrl' => $rel['html_url'] ?? "https://github.com/$repo/releases",
+    ];
+}
+
+function localVersion() {
+    $versionFile = __DIR__ . '/VERSION';
+    return file_exists($versionFile) ? trim(file_get_contents($versionFile)) : 'unknown';
+}
+
+function releaseUpdateAvailable($local, $remote) {
+    if ($local === 'unknown' || $remote === '') return $local !== $remote;
+    // version_compare handles 1.4.0 vs 1.10.0 correctly where a string
+    // comparison would not.
+    return version_compare($remote, $local, '>');
+}
+
+function rrmdirTree($dir) {
+    if (!is_dir($dir)) return;
+    $it = new RecursiveDirectoryIterator($dir, RecursiveDirectoryIterator::SKIP_DOTS);
+    foreach (new RecursiveIteratorIterator($it, RecursiveIteratorIterator::CHILD_FIRST) as $f) {
+        $f->isDir() ? rmdir($f->getPathname()) : unlink($f->getPathname());
+    }
+    rmdir($dir);
+}
+
+// Download the latest release zipball and overlay it onto this install.
+// Overlay only — files are added/replaced, never deleted, and runtime state
+// (site-data/, .env, .git, logs) is never touched. Each file is written to a
+// temp name and renamed into place so a half-written index.php can't be served.
+function releaseDeploy() {
+    if (!class_exists('ZipArchive')) {
+        return ['ok' => false, 'error' => 'PHP zip extension is not available on this server.'];
+    }
+    $rel = latestRelease();
+    if (isset($rel['error'])) return ['ok' => false, 'error' => $rel['error']];
+
+    $tmpBase = SITE_DATA . '/tmp';
+    if (!is_dir($tmpBase)) @mkdir($tmpBase, 0755, true);
+    if (!is_dir($tmpBase) || !is_writable($tmpBase)) {
+        return ['ok' => false, 'error' => 'site-data/tmp is not writable.'];
+    }
+    $zipPath = "$tmpBase/update-{$rel['version']}.zip";
+    $extractDir = "$tmpBase/update-extract";
+    rrmdirTree($extractDir);
+    @unlink($zipPath);
+
+    $dl = githubHttpGet($rel['zipUrl'], $zipPath);
+    if (!$dl['ok']) return ['ok' => false, 'error' => 'Download failed: ' . $dl['error']];
+    if (!is_file($zipPath) || filesize($zipPath) < 1000) {
+        return ['ok' => false, 'error' => 'Downloaded archive is empty or truncated.'];
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($zipPath) !== true) {
+        @unlink($zipPath);
+        return ['ok' => false, 'error' => 'Could not open the downloaded archive.'];
+    }
+    @mkdir($extractDir, 0755, true);
+    $ok = $zip->extractTo($extractDir);
+    $zip->close();
+    @unlink($zipPath);
+    if (!$ok) {
+        rrmdirTree($extractDir);
+        return ['ok' => false, 'error' => 'Could not extract the downloaded archive.'];
+    }
+
+    // GitHub zipballs wrap everything in a single "owner-repo-sha/" directory.
+    $roots = array_values(array_filter(glob("$extractDir/*") ?: [], 'is_dir'));
+    if (count($roots) !== 1) {
+        rrmdirTree($extractDir);
+        return ['ok' => false, 'error' => 'Unexpected archive layout.'];
+    }
+    $srcRoot = $roots[0];
+
+    $skip = ['site-data', '.env', '.git', 'deploy.log'];
+    $copied = 0;
+    $it = new RecursiveDirectoryIterator($srcRoot, RecursiveDirectoryIterator::SKIP_DOTS);
+    foreach (new RecursiveIteratorIterator($it, RecursiveIteratorIterator::SELF_FIRST) as $f) {
+        $rel_path = ltrim(substr($f->getPathname(), strlen($srcRoot)), '/');
+        $top = explode('/', $rel_path)[0];
+        if (in_array($top, $skip, true) || strpos($rel_path, '..') !== false) continue;
+        $target = __DIR__ . '/' . $rel_path;
+        if ($f->isDir()) {
+            if (!is_dir($target)) @mkdir($target, 0755, true);
+            continue;
+        }
+        $tmpTarget = $target . '.update-tmp';
+        if (!@copy($f->getPathname(), $tmpTarget) || !@rename($tmpTarget, $target)) {
+            @unlink($tmpTarget);
+            rrmdirTree($extractDir);
+            return ['ok' => false, 'error' => "Failed writing $rel_path — check file permissions.", 'copied' => $copied];
+        }
+        $copied++;
+    }
+    rrmdirTree($extractDir);
+
+    return ['ok' => true, 'version' => $rel['version'], 'tag' => $rel['tag'], 'copied' => $copied];
+}
+
 // Update check — compare local vs remote version
 // Report whether ffmpeg/ffprobe are available (drives the admin "Video Tools" UI).
 if ($method === 'GET' && $uri === '/api/admin/video-tools/status') {
@@ -2463,10 +2642,41 @@ if ($method === 'GET' && $uri === '/api/settings/update') {
     $dir = __DIR__;
     $branch = preg_replace('/[^a-zA-Z0-9\/_-]/', '', env('DEPLOY_BRANCH', 'main'));
     $enabled = env('DEPLOY_ENABLED') !== 'false';
+    $mode = deployMode();
+    $localVersion = localVersion();
 
-    // Current local version
-    $versionFile = $dir . '/VERSION';
-    $localVersion = file_exists($versionFile) ? trim(file_get_contents($versionFile)) : 'unknown';
+    if ($mode === 'release') {
+        $remoteVersion = $localVersion;
+        $changelog = '';
+        $releaseUrl = '';
+        $updateAvailable = false;
+        $checkError = '';
+        if ($enabled) {
+            $rel = latestRelease();
+            if (isset($rel['error'])) {
+                $checkError = $rel['error'];
+            } else {
+                $remoteVersion = $rel['version'];
+                $changelog = $rel['notes'];
+                $releaseUrl = $rel['htmlUrl'];
+                $updateAvailable = releaseUpdateAvailable($localVersion, $remoteVersion);
+            }
+        }
+        respond([
+            'enabled' => $enabled,
+            'mode' => 'release',
+            'branch' => $branch,
+            'localVersion' => $localVersion,
+            'localCommit' => '',
+            'remoteVersion' => $remoteVersion,
+            'remoteCommit' => '',
+            'updateAvailable' => $updateAvailable,
+            'commitLog' => '',
+            'changelog' => $changelog,
+            'releaseUrl' => $releaseUrl,
+            'checkError' => $checkError,
+        ]);
+    }
 
     // Current local commit
     $localCommit = trim(shell_exec("cd $dir && git rev-parse --short HEAD 2>&1") ?? '');
@@ -2512,6 +2722,7 @@ if ($method === 'GET' && $uri === '/api/settings/update') {
 
     respond([
         'enabled' => $enabled,
+        'mode' => 'git',
         'branch' => $branch,
         'localVersion' => $localVersion,
         'localCommit' => $localCommit,
@@ -2528,6 +2739,7 @@ if ($method === 'GET' && $uri === '/api/settings/deploy') {
     requireAuth();
     respond([
         'enabled' => env('DEPLOY_ENABLED') !== 'false',
+        'mode' => deployMode(),
         'branch' => env('DEPLOY_BRANCH', 'main'),
     ]);
 }
@@ -2535,6 +2747,17 @@ if ($method === 'GET' && $uri === '/api/settings/deploy') {
 if ($method === 'POST' && $uri === '/api/settings/deploy') {
     requireAuth();
     if (env('DEPLOY_ENABLED') === 'false') respondError('Deploy is disabled. Set DEPLOY_ENABLED=true in .env to enable.', 403);
+
+    if (deployMode() === 'release') {
+        @set_time_limit(300);
+        $res = releaseDeploy();
+        $logEntry = '[' . date('Y-m-d H:i:s') . "] Release deploy\n"
+            . 'Result: ' . json_encode($res) . "\n"
+            . str_repeat('-', 60) . "\n\n";
+        @file_put_contents(__DIR__ . '/deploy.log', $logEntry, FILE_APPEND);
+        if (empty($res['ok'])) respondError('Update failed. ' . ($res['error'] ?? ''), 500);
+        respond(['ok' => true, 'message' => "Updated to version {$res['version']} ({$res['copied']} files)."]);
+    }
 
     $branch = preg_replace('/[^a-zA-Z0-9\/_-]/', '', env('DEPLOY_BRANCH', 'main'));
     $pat = env('GIT_PAT');

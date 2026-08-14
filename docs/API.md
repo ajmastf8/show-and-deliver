@@ -305,16 +305,39 @@ progress bar. CRCs aren't known until the bytes have been read, so each entry
 carries a trailing data descriptor; every standard extractor reads the central
 directory at the end, where the real values live.
 
-### One link, any size
+### Part size, and the web server limit that sets it
 
-Archives past the 4 GB zip32 ceiling switch to **Zip64** automatically, so a
-delivery of any size stays a single download. Smaller archives stay plain zip32,
-byte-for-byte as before, for the widest compatibility.
+**The binding limit is the web server's, not the zip format's.** LiteSpeed —
+what most cPanel hosts run — caps any dynamically generated response at
+`Max Dynamic Response Body Size`, **1 GiB by default**. Go past it and LiteSpeed
+truncates the stream and appends an HTML error to the body. For a zip that
+means no end-of-central-directory, and the client gets a file their unarchiver
+refuses to open ("Error 79 — Inappropriate file type or format" on macOS). PHP
+cannot detect this mid-stream, so the only defence is to stay underneath it.
 
-Splitting into numbered parts is opt-in: set `PACKAGE_PART_MB` in `.env`
-(`0`, the default, never splits). When splitting is on, a file larger than one
-whole part is handed over as the original file rather than a multi-volume
-archive most clients can't open — that part reports `"kind": "file"`.
+`PACKAGE_PART_MB` therefore defaults to **900**, and a delivery larger than that
+is split into numbered parts. Each part is a self-contained zip.
+
+To send one file of any size instead, raise the server limit *first*, then set
+`PACKAGE_PART_MB=0`:
+
+- **LiteSpeed WebAdmin** → Tuning → Max Dynamic Response Body Size
+- **Shared cPanel** — you usually can't change it yourself; ask the host
+- Confirm it took effect by downloading something over the old limit before
+  trusting it with a client delivery
+
+Zip64 is used for every archive, so `PACKAGE_PART_MB=0` genuinely works past the
+4 GB zip32 ceiling once the server allows it.
+
+Individual files have **no such ceiling**. They exist on disk, so they're served
+as static responses — on LiteSpeed via an `X-LiteSpeed-Send-File` handoff, which
+skips the dynamic cap and supports byte-range resume. That makes the per-file
+list on the download page a reliable fallback at any size. Set `SENDFILE=off` in
+`.env` if a host mishandles the header.
+
+When splitting is on, a file larger than one whole part is handed over as the
+original file rather than a multi-volume archive most clients can't open — that
+part reports `"kind": "file"` and takes the static path.
 
 Packages expire 7 days after creation and are swept on the next list/create.
 Expiring one deletes a plan, not gigabytes of archive.

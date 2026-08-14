@@ -51,12 +51,19 @@ site-data/             # Runtime data (gitignored)
   (`/d/{token}`, expires after 7 days). Creating one writes only a *plan* to
   `site-data/packages/{id}/manifest.json` — no zip is ever built on disk. The
   archive is streamed as the client downloads, STOREd (never deflated), which
-  keeps the total size predictable enough to send a real `Content-Length`, and
-  switches to Zip64 past 4 GB so one link stays one download. Splitting into
-  parts is opt-in via `PACKAGE_PART_MB`. See the block comment above
-  `PACKAGES_DIR` in `index.php` before changing any of this — the byte
-  arithmetic in `zipStreamedSize()` must stay in lockstep with what the
-  streaming route actually emits, or downloads truncate.
+  keeps the total size predictable enough to send a real `Content-Length`.
+  Always Zip64, so there is one code path exercised by every download rather
+  than a 64-bit path that only runs on rare large transfers.
+  **The size limit that matters is LiteSpeed's `Max Dynamic Response Body Size`
+  (1 GiB by default), not the zip format's.** Exceed it and LiteSpeed truncates
+  the response and appends an HTML error, producing a zip with no
+  end-of-central-directory that no unarchiver will open — and PHP cannot detect
+  this mid-stream. Hence `PACKAGE_PART_MB` defaults to 900. Files that exist on
+  disk go through `sendStaticFile()`, which hands large ones to the web server
+  and so has no such ceiling. See the block comment above `PACKAGES_DIR` in
+  `index.php` before changing any of this — and the byte arithmetic in
+  `zipStreamedSize()` must stay in lockstep with what the streaming route
+  emits, or downloads truncate.
 - **Items** in galleries can be videos or photos, plus section headers
 - **Proxy images** (2048px JPEG) are generated alongside thumbnails for fast lightbox loading
 - **Header config** is stored in `site-data/data/header.json` and rendered by `header.js`

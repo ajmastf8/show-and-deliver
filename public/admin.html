@@ -312,35 +312,33 @@
       <p class="sub" id="pk-sub"></p>
 
       <div class="setting-group">
+        <label>Download link</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="pk-link" class="setting-input" readonly placeholder="Preparing…">
+          <button id="pk-copy" class="btn-ghost" style="white-space:nowrap;">Copy</button>
+          <button id="pk-open" class="btn-ghost" style="white-space:nowrap;">Check it</button>
+        </div>
+        <p class="setting-hint" id="pk-link-hint">Preparing…</p>
+      </div>
+
+      <hr class="settings-divider">
+      <p class="setting-hint" style="margin-bottom:10px;">Send a link to your client</p>
+
+      <div class="setting-group">
         <label>Send to</label>
         <input type="text" id="pk-to" class="setting-input" placeholder="client@example.com, second@example.com">
-        <p class="setting-hint" id="pk-to-hint">Separate several addresses with commas. Leave blank to just get a link.</p>
+        <p class="setting-hint" id="pk-to-hint">Separate several addresses with commas.</p>
       </div>
       <div class="setting-group">
         <label>Message <span class="setting-hint" style="font-weight:400;">(optional)</span></label>
-        <textarea id="pk-message" class="setting-input" rows="3" placeholder="Added to the download page and the email."></textarea>
+        <textarea id="pk-message" class="setting-input" rows="3" placeholder="Shown on the download page and in the email."></textarea>
       </div>
-
-      <div id="pk-result" hidden>
-        <hr class="settings-divider">
-        <div class="setting-group">
-          <label>Download link</label>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <input type="text" id="pk-link" class="setting-input" readonly>
-            <button id="pk-copy" class="btn-ghost">Copy</button>
-            <button id="pk-open" class="btn-ghost">Open</button>
-          </div>
-          <p class="setting-hint" id="pk-result-hint"></p>
-        </div>
-      </div>
-
-      <div id="pk-existing" hidden></div>
 
       <div class="modal-actions">
         <button id="pk-delete" class="link-btn danger muted" hidden>Revoke link</button>
         <div class="right">
           <button id="pk-close" class="btn-ghost">Close</button>
-          <button id="pk-send" class="btn-primary">Create Link</button>
+          <button id="pk-send" class="btn-primary">Send Link</button>
         </div>
       </div>
     </div>
@@ -525,6 +523,6 @@
   <div id="toast" class="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=116"></script>
+  <script src="/js/admin.js?v=118"></script>
 </body>
 </html>

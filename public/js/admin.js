@@ -1253,14 +1253,24 @@ document.addEventListener('DOMContentLoaded', () => {
   // Sign client emails with whatever this site is branded as in Settings >
   // Header, so an unconfigured install doesn't sign with someone else's name.
   function signOff() {
-    const name = (headerConfig && (headerConfig.siteName || (headerConfig.logo || {}).text)) || '';
+    const name = siteNameForEmail();
     return name ? `\nThanks,\n${name}` : `\nThanks`;
+  }
+  function siteNameForEmail() {
+    return (headerConfig && (headerConfig.siteName || (headerConfig.logo || {}).text)) || '';
+  }
+  // Matches the server's emailSubject(): "<Site> — <what this is>: <which one>",
+  // so every message from this install reads the same way in an inbox.
+  function mailSubject(kind, detail) {
+    const site = siteNameForEmail();
+    const head = site ? `${site} — ${kind}` : kind;
+    return detail ? `${head}: ${detail}` : head;
   }
 
   function buildGalleryMailto(g) {
     if (!g || !g.token) return null;
     const url = window.location.origin + '/gallery/' + g.token;
-    const subject = `Your gallery is ready — ${g.name}`;
+    const subject = mailSubject('Gallery link', g.name);
     const pwLine = effective(g).hasPassword ? `\nPassword: [enter the gallery password here]\n` : '';
     const body = `Hello,\n\nYour gallery is ready.\n\n${url}\n${pwLine}${signOff()}`;
     return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
@@ -2285,12 +2295,13 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================================================
   // Delivery — send a gallery or collection to a client
   // ==========================================================================
-  // There is no build step: the server only writes a plan and zips on the fly
-  // as the client downloads. So this is a plain send form — fill in who and
-  // what, press once, done. No progress bar, nothing to wait for.
+  // There is no build step: the server writes a plan and zips on the fly as the
+  // client downloads. Creating a link takes milliseconds, so the modal makes one
+  // as soon as it opens — you can check the page your client will see before
+  // deciding who to send it to.
   const pkgModal = $('package-modal');
   let pkgSource = null;         // { type, id, name }
-  let pkgCurrent = null;        // most recent package for this source
+  let pkgCurrent = null;        // the package this modal is working on
   let pkgEmailConfigured = false;
 
   async function openPackageModal(sourceType, sourceId, name) {
@@ -2304,11 +2315,11 @@ document.addEventListener('DOMContentLoaded', () => {
       : 'Shares this whole gallery as one download.';
     $('pk-to').value = '';
     $('pk-message').value = '';
-    $('pk-result').hidden = true;
-    $('pk-existing').hidden = true;
+    $('pk-link').value = '';
+    $('pk-link-hint').textContent = 'Preparing…';
     $('pk-delete').hidden = true;
+    $('pk-send').disabled = true;
     pkgModal.hidden = false;
-    $('pk-to').focus();
 
     try {
       const [packages, email] = await Promise.all([
@@ -2316,85 +2327,104 @@ document.addEventListener('DOMContentLoaded', () => {
         fetch('/api/settings/email').then(r => r.ok ? r.json() : {}),
       ]);
       pkgEmailConfigured = !!email.configured;
-      applyEmailAvailability();
-      if (packages[0]) {
-        pkgCurrent = packages[0];
-        renderExistingPackage();
-      }
-    } catch (_) { /* the form still works; sending will surface any error */ }
+
+      // Reuse the link if this gallery already has one — making a second link
+      // wouldn't revoke the first, and the client may already have it.
+      pkgCurrent = packages[0] || await createPackage();
+      if (!pkgCurrent) return;
+
+      $('pk-message').value = pkgCurrent.message || '';
+      renderPackageLink();
+      $('pk-to').focus();
+    } catch (_) {
+      $('pk-link-hint').textContent = 'Could not prepare a link. Close and try again.';
+    }
+  }
+
+  async function createPackage() {
+    const res = await fetch('/api/admin/packages', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sourceType: pkgSource.type, sourceId: pkgSource.id }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $('pk-link-hint').textContent = data.error || 'Could not prepare a link.';
+      return null;
+    }
+    return data;
+  }
+
+  function renderPackageLink() {
+    const p = pkgCurrent;
+    $('pk-link').value = p.shareUrl;
+    const sent = p.lastEmailedAt
+      ? ` · sent ${formatDate(p.lastEmailedAt)}${p.lastEmailedTo && p.lastEmailedTo.length ? ' to ' + p.lastEmailedTo.join(', ') : ''}`
+      : '';
+    $('pk-link-hint').textContent =
+      `${p.fileCount} file${p.fileCount === 1 ? '' : 's'} · ${fmtBytes(p.totalBytes)} · expires ${formatDate(p.expiresAt)}${sent}`;
+    $('pk-delete').hidden = false;
+    $('pk-send').disabled = false;
+    applyEmailAvailability();
   }
 
   function applyEmailAvailability() {
     $('pk-to').disabled = !pkgEmailConfigured;
     $('pk-to-hint').textContent = pkgEmailConfigured
-      ? 'Separate several addresses with commas. Leave blank to just get a link.'
-      : 'Set up Settings › Email to send from here. You can still create a link and share it yourself.';
+      ? 'Separate several addresses with commas.'
+      : 'Set up Settings › Email to send from here. The link above works either way — copy it and send it yourself.';
     updateSendLabel();
   }
 
   function updateSendLabel() {
     const hasRecipients = pkgEmailConfigured && $('pk-to').value.trim() !== '';
-    $('pk-send').textContent = hasRecipients ? 'Send Link' : 'Create Link';
-  }
-
-  // A link already exists for this gallery. Offer it rather than silently
-  // making a second one, since creating another doesn't revoke the first.
-  function renderExistingPackage() {
-    const p = pkgCurrent;
-    if (!p) { $('pk-existing').hidden = true; $('pk-delete').hidden = true; return; }
-    const sent = p.lastEmailedAt
-      ? `Sent ${formatDate(p.lastEmailedAt)}${p.lastEmailedTo && p.lastEmailedTo.length ? ' to ' + escapeHtml(p.lastEmailedTo.join(', ')) : ''}.`
-      : 'Not emailed yet.';
-    $('pk-existing').innerHTML = `
-      <hr class="settings-divider">
-      <div class="setting-group">
-        <label>Existing link</label>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <input type="text" class="setting-input" id="pk-existing-link" readonly value="${escapeHtml(p.shareUrl)}">
-          <button class="btn-ghost" id="pk-existing-copy">Copy</button>
-          <button class="btn-ghost" id="pk-existing-open">Open</button>
-        </div>
-        <p class="setting-hint">${p.fileCount} file${p.fileCount === 1 ? '' : 's'} · ${fmtBytes(p.totalBytes)} · expires ${formatDate(p.expiresAt)}. ${sent}</p>
-      </div>`;
-    $('pk-existing').hidden = false;
-    $('pk-delete').hidden = false;
-    $('pk-existing-copy').addEventListener('click', () => copyText(p.shareUrl, 'Download link copied'));
-    $('pk-existing-open').addEventListener('click', () => window.open(p.shareUrl, '_blank', 'noopener'));
+    $('pk-send').textContent = hasRecipients ? 'Send Link' : 'Save Message';
   }
 
   $('pk-to').addEventListener('input', updateSendLabel);
 
   $('pk-send').addEventListener('click', async () => {
-    if (!pkgSource) return;
+    if (!pkgCurrent) return;
     const to = pkgEmailConfigured ? $('pk-to').value.trim() : '';
     const message = $('pk-message').value.trim();
     const btn = $('pk-send');
     const label = btn.textContent;
     btn.disabled = true;
-    btn.textContent = to ? 'Sending…' : 'Creating…';
+    btn.textContent = to ? 'Sending…' : 'Saving…';
 
-    const res = await fetch('/api/admin/packages', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sourceType: pkgSource.type, sourceId: pkgSource.id, to, message }),
-    });
+    // With no recipients this just stores the note for the download page.
+    const res = to
+      ? await fetch(`/api/admin/packages/${pkgCurrent.id}/email`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to, message }),
+        })
+      : await fetch(`/api/admin/packages/${pkgCurrent.id}`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message }),
+        });
+
     const data = await res.json().catch(() => ({}));
     btn.disabled = false;
     btn.textContent = label;
-    if (!res.ok) { toast(data.error || 'Could not create the link'); return; }
+    if (!res.ok) { toast(data.error || 'Could not send'); return; }
 
-    pkgCurrent = data;
-    $('pk-link').value = data.shareUrl;
-    $('pk-result-hint').textContent =
-      `${data.fileCount} file${data.fileCount === 1 ? '' : 's'} · ${fmtBytes(data.totalBytes)} · expires ${formatDate(data.expiresAt)}`
-      + (data.lastEmailedTo && data.lastEmailedTo.length ? ` · emailed to ${data.lastEmailedTo.join(', ')}` : '');
-    $('pk-result').hidden = false;
-    $('pk-existing').hidden = true;
-    $('pk-delete').hidden = false;
-    toast(to ? 'Sent to ' + to : 'Download link ready');
+    if (to) {
+      pkgCurrent.lastEmailedAt = new Date().toISOString();
+      pkgCurrent.lastEmailedTo = data.sent || [];
+      pkgCurrent.message = message;
+      renderPackageLink();
+      toast('Sent to ' + (data.sent || []).join(', '));
+      pkgModal.hidden = true;
+    } else {
+      pkgCurrent = data;
+      renderPackageLink();
+      toast('Message saved');
+    }
   });
 
   $('pk-copy').addEventListener('click', () => copyText($('pk-link').value, 'Download link copied'));
-  $('pk-open').addEventListener('click', () => window.open($('pk-link').value, '_blank', 'noopener'));
+  $('pk-open').addEventListener('click', () => {
+    if ($('pk-link').value) window.open($('pk-link').value, '_blank', 'noopener');
+  });
   $('pk-close').addEventListener('click', () => pkgModal.hidden = true);
   pkgModal.querySelector('.modal-backdrop').addEventListener('click', () => pkgModal.hidden = true);
 
@@ -2407,9 +2437,7 @@ document.addEventListener('DOMContentLoaded', () => {
     })) return;
     await fetch(`/api/admin/packages/${pkgCurrent.id}`, { method: 'DELETE' });
     pkgCurrent = null;
-    $('pk-result').hidden = true;
-    $('pk-existing').hidden = true;
-    $('pk-delete').hidden = true;
+    pkgModal.hidden = true;
     toast('Link revoked');
   });
 
@@ -2427,7 +2455,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function buildCollectionMailto(col) {
     if (!col || !col.token) return null;
     const url = window.location.origin + '/collection/' + col.token;
-    const subject = `Your galleries are ready — ${col.name}`;
+    const subject = mailSubject('Gallery link', col.name);
     const pwLine = col.hasPassword ? `\nPassword: [enter the collection password here]\n` : '';
     const body = `Hello,\n\nYour galleries are ready.\n\n${url}\n${pwLine}${signOff()}`;
     return `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;

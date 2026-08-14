@@ -18,11 +18,13 @@ shared hosting (cPanel, Apache/LiteSpeed) with one-click in-app updates.
 - **Client comments** with email notifications (Resend or SMTP)
 - **Downloads** — per-file or whole-gallery zip, with download tracking and view counts
 - **Send files to clients** — a WeTransfer-style handoff: share a whole gallery
-  or collection as one download link, emailed to the client if you like. There's
+  or collection as a download link, emailed to the client if you like. There's
   no packaging wait at any size, because nothing is zipped onto the server —
   the archive is generated as the client downloads it. The link is a real
-  download page, with the whole transfer on one button and the individual files
-  listed underneath. Links expire after 7 days.
+  download page, with the transfer on one button and the individual files
+  listed underneath. Links expire after 7 days. Deliveries are split into
+  ~900 MB parts by default to stay under LiteSpeed's dynamic-response limit;
+  see [docs/API.md](docs/API.md) to send one file of any size instead.
 - **Captions** — multi-language WebVTT support; captions embedded in MP4s are
   extracted automatically (one-click static ffmpeg installer for hosts without it)
 - **Import from server** — stage large files over FTP/SFTP and import them,

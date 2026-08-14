@@ -15,6 +15,9 @@ define('THUMBS_DIR', SITE_DATA . '/thumbnails');
 define('PROXY_DIR', SITE_DATA . '/proxies');
 define('CAPTIONS_DIR', SITE_DATA . '/captions');
 define('IMPORT_DIR', SITE_DATA . '/imports');
+// Up here with the other paths, not next to the header routes: emails read the
+// site name for their subject lines, and those routes run earlier in the file.
+define('HEADER_CONFIG_PATH', DATA_DIR . '/header.json');
 
 // Upstream repo for update checks and the optional first-run git init. Defined
 // during bootstrap because both the setup handler and the updater read it, and
@@ -844,6 +847,95 @@ function getEmailConfig() {
     ];
 }
 
+// --- Email presentation ---
+
+// Per-site identity for subject lines and the masthead. Comes from
+// Settings > Header — this app ships to many installs, so it is never
+// hardcoded.
+function siteName() {
+    $header = readHeaderConfig();
+    foreach ([$header['siteName'] ?? '', $header['logo']['text'] ?? ''] as $candidate) {
+        $candidate = trim((string)$candidate);
+        if ($candidate !== '') return $candidate;
+    }
+    return 'Show & Deliver';
+}
+
+// Every subject reads "<Site> — <what this is>: <which one>", so someone
+// scanning an inbox can tell a download link from a gallery link from a comment
+// notification without opening anything.
+function emailSubject($kind, $detail = '') {
+    $subject = siteName() . ' — ' . $kind;
+    $detail = trim((string)$detail);
+    return $detail === '' ? $subject : $subject . ': ' . $detail;
+}
+
+// Shared shell so every email looks like it came from the same studio.
+// Table-based and inline-styled on purpose: mail clients strip <style> blocks
+// and ignore most modern layout.
+//
+//   title    headline inside the card
+//   lead     one-line summary under the headline
+//   body     optional HTML block (comment lists, file lists)
+//   cta      ['label' => ..., 'url' => ...] for the primary button
+//   note     small print under the button (expiry warnings, etc.)
+function emailShell(array $o) {
+    $site = siteName();
+    $base = rtrim(getEmailConfig()['baseUrl'] ?: '', '/');
+    $accent = '#0019ff';
+    $ink = '#1a1a1a';
+    $muted = '#8a8f98';
+
+    $cta = '';
+    if (!empty($o['cta']['url'])) {
+        $cta = '<tr><td style="padding:4px 0 8px;">'
+            . '<a href="' . escHtml($o['cta']['url']) . '" '
+            . 'style="display:inline-block;background:' . $accent . ';color:#ffffff;font-size:15px;font-weight:700;'
+            . 'text-decoration:none;padding:14px 30px;border-radius:6px;">'
+            . escHtml($o['cta']['label']) . '</a></td></tr>';
+    }
+
+    $note = !empty($o['note'])
+        ? '<tr><td style="padding:6px 0 0;color:' . $muted . ';font-size:12.5px;line-height:1.6;">' . $o['note'] . '</td></tr>'
+        : '';
+
+    $lead = !empty($o['lead'])
+        ? '<tr><td style="padding:0 0 18px;color:#5f6570;font-size:15px;line-height:1.6;">' . $o['lead'] . '</td></tr>'
+        : '';
+
+    $body = !empty($o['body'])
+        ? '<tr><td style="padding:0 0 22px;">' . $o['body'] . '</td></tr>'
+        : '';
+
+    return '<div style="margin:0;padding:0;background:#f4f5f7;">'
+      . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f5f7;padding:28px 12px;">'
+      . '<tr><td align="center">'
+      . '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" '
+      . 'style="width:100%;max-width:600px;background:#ffffff;border:1px solid #e6e8ec;border-radius:10px;overflow:hidden;'
+      . 'font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;">'
+
+      // Masthead
+      . '<tr><td style="background:' . $ink . ';padding:16px 32px;">'
+      . '<span style="color:#ffffff;font-size:13px;font-weight:800;letter-spacing:2.5px;text-transform:uppercase;">'
+      . escHtml($site) . '</span></td></tr>'
+
+      // Content
+      . '<tr><td style="padding:32px;">'
+      . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
+      . '<tr><td style="padding:0 0 10px;color:' . $ink . ';font-size:22px;font-weight:800;line-height:1.3;">'
+      . escHtml($o['title']) . '</td></tr>'
+      . $lead . $body . $cta . $note
+      . '</table></td></tr>'
+
+      // Footer
+      . '<tr><td style="border-top:1px solid #eef0f3;padding:18px 32px;color:' . $muted . ';font-size:11.5px;line-height:1.6;">'
+      . escHtml($site)
+      . ($base ? ' · <a href="' . escHtml($base) . '" style="color:' . $muted . ';text-decoration:underline;">' . escHtml(preg_replace('#^https?://#', '', $base)) . '</a>' : '')
+      . '</td></tr>'
+
+      . '</table></td></tr></table></div>';
+}
+
 function sendEmail($to, $subject, $textBody, $htmlBody) {
     $config = getEmailConfig();
 
@@ -896,7 +988,7 @@ function sendReviewSummary($gallery, $videos, $comments, $reviewerName, $videoTi
     }
 
     $subjectVideo = $videoTitle ?: $gallery['name'];
-    $subject = "$reviewerName commented on \"$subjectVideo\"";
+    $subject = emailSubject('Video comments', $subjectVideo);
     $count = count($comments);
     $countLabel = $count . ' comment' . ($count !== 1 ? 's' : '');
 
@@ -910,17 +1002,20 @@ function sendReviewSummary($gallery, $videos, $comments, $reviewerName, $videoTi
         $isPhoto = $video && ($video['type'] ?? '') === 'photo';
 
         $textParts[] = "--- $title ---";
-        $htmlComments .= '<h3 style="color:#333;margin:20px 0 8px;font-size:15px;">' . escHtml($title) . '</h3>';
+        $htmlComments .= '<div style="color:#1a1a1a;font-size:13px;font-weight:700;padding:16px 0 6px;">' . escHtml($title) . '</div>';
 
         usort($vidComments, fn($a, $b) => $a['timestamp'] <=> $b['timestamp']);
         foreach ($vidComments as $c) {
             if ($isPhoto || $c['timestamp'] == 0) {
                 $textParts[] = "  {$c['text']}";
-                $htmlComments .= '<div style="padding:8px 0;border-bottom:1px solid #f0f0f0;"><span style="color:#5f5f5f;font-size:13px;">' . escHtml($c['text']) . '</span></div>';
+                $htmlComments .= '<div style="padding:9px 12px;background:#f7f8fa;border-radius:6px;margin-bottom:6px;color:#41464f;font-size:13.5px;line-height:1.55;">'
+                    . escHtml($c['text']) . '</div>';
             } else {
                 $time = formatTimestamp($c['timestamp']);
                 $textParts[] = "  [$time] {$c['text']}";
-                $htmlComments .= '<div style="padding:8px 0;border-bottom:1px solid #f0f0f0;"><span style="color:#0019ff;font-weight:600;font-size:13px;">' . $time . '</span><span style="color:#5f5f5f;font-size:13px;margin-left:8px;">' . escHtml($c['text']) . '</span></div>';
+                $htmlComments .= '<div style="padding:9px 12px;background:#f7f8fa;border-radius:6px;margin-bottom:6px;color:#41464f;font-size:13.5px;line-height:1.55;">'
+                    . '<span style="display:inline-block;background:#0019ff;color:#ffffff;font-size:11.5px;font-weight:700;padding:2px 7px;border-radius:3px;margin-right:8px;">'
+                    . $time . '</span>' . escHtml($c['text']) . '</div>';
             }
         }
         $textParts[] = '';
@@ -934,14 +1029,18 @@ function sendReviewSummary($gallery, $videos, $comments, $reviewerName, $videoTi
     if ($videoLink) $textParts[] = "View video: $videoLink";
     $textParts[] = "View all comments: $adminLink";
 
-    $html = '<div style="font-family:sans-serif;max-width:600px;">'
-        . '<h2 style="color:#0019ff;">Comments on ' . escHtml($subjectVideo) . '</h2>'
-        . '<p><strong>' . escHtml($reviewerName) . "</strong> left $countLabel on <strong>" . escHtml($gallery['name']) . '</strong>.</p>'
-        . $htmlComments
-        . '<hr style="border:none;border-top:1px solid #e0e0e0;margin:24px 0;">'
-        . ($videoLink ? '<p><a href="' . $videoLink . '" style="color:#0019ff;">View in gallery</a></p>' : '')
-        . '<p><a href="' . $adminLink . '" style="color:#0019ff;">View all comments in admin</a></p>'
-        . '<p style="color:#8e8e8e;font-size:12px;">Sent from ' . $config['baseUrl'] . '</p></div>';
+    $html = emailShell([
+        'title' => $countLabel . ' on ' . $subjectVideo,
+        'lead'  => '<strong style="color:#1a1a1a;">' . escHtml($reviewerName) . '</strong> left ' . $countLabel
+                 . ' on <strong style="color:#1a1a1a;">' . escHtml($gallery['name']) . '</strong>.',
+        'body'  => $htmlComments,
+        'cta'   => $videoLink
+            ? ['label' => 'View in gallery', 'url' => $videoLink]
+            : ['label' => 'View all comments', 'url' => $adminLink],
+        'note'  => $videoLink
+            ? '<a href="' . escHtml($adminLink) . '" style="color:#8a8f98;">View all comments in the admin</a>'
+            : '',
+    ]);
 
     sendEmail($config['adminEmail'], $subject, implode("\n", $textParts), $html);
 }
@@ -2139,25 +2238,10 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download/{videoId}', 
     $ext = pathinfo($video['filename'], PATHINFO_EXTENSION);
     $downloadName = preg_replace('/[^a-zA-Z0-9 .\-]/', '', $video['title']) . '.' . $ext;
 
-    // Stream large files manually: kill any output buffering / compression so the
-    // whole file isn't loaded into memory (which 500s on big videos under the
-    // 512M memory_limit), and lift the execution-time cap for slow transfers.
-    @set_time_limit(0);
-    @ini_set('zlib.output_compression', '0');
-    while (ob_get_level() > 0) { ob_end_clean(); }
-
-    header('Content-Type: application/octet-stream');
-    header('Content-Disposition: attachment; filename="' . $downloadName . '"');
-    header('Content-Length: ' . filesize($filePath));
-
-    $fp = fopen($filePath, 'rb');
-    if ($fp === false) respondError('File not found', 404);
-    while (!feof($fp)) {
-        echo fread($fp, 8192);
-        flush();
-    }
-    fclose($fp);
-    exit;
+    // Streams without buffering so a big video isn't loaded into memory, and
+    // hands files past the dynamic-response cap to the web server so they
+    // aren't truncated mid-download.
+    sendStaticFile($filePath, $downloadName, 'application/octet-stream');
 }
 
 // Bulk "Download All" beacon — fired once by proofing.js when a zip run starts.
@@ -2458,23 +2542,31 @@ if ($method === 'POST' && matchRoute('/api/collections/public/{token}/unlock', $
 // reads the central directory at the end, where the real values live.
 
 define('PACKAGES_DIR', SITE_DATA . '/packages');
-// A zip32 archive addresses its contents with 32-bit offsets, so a part has to
-// One link is one download, at any size: archives past the 4 GB zip32 ceiling
-// switch to Zip64 rather than being split. Splitting is opt-in for anyone who
-// would rather hand a client several smaller files — set PACKAGE_PART_MB in
-// .env; 0 (the default) means never split.
-define('PACKAGE_PART_MAX_BYTES', max(0, (int)env('PACKAGE_PART_MB', 0)) * 1024 * 1024);
+// !! The limit that actually governs this is the WEB SERVER's, not the zip
+// format's. LiteSpeed caps any dynamically generated response at
+// "Max Dynamic Response Body Size" — 1 GiB by default — and when a response
+// runs past it, LiteSpeed truncates the stream and appends an HTML error. For
+// a zip that means no end-of-central-directory, and the client gets a file
+// their unarchiver refuses to open. There is no way to detect this from PHP
+// mid-stream, so parts are kept safely underneath it instead.
+//
+// 900 MB leaves headroom under the 1 GiB default. Raise it (or set 0 for a
+// single download of any size, which Zip64 supports) only if the host's limit
+// has been raised to match — see docs/API.md.
+//
+// Static files sidestep the cap entirely via sendStaticFile() below, which is
+// why individual-file downloads have no such ceiling.
+define('PACKAGE_PART_MAX_BYTES', max(0, (int)env('PACKAGE_PART_MB', 900)) * 1024 * 1024);
 define('PACKAGE_TTL_SECONDS', 7 * 24 * 60 * 60);
 define('PACKAGE_STREAM_CHUNK_BYTES', 1024 * 1024);
 
 // Fixed sizes of the ZIP structures we emit, used to compute Content-Length.
+// A streamed Zip64 entry carries a 16-byte placeholder extra field in its local
+// header, an 8-byte-per-size data descriptor, and a 24-byte extra field in its
+// central directory record.
 define('ZIP_LOCAL_HEADER_BYTES', 30);
-define('ZIP_DATA_DESCRIPTOR_BYTES', 16);
 define('ZIP_CENTRAL_ENTRY_BYTES', 46);
 define('ZIP_EOCD_BYTES', 22);
-// Zip64 counterparts. A streamed Zip64 entry carries a 16-byte placeholder
-// extra field in its local header, an 8-byte-per-size data descriptor, and a
-// 24-byte extra field in its central directory record.
 define('ZIP64_LOCAL_EXTRA_BYTES', 20);
 define('ZIP64_DATA_DESCRIPTOR_BYTES', 24);
 define('ZIP64_CENTRAL_EXTRA_BYTES', 28);
@@ -2534,59 +2626,42 @@ function zipDosTime($ts) {
     return [$time, $date];
 }
 
-// Whether this archive has to use Zip64. Decided once for the whole archive
-// rather than per entry: a uniform layout keeps the Content-Length arithmetic
-// honest and avoids a class of off-by-one bugs. Plain zip32 stays byte-for-byte
-// what it was, so small transfers keep the widest possible compatibility.
-function zipNeedsZip64(array $entries) {
-    $total = ZIP_EOCD_BYTES;
-    foreach ($entries as $e) {
-        if ((int)$e['size'] >= ZIP32_MAX) return true;
-        $nameLen = strlen($e['name']);
-        $total += ZIP_LOCAL_HEADER_BYTES + $nameLen + (int)$e['size'] + ZIP_DATA_DESCRIPTOR_BYTES
-                + ZIP_CENTRAL_ENTRY_BYTES + $nameLen;
-    }
-    return $total >= ZIP32_MAX;
-}
-
-// Bit 3 set: sizes and CRC follow the data in a descriptor, because we don't
-// know the CRC until we've streamed the file. Under Zip64 the local header also
-// carries a placeholder extra field, which is how a reader knows the descriptor
-// that follows uses 8-byte sizes.
-function zipStreamLocalHeader($name, $mtime, $z64 = false) {
+// Every archive is Zip64, whatever its size. Emitting zip32 for small
+// transfers and Zip64 only past 4 GB would mean the 64-bit path — the one
+// carrying a client's largest, least-repeatable delivery — was the path that
+// almost never ran, so a defect in it would first surface on a 40 GB handover.
+// One path is exercised by every download instead. Zip64 has been standard
+// since 2001 and costs ~56 bytes per file.
+//
+// Bit 3 is set: CRCs aren't known until the bytes have been streamed, so sizes
+// and CRC follow the data in a descriptor. The placeholder extra field in the
+// local header is how a reader knows that descriptor carries 8-byte sizes.
+function zipStreamLocalHeader($name, $mtime) {
     [$t, $d] = zipDosTime($mtime);
-    $extra = $z64 ? pack('vvPP', 0x0001, 16, 0, 0) : '';
+    $extra = pack('vvPP', 0x0001, 16, 0, 0);
     return pack('VvvvvvVVVvv',
-        0x04034b50, $z64 ? 45 : 20, 0x0008, 0, $t, $d,
+        0x04034b50, 45, 0x0008, 0, $t, $d,
         0, 0, 0, strlen($name), strlen($extra)
     ) . $name . $extra;
 }
 
-function zipDataDescriptor($crc, $size, $z64 = false) {
-    return $z64
-        ? pack('VV', 0x08074b50, $crc) . pack('PP', $size, $size)
-        : pack('VVVV', 0x08074b50, $crc, $size, $size);
+function zipDataDescriptor($crc, $size) {
+    return pack('VV', 0x08074b50, $crc) . pack('PP', $size, $size);
 }
 
-function zipCentralEntry($e, $z64 = false) {
+function zipCentralEntry($e) {
     [$t, $d] = zipDosTime($e['mtime']);
-    // Under Zip64 the 32-bit size and offset fields are sentinels; the real
-    // 64-bit values live in the extra field.
-    $extra = $z64 ? pack('vv', 0x0001, 24) . pack('PPP', $e['size'], $e['size'], $e['offset']) : '';
+    // The 32-bit size and offset fields are sentinels; the real 64-bit values
+    // live in the extra field.
+    $extra = pack('vv', 0x0001, 24) . pack('PPP', $e['size'], $e['size'], $e['offset']);
     return pack('VvvvvvvVVVvvvvvVV',
-        0x02014b50, $z64 ? 45 : 20, $z64 ? 45 : 20, 0x0008, 0, $t, $d,
-        $e['crc'],
-        $z64 ? ZIP32_MAX : $e['size'],
-        $z64 ? ZIP32_MAX : $e['size'],
-        strlen($e['name']), strlen($extra), 0, 0, 0, 0,
-        $z64 ? ZIP32_MAX : $e['offset']
+        0x02014b50, 45, 45, 0x0008, 0, $t, $d,
+        $e['crc'], ZIP32_MAX, ZIP32_MAX,
+        strlen($e['name']), strlen($extra), 0, 0, 0, 0, ZIP32_MAX
     ) . $e['name'] . $extra;
 }
 
-function zipEndOfCentralDirectory($count, $cdSize, $cdOffset, $z64 = false) {
-    if (!$z64) {
-        return pack('VvvvvVVv', 0x06054b50, 0, 0, $count, $count, $cdSize, $cdOffset, 0);
-    }
+function zipEndOfCentralDirectory($count, $cdSize, $cdOffset) {
     // Zip64 EOCD record, then its locator, then a classic EOCD full of
     // sentinels so zip32-only readers still find something well-formed.
     $eocd64 = pack('V', 0x06064b50) . pack('P', 44) . pack('vvVV', 45, 45, 0, 0)
@@ -2598,15 +2673,15 @@ function zipEndOfCentralDirectory($count, $cdSize, $cdOffset, $z64 = false) {
 
 // Exact byte length of the archive for a set of entries. Deterministic because
 // STORE means compressed size == file size, which is what lets us send a real
-// Content-Length on a zip that doesn't exist yet.
-function zipStreamedSize(array $entries, $z64 = null) {
-    if ($z64 === null) $z64 = zipNeedsZip64($entries);
-    $total = ZIP_EOCD_BYTES + ($z64 ? ZIP64_EOCD_BYTES + ZIP64_LOCATOR_BYTES : 0);
+// Content-Length on a zip that doesn't exist yet. Must stay in lockstep with
+// what the streaming route emits, or downloads truncate.
+function zipStreamedSize(array $entries) {
+    $total = ZIP_EOCD_BYTES + ZIP64_EOCD_BYTES + ZIP64_LOCATOR_BYTES;
     foreach ($entries as $e) {
         $nameLen = strlen($e['name']);
-        $total += ZIP_LOCAL_HEADER_BYTES + $nameLen + (int)$e['size']
-                + ($z64 ? ZIP64_LOCAL_EXTRA_BYTES + ZIP64_DATA_DESCRIPTOR_BYTES : ZIP_DATA_DESCRIPTOR_BYTES);
-        $total += ZIP_CENTRAL_ENTRY_BYTES + $nameLen + ($z64 ? ZIP64_CENTRAL_EXTRA_BYTES : 0);
+        $total += ZIP_LOCAL_HEADER_BYTES + $nameLen + ZIP64_LOCAL_EXTRA_BYTES
+                + (int)$e['size'] + ZIP64_DATA_DESCRIPTOR_BYTES;
+        $total += ZIP_CENTRAL_ENTRY_BYTES + $nameLen + ZIP64_CENTRAL_EXTRA_BYTES;
     }
     return $total;
 }
@@ -2876,6 +2951,17 @@ if ($method === 'POST' && $uri === '/api/admin/packages') {
     respond(packagePayload($m, true), 201);
 }
 
+// Update the note shown on the download page, without sending anything.
+if ($method === 'PUT' && matchRoute('/api/admin/packages/{id}', $uri, $params)) {
+    requireAuth();
+    $m = readPackage($params['id']);
+    if (!$m) respondError('Package not found', 404);
+    $input = getInput();
+    if (array_key_exists('message', $input)) $m['message'] = trim((string)$input['message']);
+    writePackage($m);
+    respond(packagePayload($m, true));
+}
+
 if ($method === 'DELETE' && matchRoute('/api/admin/packages/{id}', $uri, $params)) {
     requireAuth();
     $m = readPackage($params['id']);
@@ -2916,7 +3002,9 @@ function requireEmailConfigured() {
 function sendPackageLinks($m, $to, $note) {
     $payload = packagePayload($m);
     $expires = date('F j, Y', strtotime($m['expiresAt']));
-    $subject = 'Your files from "' . $m['name'] . '" are ready';
+    $days = (int)round(PACKAGE_TTL_SECONDS / 86400);
+    $dayLabel = $days . ' day' . ($days === 1 ? '' : 's');
+    $subject = emailSubject('Download link', $m['name']);
     $count = $payload['fileCount'];
     $summary = $count . ' file' . ($count === 1 ? '' : 's') . ' · ' . formatByteSize($payload['totalBytes']);
 
@@ -2926,16 +3014,34 @@ function sendPackageLinks($m, $to, $note) {
     $text[] = '';
     $text[] = 'Download: ' . $payload['shareUrl'];
     $text[] = '';
-    $text[] = "This link expires on $expires.";
+    $text[] = "This link works for $dayLabel — it expires on $expires. Please save the files somewhere safe before then.";
 
-    $html = '<div style="font-family:sans-serif;max-width:600px;color:#333;">'
-        . '<h2 style="font-size:18px;margin:0 0 12px;">Your files from &ldquo;' . escHtml($m['name']) . '&rdquo; are ready</h2>'
-        . ($note !== '' ? '<p style="font-size:14px;color:#5f5f5f;white-space:pre-line;">' . escHtml($note) . '</p>' : '')
-        . '<p style="font-size:14px;color:#5f5f5f;">' . escHtml($summary) . '</p>'
-        . '<p style="margin:22px 0;"><a href="' . escHtml($payload['shareUrl']) . '" style="background:#0019ff;color:#fff;padding:12px 22px;border-radius:4px;text-decoration:none;font-weight:600;font-size:15px;display:inline-block;">Download your files</a></p>'
-        . '<p style="font-size:12px;color:#8a8a8a;">Or paste this into your browser:<br>' . escHtml($payload['shareUrl']) . '</p>'
-        . '<p style="font-size:12px;color:#8a8a8a;margin-top:18px;">This link expires on ' . escHtml($expires) . '.</p>'
-        . '</div>';
+    // The expiry is the one thing a client must not miss, so it gets its own
+    // panel rather than a line of grey small print.
+    $expiryPanel = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
+        . '<tr><td style="background:#fff8e6;border:1px solid #f2e1b6;border-radius:6px;padding:12px 14px;'
+        . 'color:#7a5c12;font-size:13px;line-height:1.55;">'
+        . '<strong>This link works for ' . escHtml($dayLabel) . '</strong>, until ' . escHtml($expires)
+        . '. Please save your files somewhere safe before then.'
+        . '</td></tr></table>';
+
+    $body = ($note !== ''
+            ? '<div style="color:#41464f;font-size:14.5px;line-height:1.6;white-space:pre-line;padding:0 0 18px;">'
+              . escHtml($note) . '</div>'
+            : '')
+        . '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="padding:0 0 4px;">'
+        . '<tr><td style="background:#f4f5f7;border-radius:6px;padding:9px 14px;color:#41464f;font-size:13px;font-weight:600;">'
+        . escHtml($summary) . '</td></tr></table>';
+
+    $html = emailShell([
+        'title' => 'Your files are ready',
+        'lead'  => 'Here are your files from <strong style="color:#1a1a1a;">' . escHtml($m['name']) . '</strong>.',
+        'body'  => $body,
+        'cta'   => ['label' => 'Download your files', 'url' => $payload['shareUrl']],
+        'note'  => $expiryPanel
+                 . '<div style="padding:12px 0 0;">Or paste this into your browser:<br>'
+                 . '<span style="color:#41464f;word-break:break-all;">' . escHtml($payload['shareUrl']) . '</span></div>',
+    ]);
 
     sendEmail($to, $subject, implode("\n", $text), $html);
 }
@@ -2982,6 +3088,47 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
     respond(packagePayload(getLivePackage($params['token'])));
 }
 
+// Serve a file that already exists on disk, and exit.
+//
+// Anything PHP echoes is a "dynamic response" and is subject to LiteSpeed's
+// Max Dynamic Response Body Size (1 GiB by default), which truncates the
+// stream mid-download. Handing the path to LiteSpeed instead makes it a static
+// response: no size cap, and byte-range resume for free.
+//
+// Only used above the cap, where streaming through PHP is guaranteed to fail
+// anyway. Below it we keep the ordinary path, which works on every server.
+// Set SENDFILE=off in .env if a host mishandles the header.
+function sendStaticFile($path, $downloadName, $contentType) {
+    $size = filesize($path);
+    $isLiteSpeed = stripos($_SERVER['SERVER_SOFTWARE'] ?? '', 'litespeed') !== false;
+    $handoffAllowed = strtolower((string)env('SENDFILE', 'auto')) !== 'off';
+    $overDynamicCap = $size > PACKAGE_PART_MAX_BYTES && PACKAGE_PART_MAX_BYTES > 0;
+
+    @set_time_limit(0);
+    @ini_set('zlib.output_compression', '0');
+    while (ob_get_level() > 0) { ob_end_clean(); }
+
+    header('Content-Type: ' . $contentType);
+    header('Content-Disposition: attachment; filename="' . str_replace('"', '', $downloadName) . '"');
+
+    if ($isLiteSpeed && $handoffAllowed && $overDynamicCap) {
+        // LiteSpeed serves the file itself from here; it sets its own
+        // Content-Length and handles Range.
+        header('X-LiteSpeed-Send-File: ' . $path);
+        exit;
+    }
+
+    header('Content-Length: ' . $size);
+    header('X-Accel-Buffering: no');
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'HEAD') exit;
+
+    $fp = fopen($path, 'rb');
+    if ($fp === false) respondError('File not found', 404);
+    while (!feof($fp)) { echo fread($fp, PACKAGE_STREAM_CHUNK_BYTES); flush(); }
+    fclose($fp);
+    exit;
+}
+
 // Prepare a response for streaming: no buffering, no compression, no time cap.
 // Exits after the headers on a HEAD, which download managers send first to
 // size up the transfer.
@@ -3008,12 +3155,8 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
     $path = UPLOADS_DIR . '/' . basename($entry['file']);
     if (!is_file($path)) respondError('File not found', 404);
 
-    beginBinaryResponse(basename($entry['name']), 'application/octet-stream', filesize($path));
-    $fp = fopen($path, 'rb');
-    if ($fp === false) respondError('File not found', 404);
-    while (!feof($fp)) { echo fread($fp, PACKAGE_STREAM_CHUNK_BYTES); flush(); }
-    fclose($fp);
-    exit;
+    // Originals are static, so this has no size ceiling even on LiteSpeed.
+    sendStaticFile($path, basename($entry['name']), 'application/octet-stream');
 }
 
 // One part, zipped as it goes out. Never touches disk.
@@ -3030,11 +3173,7 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
         $entry = $part['entries'][0];
         $path = UPLOADS_DIR . '/' . basename($entry['file']);
         if (!is_file($path)) respondError('Part not found', 404);
-        beginBinaryResponse(basename($entry['name']), 'application/octet-stream', filesize($path));
-        $fp = fopen($path, 'rb');
-        while (!feof($fp)) { echo fread($fp, PACKAGE_STREAM_CHUNK_BYTES); flush(); }
-        fclose($fp);
-        exit;
+        sendStaticFile($path, basename($entry['name']), 'application/octet-stream');
     }
 
     // Re-stat everything first. If the gallery has changed since the plan was
@@ -3057,8 +3196,7 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
         ? "$label.zip"
         : sprintf('%s - part %d of %d.zip', $label, $part['index'], $partCount);
 
-    $z64 = zipNeedsZip64($entries);
-    beginBinaryResponse($filename, 'application/zip', $planIntact ? zipStreamedSize($entries, $z64) : null);
+    beginBinaryResponse($filename, 'application/zip', $planIntact ? zipStreamedSize($entries) : null);
 
     // Abandon the stream if the client disconnects; there's nothing to clean up.
     ignore_user_abort(false);
@@ -3066,7 +3204,7 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
     $offset = 0;
     $central = [];
     foreach ($entries as $e) {
-        $header = zipStreamLocalHeader($e['name'], $e['mtime'], $z64);
+        $header = zipStreamLocalHeader($e['name'], $e['mtime']);
         echo $header;
         $entryOffset = $offset;
         $offset += strlen($header);
@@ -3086,7 +3224,7 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
         fclose($fp);
         $crcValue = hexdec(hash_final($crc));
 
-        $descriptor = zipDataDescriptor($crcValue, $written, $z64);
+        $descriptor = zipDataDescriptor($crcValue, $written);
         echo $descriptor;
         $offset += $written + strlen($descriptor);
 
@@ -3095,9 +3233,9 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
 
     $cdOffset = $offset;
     $cd = '';
-    foreach ($central as $e) $cd .= zipCentralEntry($e, $z64);
+    foreach ($central as $e) $cd .= zipCentralEntry($e);
     echo $cd;
-    echo zipEndOfCentralDirectory(count($central), strlen($cd), $cdOffset, $z64);
+    echo zipEndOfCentralDirectory(count($central), strlen($cd), $cdOffset);
     flush();
     exit;
 }
@@ -3157,14 +3295,17 @@ if ($method === 'POST' && $uri === '/api/settings/email/test') {
     try {
         sendEmail(
             $config['adminEmail'],
-            'Test Email — Video Proofing Notifications',
-            'This is a test email. Email notifications are working correctly!',
-            '<div style="font-family:sans-serif;max-width:600px;">'
-            . '<h2 style="color:#0019ff;">Test Email</h2>'
-            . '<p>This is a test email from your Video Proofing site.</p>'
-            . '<p style="color:#4caf50;font-weight:600;">Email notifications are working correctly!</p>'
-            . '<hr style="border:none;border-top:1px solid #e0e0e0;margin:24px 0;">'
-            . '<p style="color:#8e8e8e;font-size:12px;">Sent from ' . $config['baseUrl'] . '</p></div>'
+            emailSubject('Test email'),
+            "This is a test email from " . siteName() . ". Email notifications are working correctly.",
+            emailShell([
+                'title' => 'Email is working',
+                'lead'  => 'This is a test message from your ' . escHtml(siteName()) . ' site.',
+                'body'  => '<table role="presentation" cellpadding="0" cellspacing="0" border="0">'
+                    . '<tr><td style="background:#eaf7ee;border:1px solid #c6e6d1;border-radius:6px;padding:11px 14px;'
+                    . 'color:#1f7a3d;font-size:13.5px;font-weight:600;">'
+                    . 'Notifications are configured correctly.</td></tr></table>',
+                'note'  => 'Client comment alerts and download links will be delivered this way.',
+            ])
         );
         respond(['ok' => true, 'message' => 'Test email sent successfully']);
     } catch (Exception $e) {
@@ -3611,7 +3752,6 @@ if ($method === 'DELETE' && $uri === '/api/settings/api-token') {
 // HEADER CONFIG
 // ============================================================
 
-define('HEADER_CONFIG_PATH', DATA_DIR . '/header.json');
 define('LOGO_DIR', SITE_DATA . '/logo');
 if (!is_dir(LOGO_DIR)) mkdir(LOGO_DIR, 0755, true);
 

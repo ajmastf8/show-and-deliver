@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.2 — 2026-08-15
+- **Zip downloads are much faster.** Every file in a ZIP needs a CRC32 checksum, and we were computing it during the download by hashing every byte in PHP. That is CPU work, and shared hosts cap CPU per account, so it throttled deliveries badly — measured on a live cPanel server, a zip crawled at 12 MB/s while the same files served without hashing moved at 102 MB/s. Each file is now hashed once when it's uploaded and the result cached, so downloads copy straight from disk with no per-byte work. Locally the same archive went from 304 MB/s to over 3,000 MB/s.
+- Files uploaded before this release are hashed in the background while the admin is open, a few seconds at a time. Deliveries keep working throughout — a file that hasn't been hashed yet is simply hashed on its first download, which is the old speed rather than an error.
+- Archives no longer carry per-entry data descriptors, since checksums are known before sending. Slightly smaller, and readable by a wider range of tools.
+
 ## 1.6.1 — 2026-08-15
 - **Fixed: individual file downloads arrived as 0-byte files.** 1.6.0 handed uploads to the web server with an `X-LiteSpeed-Send-File` header, which is not enabled on every LiteSpeed host. Where it isn't, the header is passed through to the browser and the response body is empty, so every per-file download silently failed. The header also disclosed the server's absolute filesystem path. It is now off by default and opt-in via `SENDFILE=litespeed`, for hosts where it has actually been verified.
 - Per-file downloads now link to the file's ordinary static URL instead, which the web server serves straight off disk — the same route that measures ~100 MB/s where streaming through PHP crawls. Saved filenames stay readable via the browser's download attribute.

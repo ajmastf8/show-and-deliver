@@ -31,7 +31,7 @@ public/
     download.js        # Delivery download page logic
     header.js          # Dynamic header rendering from /api/header config
 site-data/             # Runtime data (gitignored)
-  data/                # JSON data files (galleries, collections, settings, header, admin config)
+  data/                # JSON data files (galleries, collections, settings, header, admin config, crc.json)
   uploads/             # Original uploaded files (photos + videos)
   thumbnails/          # 640px thumbnails (auto-generated)
   proxies/             # 2048px web-optimized images for lightbox (auto-generated)
@@ -52,6 +52,15 @@ site-data/             # Runtime data (gitignored)
   `site-data/packages/{id}/manifest.json` — no zip is ever built on disk. The
   archive is streamed as the client downloads, STOREd (never deflated), which
   keeps the total size predictable enough to send a real `Content-Length`.
+  **Every entry's CRC32 comes from the cache in `site-data/data/crc.json`,
+  written at upload time.** This is the single most important thing about
+  delivery performance: hashing bytes in PHP is CPU-bound, and CloudLinux caps
+  CPU per account, so computing CRCs during a download collapsed throughput to
+  12 MB/s on a live host while the same bytes without hashing moved at 102 MB/s
+  (locally, removing the hash made the copy loop 47x faster). With CRCs known up
+  front, local headers carry them, no data descriptors are needed, and entry
+  bodies go disk-to-socket via `stream_copy_to_stream()` with no PHP loop.
+  Never reintroduce per-byte work into that path.
   Always Zip64, so there is one code path exercised by every download rather
   than a 64-bit path that only runs on rare large transfers.
   **The size limit that matters is LiteSpeed's `Max Dynamic Response Body Size`
@@ -68,9 +77,10 @@ site-data/             # Runtime data (gitignored)
   ordinary static URL (`staticUploadUrl()`, exposed as `staticUrl` in the package
   payload and used by download.js): `/uploads/` is served straight off disk and
   measured ~100 MB/s on the same host where PHP streaming crawls. See the block comment above `PACKAGES_DIR` in
-  `index.php` before changing any of this — and the byte arithmetic in
-  `zipStreamedSize()` must stay in lockstep with what the streaming route
-  emits, or downloads truncate.
+  `index.php` before changing any of this. The per-entry byte arithmetic lives
+  in `zipEntryOverhead()`, used by both `zipStreamedSize()` and the part
+  planner so they cannot drift; if it stops matching what the streaming route
+  emits, `Content-Length` lies and every download truncates.
 - **Items** in galleries can be videos or photos, plus section headers
 - **Proxy images** (2048px JPEG) are generated alongside thumbnails for fast lightbox loading
 - **Header config** is stored in `site-data/data/header.json` and rendered by `header.js`

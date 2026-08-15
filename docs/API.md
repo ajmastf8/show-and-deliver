@@ -342,6 +342,26 @@ part reports `"kind": "file"` and takes the static path.
 Packages expire 7 days after creation and are swept on the next list/create.
 Expiring one deletes a plan, not gigabytes of archive.
 
+### Checksum cache
+
+Each ZIP entry needs a CRC32, and hashing bytes in PHP is CPU-bound — on shared
+hosting that was the single biggest limit on delivery speed. Files are hashed
+once at upload and cached in `site-data/data/crc.json`, so downloads do no
+per-byte work.
+
+Files that predate the cache are hashed in the background by the admin. You can
+also drive it yourself; each call works for a few seconds and reports progress,
+so loop until `done`:
+
+```bash
+curl -X POST https://your.host/api/admin/crc-warm \
+  -H "Authorization: Bearer $API_TOKEN"
+# {"hashed": 12, "remaining": 340, "total": 2104, "done": false}
+```
+
+Nothing depends on this having finished: an unhashed file is hashed on its first
+download instead, which is slower but correct.
+
 ### Create and send
 
 `to` is optional. Include it and the link is emailed in the same call; omit it

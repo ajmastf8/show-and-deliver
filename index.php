@@ -3094,6 +3094,10 @@ if ($method === 'GET' && $uri === '/api/admin/sendfile-test') {
     @ini_set('zlib.output_compression', '0');
     while (ob_get_level() > 0) { ob_end_clean(); }
     header('Content-Type: application/octet-stream');
+    // Set deliberately: the question that decides whether a handoff is usable
+    // is whether Content-Disposition survives it. Without it a download opens
+    // inline in the browser under the wrong name.
+    header('Content-Disposition: attachment; filename="sendfile-test.bin"');
 
     if ($mode === 'location' && $isLiteSpeed) {
         header('X-LiteSpeed-Location: ' . staticUploadUrl(basename($best)));

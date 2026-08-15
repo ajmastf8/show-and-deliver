@@ -176,6 +176,7 @@ document.addEventListener('DOMContentLoaded', () => {
       await Promise.all([loadData(), loadHeaderConfig()]);
       settingsLoaded.header = true;
       renderAll();
+      warmCrcCache();
     } else {
       hide($('auth-setup')); show($('auth-login')); hide($('app'));
     }
@@ -226,6 +227,29 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     state.galleries = await gRes.json();
     state.collections = cRes.ok ? await cRes.json() : [];
+  }
+
+  // Hash any files uploaded before the CRC cache existed, a slice at a time,
+  // in the background. Deliveries work throughout — an unhashed file is just
+  // hashed on first download instead, which is slow rather than broken. New
+  // uploads are hashed as they arrive, so this only ever has to run through
+  // the existing library once.
+  let crcWarming = false;
+  async function warmCrcCache() {
+    if (crcWarming) return;
+    crcWarming = true;
+    try {
+      for (;;) {
+        const res = await fetch('/api/admin/crc-warm', { method: 'POST' });
+        if (!res.ok) break;
+        const d = await res.json();
+        if (d.done || !d.hashed) break;
+        // Yield between slices so this never competes with the admin's own
+        // requests, or with a client downloading right now.
+        await new Promise(r => setTimeout(r, 1500));
+      }
+    } catch (_) { /* best effort; retries next time the admin loads */ }
+    crcWarming = false;
   }
 
   // ==========================================================================

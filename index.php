@@ -15,9 +15,13 @@ define('THUMBS_DIR', SITE_DATA . '/thumbnails');
 define('PROXY_DIR', SITE_DATA . '/proxies');
 define('CAPTIONS_DIR', SITE_DATA . '/captions');
 define('IMPORT_DIR', SITE_DATA . '/imports');
-// Up here with the other paths, not next to the header routes: emails read the
-// site name for their subject lines, and those routes run earlier in the file.
+// Up here with the other paths, not next to the code that uses them: routes run
+// inline as this file is read, so a define() further down does not exist yet by
+// the time an earlier route calls a function that needs it. Emails read the site
+// name for subject lines, and uploads hash into the CRC cache — both happen well
+// before the sections those constants would otherwise live in.
 define('HEADER_CONFIG_PATH', DATA_DIR . '/header.json');
+define('CRC_CACHE_PATH', DATA_DIR . '/crc.json');
 
 // Upstream repo for update checks and the optional first-run git init. Defined
 // during bootstrap because both the setup handler and the updater read it, and
@@ -1384,6 +1388,9 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/stats/reset', $
 function registerGalleryItem(string $gid, string $destName, string $title): array {
     $destPath = UPLOADS_DIR . '/' . $destName;
     $isPhoto = isImageFile($destName);
+    // Hash now, while we're already touching this file, so a delivery never has
+    // to pay for it later. See the CRC cache notes above CRC_CACHE_PATH.
+    fileCrc32($destPath);
     $item = [
         'id' => generateId($isPhoto ? 'p_' : 'v_'),
         'type' => $isPhoto ? 'photo' : 'video',
@@ -2541,6 +2548,60 @@ if ($method === 'POST' && matchRoute('/api/collections/public/{token}/unlock', $
 // trailing data descriptor (general-purpose bit 3). Every standard extractor
 // reads the central directory at the end, where the real values live.
 
+// ---- CRC32 cache ----
+//
+// Every ZIP entry needs a CRC32 of its contents, which means hashing every byte
+// in PHP. That is pure CPU work, and on shared hosting (CloudLinux caps CPU per
+// account) it is *the* bottleneck in a delivery. Measured on a live cPanel host:
+// streaming a zip ran at 12 MB/s while the same bytes served without hashing ran
+// at 102 MB/s. Locally, removing the hash from the copy loop made it 47x faster.
+// CRC isn't a cost, it's the only cost.
+//
+// So each file is hashed exactly once — at upload — and the result kept here,
+// keyed by stored filename. Uploads are immutable, so a cached value stays
+// valid; `size` is stored alongside as a sanity check in case a file is ever
+// replaced on disk out of band.
+//
+// CRC_CACHE_PATH is defined with the other paths at the top of this file: the
+// upload route runs long before this point, so a define() here would not exist
+// yet when registerGalleryItem() hashes a new file.
+
+function crcCacheAll(): array {
+    $c = jsonRead(CRC_CACHE_PATH);
+    return is_array($c) ? $c : [];
+}
+
+// Cached CRC32 for an upload, or null when it hasn't been hashed yet.
+function crcCacheLookup(string $storedName, int $size): ?int {
+    $entry = crcCacheAll()[$storedName] ?? null;
+    if (!is_array($entry)) return null;
+    if ((int)($entry['size'] ?? -1) !== $size) return null;
+    return (int)$entry['crc'];
+}
+
+function crcCacheStore(string $storedName, int $crc, int $size): void {
+    jsonUpdate(CRC_CACHE_PATH, function ($cache) use ($storedName, $crc, $size) {
+        $cache[$storedName] = ['crc' => $crc, 'size' => $size];
+        return $cache;
+    });
+}
+
+// Cached CRC32, hashing the file if this is the first time we've seen it.
+// Pass $compute = false to ask "is it warm yet?" without paying for the pass.
+function fileCrc32(string $path, bool $compute = true): ?int {
+    $storedName = basename($path);
+    $size = (int)@filesize($path);
+    $hit = crcCacheLookup($storedName, $size);
+    if ($hit !== null) return $hit;
+    if (!$compute) return null;
+
+    $hex = @hash_file('crc32b', $path);
+    if ($hex === false) return null;
+    $crc = (int)hexdec($hex);
+    crcCacheStore($storedName, $crc, $size);
+    return $crc;
+}
+
 define('PACKAGES_DIR', SITE_DATA . '/packages');
 // !! The limit that actually governs this is the WEB SERVER's, not the zip
 // format's. LiteSpeed caps any dynamically generated response at
@@ -2568,7 +2629,6 @@ define('ZIP_LOCAL_HEADER_BYTES', 30);
 define('ZIP_CENTRAL_ENTRY_BYTES', 46);
 define('ZIP_EOCD_BYTES', 22);
 define('ZIP64_LOCAL_EXTRA_BYTES', 20);
-define('ZIP64_DATA_DESCRIPTOR_BYTES', 24);
 define('ZIP64_CENTRAL_EXTRA_BYTES', 28);
 define('ZIP64_EOCD_BYTES', 56);
 define('ZIP64_LOCATOR_BYTES', 20);
@@ -2633,20 +2693,19 @@ function zipDosTime($ts) {
 // One path is exercised by every download instead. Zip64 has been standard
 // since 2001 and costs ~56 bytes per file.
 //
-// Bit 3 is set: CRCs aren't known until the bytes have been streamed, so sizes
-// and CRC follow the data in a descriptor. The placeholder extra field in the
-// local header is how a reader knows that descriptor carries 8-byte sizes.
-function zipStreamLocalHeader($name, $mtime) {
+// CRCs come from the cache, so they're known before a byte is sent. That lets
+// the local header carry the real CRC and sizes with no general-purpose flags
+// set, which means no trailing data descriptor — and, more importantly, that
+// the entry body can be copied straight from disk to the socket in C instead of
+// being read through PHP a chunk at a time to be hashed on the way past.
+function zipStreamLocalHeader($name, $mtime, $crc, $size) {
     [$t, $d] = zipDosTime($mtime);
-    $extra = pack('vvPP', 0x0001, 16, 0, 0);
+    // 32-bit size fields are sentinels; the real 64-bit values are in the extra.
+    $extra = pack('vv', 0x0001, 16) . pack('PP', $size, $size);
     return pack('VvvvvvVVVvv',
-        0x04034b50, 45, 0x0008, 0, $t, $d,
-        0, 0, 0, strlen($name), strlen($extra)
+        0x04034b50, 45, 0x0000, 0, $t, $d,
+        $crc, ZIP32_MAX, ZIP32_MAX, strlen($name), strlen($extra)
     ) . $name . $extra;
-}
-
-function zipDataDescriptor($crc, $size) {
-    return pack('VV', 0x08074b50, $crc) . pack('PP', $size, $size);
 }
 
 function zipCentralEntry($e) {
@@ -2655,7 +2714,7 @@ function zipCentralEntry($e) {
     // live in the extra field.
     $extra = pack('vv', 0x0001, 24) . pack('PPP', $e['size'], $e['size'], $e['offset']);
     return pack('VvvvvvvVVVvvvvvVV',
-        0x02014b50, 45, 45, 0x0008, 0, $t, $d,
+        0x02014b50, 45, 45, 0x0000, 0, $t, $d,
         $e['crc'], ZIP32_MAX, ZIP32_MAX,
         strlen($e['name']), strlen($extra), 0, 0, 0, 0, ZIP32_MAX
     ) . $e['name'] . $extra;
@@ -2675,13 +2734,26 @@ function zipEndOfCentralDirectory($count, $cdSize, $cdOffset) {
 // STORE means compressed size == file size, which is what lets us send a real
 // Content-Length on a zip that doesn't exist yet. Must stay in lockstep with
 // what the streaming route emits, or downloads truncate.
+// Everything one entry adds to the archive besides its own bytes: local header,
+// its Zip64 extra, the central directory record, and that record's Zip64 extra.
+// No data descriptor — CRCs are known up front, so they go in the header.
+//
+// Both the size calculation and the part planner go through here so they cannot
+// drift apart. If they do, Content-Length stops matching the bytes actually sent
+// and every download truncates.
+function zipEntryOverhead(int $nameLen): int {
+    return ZIP_LOCAL_HEADER_BYTES + $nameLen + ZIP64_LOCAL_EXTRA_BYTES
+         + ZIP_CENTRAL_ENTRY_BYTES + $nameLen + ZIP64_CENTRAL_EXTRA_BYTES;
+}
+
+function zipArchiveOverhead(): int {
+    return ZIP_EOCD_BYTES + ZIP64_EOCD_BYTES + ZIP64_LOCATOR_BYTES;
+}
+
 function zipStreamedSize(array $entries) {
-    $total = ZIP_EOCD_BYTES + ZIP64_EOCD_BYTES + ZIP64_LOCATOR_BYTES;
+    $total = zipArchiveOverhead();
     foreach ($entries as $e) {
-        $nameLen = strlen($e['name']);
-        $total += ZIP_LOCAL_HEADER_BYTES + $nameLen + ZIP64_LOCAL_EXTRA_BYTES
-                + (int)$e['size'] + ZIP64_DATA_DESCRIPTOR_BYTES;
-        $total += ZIP_CENTRAL_ENTRY_BYTES + $nameLen + ZIP64_CENTRAL_EXTRA_BYTES;
+        $total += zipEntryOverhead(strlen($e['name'])) + (int)$e['size'];
     }
     return $total;
 }
@@ -2744,25 +2816,23 @@ function packagePlanParts(array $entries) {
         $parts[] = ['kind' => 'zip', 'entries' => $entries];
     } else {
         $current = [];
-        $currentBytes = ZIP_EOCD_BYTES;
+        $currentBytes = zipArchiveOverhead();
 
         $flush = function () use (&$parts, &$current, &$currentBytes) {
             if (!$current) return;
             $parts[] = ['kind' => 'zip', 'entries' => $current];
             $current = [];
-            $currentBytes = ZIP_EOCD_BYTES;
+            $currentBytes = zipArchiveOverhead();
         };
 
         foreach ($entries as $e) {
-            $nameLen = strlen($e['name']);
-            $cost = ZIP_LOCAL_HEADER_BYTES + $nameLen + $e['size'] + ZIP64_DATA_DESCRIPTOR_BYTES
-                  + ZIP_CENTRAL_ENTRY_BYTES + $nameLen;
+            $cost = zipEntryOverhead(strlen($e['name'])) + (int)$e['size'];
 
             // A file bigger than a whole part can't be split across parts
             // without a multi-volume archive most clients can't open. Hand it
             // over as the original file instead — zipping a single 6 GB video
             // buys nothing anyway.
-            if ($cost + ZIP_EOCD_BYTES > PACKAGE_PART_MAX_BYTES) {
+            if ($cost + zipArchiveOverhead() > PACKAGE_PART_MAX_BYTES) {
                 $flush();
                 $parts[] = ['kind' => 'file', 'entries' => [$e]];
                 continue;
@@ -2887,6 +2957,54 @@ function buildPackagePlan($sourceType, $sourceId) {
 }
 
 // --- Admin routes ---
+
+// Warm the CRC cache for files uploaded before it existed.
+//
+// Hashing is the slow part of a delivery and it is CPU-bound, so this runs in
+// short time-boxed slices and reports progress: the caller loops until
+// remaining hits 0. Deliveries work throughout — an unwarmed file simply gets
+// hashed on first download instead, which is the old, slow behaviour rather
+// than a failure.
+define('CRC_WARM_SLICE_SECONDS', 10);
+
+if ($method === 'POST' && $uri === '/api/admin/crc-warm') {
+    requireAuth();
+    $deadline = microtime(true) + CRC_WARM_SLICE_SECONDS;
+
+    // Everything currently referenced by a gallery, newest galleries first so
+    // recent work becomes deliverable soonest.
+    $wanted = [];
+    foreach (array_reverse(readGalleries()) as $g) {
+        foreach (readGalleryVideos($g['id']) as $v) {
+            if (($v['type'] ?? '') === 'header' || empty($v['filename'])) continue;
+            $wanted[$v['filename']] = true;
+        }
+    }
+    $wanted = array_keys($wanted);
+
+    $cache = crcCacheAll();
+    $todo = [];
+    foreach ($wanted as $name) {
+        $path = UPLOADS_DIR . '/' . basename($name);
+        if (!is_file($path)) continue;
+        $entry = $cache[$name] ?? null;
+        if (is_array($entry) && (int)($entry['size'] ?? -1) === (int)filesize($path)) continue;
+        $todo[] = $path;
+    }
+
+    $hashed = 0;
+    foreach ($todo as $path) {
+        if (microtime(true) >= $deadline) break;
+        if (fileCrc32($path) !== null) $hashed++;
+    }
+
+    respond([
+        'hashed'    => $hashed,
+        'remaining' => max(0, count($todo) - $hashed),
+        'total'     => count($wanted),
+        'done'      => count($todo) - $hashed <= 0,
+    ]);
+}
 
 if ($method === 'GET' && $uri === '/api/admin/packages') {
     requireAuth();
@@ -3206,6 +3324,10 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
         $size = (int)filesize($path);
         if ($size !== (int)$e['size']) { $planIntact = false; $e['size'] = $size; }
         $e['path'] = $path;
+        // Cached from upload time. A file that predates the cache is hashed
+        // here, once, and every later delivery of it is fast.
+        $e['crc'] = fileCrc32($path);
+        if ($e['crc'] === null) { $planIntact = false; continue; }
         $entries[] = $e;
     }
     if (!$entries) respondError('Part not found', 404);
@@ -3222,31 +3344,22 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
 
     $offset = 0;
     $central = [];
+    $out = fopen('php://output', 'wb');
     foreach ($entries as $e) {
-        $header = zipStreamLocalHeader($e['name'], $e['mtime']);
+        $header = zipStreamLocalHeader($e['name'], $e['mtime'], $e['crc'], $e['size']);
         echo $header;
         $entryOffset = $offset;
         $offset += strlen($header);
 
         $fp = fopen($e['path'], 'rb');
         if ($fp === false) continue;
-        $crc = hash_init('crc32b');
-        $written = 0;
-        while (!feof($fp) && $written < $e['size']) {
-            $buf = fread($fp, (int)min(PACKAGE_STREAM_CHUNK_BYTES, $e['size'] - $written));
-            if ($buf === false || $buf === '') break;
-            hash_update($crc, $buf);
-            echo $buf;
-            $written += strlen($buf);
-        }
+        // The whole point of the CRC cache: the body goes disk -> socket in C,
+        // with no PHP loop and nothing hashed on the way past.
+        $written = stream_copy_to_stream($fp, $out, $e['size']);
         fclose($fp);
-        $crcValue = hexdec(hash_final($crc));
+        $offset += $written;
 
-        $descriptor = zipDataDescriptor($crcValue, $written);
-        echo $descriptor;
-        $offset += $written + strlen($descriptor);
-
-        $central[] = ['name' => $e['name'], 'crc' => $crcValue, 'size' => $written, 'offset' => $entryOffset, 'mtime' => $e['mtime']];
+        $central[] = ['name' => $e['name'], 'crc' => $e['crc'], 'size' => $written, 'offset' => $entryOffset, 'mtime' => $e['mtime']];
     }
 
     $cdOffset = $offset;
@@ -3254,6 +3367,7 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
     foreach ($central as $e) $cd .= zipCentralEntry($e);
     echo $cd;
     echo zipEndOfCentralDirectory(count($central), strlen($cd), $cdOffset);
+    fclose($out);
     flush();
     exit;
 }

@@ -23,6 +23,24 @@ define('IMPORT_DIR', SITE_DATA . '/imports');
 define('HEADER_CONFIG_PATH', DATA_DIR . '/header.json');
 define('CRC_CACHE_PATH', DATA_DIR . '/crc.json');
 
+// Delivery + ZIP constants. These live up here, not beside the delivery code,
+// for the same reason as the paths above: routes execute inline as this file is
+// read, so a define() further down does not exist yet when an earlier route
+// calls a function that needs it. The client gallery's zip download is such a
+// route. This has caused two production bugs already — leave them here.
+define('PACKAGES_DIR', SITE_DATA . '/packages');
+define('PACKAGE_TTL_SECONDS', 7 * 24 * 60 * 60);
+define('PACKAGE_STREAM_CHUNK_BYTES', 4 * 1024 * 1024);
+define('ZIP_LOCAL_HEADER_BYTES', 30);
+define('ZIP_CENTRAL_ENTRY_BYTES', 46);
+define('ZIP_EOCD_BYTES', 22);
+define('ZIP64_LOCAL_EXTRA_BYTES', 20);
+define('ZIP64_CENTRAL_EXTRA_BYTES', 28);
+define('ZIP64_EOCD_BYTES', 56);
+define('ZIP64_LOCATOR_BYTES', 20);
+define('ZIP32_MAX', 0xFFFFFFFF);
+define('CRC_WARM_SLICE_SECONDS', 10);
+
 // Upstream repo for update checks and the optional first-run git init. Defined
 // during bootstrap because both the setup handler and the updater read it, and
 // handlers exit before later lines in this file would run.
@@ -57,6 +75,11 @@ function loadEnv() {
     }
 }
 loadEnv();
+
+// Must come after loadEnv(): this is the one delivery constant that reads .env,
+// and evaluating it earlier silently ignored PACKAGE_PART_MB and fell back to
+// the default. The rest live at the top with the paths.
+define('PACKAGE_PART_MAX_BYTES', max(0, (int)env('PACKAGE_PART_MB', 900)) * 1024 * 1024);
 
 function env($key, $default = '') {
     return $_ENV[$key] ?? getenv($key) ?: $default;
@@ -2248,7 +2271,7 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download/{videoId}', 
     // Streams without buffering so a big video isn't loaded into memory, and
     // hands files past the dynamic-response cap to the web server so they
     // aren't truncated mid-download.
-    sendStaticFile($filePath, $downloadName, 'application/octet-stream');
+    sendStaticFile($filePath, $downloadName, 'application/octet-stream', staticUploadUrl($video['filename']));
 }
 
 // Bulk "Download All" beacon — fired once by proofing.js when a zip run starts.
@@ -2260,10 +2283,96 @@ if ($method === 'POST' && matchRoute('/api/proofing/{token}/event/download-all',
     respond(['ok' => true]);
 }
 
-// Bulk "Download All" is now done entirely client-side: the browser fetches
-// each file via /api/proofing/{token}/download/{id} in parallel and assembles
-// a ZIP in JS (see public/js/zip-writer.js). No server-side packaging step,
-// no temp files, no LiteSpeed 1GB / 300s limits to worry about.
+// A client gallery's downloadable contents: its media, plus each video's
+// caption tracks as sibling .vtt files named to match so players pick them up
+// automatically. The browser-side zip did this, so the server-side one must too.
+function proofingZipEntries($gallery) {
+    $used = [];
+    $entries = packageGalleryFiles($gallery, '', $used);
+
+    $byFile = [];
+    foreach (readGalleryVideos($gallery['id']) as $v) {
+        if (empty($v['filename']) || empty($v['captions'])) continue;
+        $byFile[$v['filename']] = $v['captions'];
+    }
+    if (!$byFile) return $entries;
+
+    $withCaptions = [];
+    foreach ($entries as $e) {
+        $withCaptions[] = $e;
+        foreach ($byFile[$e['file']] ?? [] as $c) {
+            if (empty($c['filename'])) continue;
+            $path = CAPTIONS_DIR . '/' . basename($c['filename']);
+            if (!is_file($path)) continue;
+            $stem = preg_replace('/\.[^.]+$/', '', $e['name']);
+            $lang = preg_replace('/[^A-Za-z0-9_-]/', '', (string)($c['lang'] ?? 'en'));
+            $withCaptions[] = [
+                'name'  => $stem . '.' . $lang . '.vtt',
+                'file'  => $c['filename'],
+                'dir'   => 'captions',
+                'size'  => (int)filesize($path),
+                'mtime' => (int)@filemtime($path) ?: time(),
+                'id'    => '',
+            ];
+        }
+    }
+    return $withCaptions;
+}
+
+// "Download all" for a client gallery, using the same machinery as a delivery
+// link: the server streams the zip, checksums come from the CRC cache, and the
+// bytes go disk-to-socket. Previously this was assembled in the browser, which
+// dodged the response-size cap but cost the client's CPU to checksum every byte
+// and held the whole archive in memory on Safari, Firefox, and Chrome-on-macOS.
+//
+// The cap still applies to what PHP generates, so the gallery is planned into
+// parts exactly like a delivery is. `plan` describes them; the page renders one
+// button per part.
+if ($method === 'GET' && matchRoute('/api/proofing/{token}/zip', $uri, $params)) {
+    $gallery = getProofingGallery($params['token']);
+    if (!$gallery['downloadsEnabled']) respondError('Downloads disabled', 403);
+
+    $parts = packagePlanParts(proofingZipEntries($gallery));
+    $out = [];
+    foreach ($parts as $p) {
+        $out[] = [
+            'index'     => $p['index'],
+            'kind'      => $p['kind'],
+            'label'     => $p['kind'] === 'file' ? basename($p['entries'][0]['name']) : sprintf('Part %d', $p['index']),
+            'size'      => (int)$p['size'],
+            'fileCount' => count($p['entries']),
+            'url'       => '/api/proofing/' . rawurlencode($params['token']) . '/zip/' . $p['index'],
+        ];
+    }
+    respond(['name' => $gallery['name'], 'parts' => $out]);
+}
+
+if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/proofing/{token}/zip/{index}', $uri, $params)) {
+    $gallery = getProofingGallery($params['token']);
+    if (!$gallery['downloadsEnabled']) respondError('Downloads disabled', 403);
+
+    // Re-planned per request rather than stored: a client gallery is live, and
+    // items can be added or hidden between the page loading and the click.
+    $parts = packagePlanParts(proofingZipEntries($gallery));
+    $part = null;
+    foreach ($parts as $p) { if ((int)$p['index'] === (int)$params['index']) { $part = $p; break; } }
+    if (!$part) respondError('Not found', 404);
+
+    $label = packageFolderName($gallery['name']);
+
+    if ($part['kind'] === 'file') {
+        $entry = $part['entries'][0];
+        $path = UPLOADS_DIR . '/' . basename($entry['file']);
+        if (!is_file($path)) respondError('Not found', 404);
+        recordItemDownload(galleryStatsPath($gallery['id']), $entry['id'] ?? '');
+        sendStaticFile($path, basename($entry['name']), 'application/octet-stream', staticUploadUrl($entry['file']));
+    }
+
+    $partCount = count($parts);
+    streamZipOfEntries($part['entries'], $partCount === 1
+        ? "$label.zip"
+        : sprintf('%s - part %d of %d.zip', $label, $part['index'], $partCount));
+}
 
 // Send review
 if ($method === 'POST' && matchRoute('/api/proofing/{token}/send-review', $uri, $params)) {
@@ -2602,7 +2711,6 @@ function fileCrc32(string $path, bool $compute = true): ?int {
     return $crc;
 }
 
-define('PACKAGES_DIR', SITE_DATA . '/packages');
 // !! The limit that actually governs this is the WEB SERVER's, not the zip
 // format's. LiteSpeed caps any dynamically generated response at
 // "Max Dynamic Response Body Size" — 1 GiB by default — and when a response
@@ -2617,22 +2725,11 @@ define('PACKAGES_DIR', SITE_DATA . '/packages');
 //
 // Static files sidestep the cap entirely via sendStaticFile() below, which is
 // why individual-file downloads have no such ceiling.
-define('PACKAGE_PART_MAX_BYTES', max(0, (int)env('PACKAGE_PART_MB', 900)) * 1024 * 1024);
-define('PACKAGE_TTL_SECONDS', 7 * 24 * 60 * 60);
-define('PACKAGE_STREAM_CHUNK_BYTES', 4 * 1024 * 1024);
 
 // Fixed sizes of the ZIP structures we emit, used to compute Content-Length.
 // A streamed Zip64 entry carries a 16-byte placeholder extra field in its local
 // header, an 8-byte-per-size data descriptor, and a 24-byte extra field in its
 // central directory record.
-define('ZIP_LOCAL_HEADER_BYTES', 30);
-define('ZIP_CENTRAL_ENTRY_BYTES', 46);
-define('ZIP_EOCD_BYTES', 22);
-define('ZIP64_LOCAL_EXTRA_BYTES', 20);
-define('ZIP64_CENTRAL_EXTRA_BYTES', 28);
-define('ZIP64_EOCD_BYTES', 56);
-define('ZIP64_LOCATOR_BYTES', 20);
-define('ZIP32_MAX', 0xFFFFFFFF);
 
 function ensurePackagesDir() {
     if (!is_dir(PACKAGES_DIR)) @mkdir(PACKAGES_DIR, 0755, true);
@@ -2802,6 +2899,9 @@ function packageGalleryFiles($gallery, $prefix, array &$used) {
             'file'  => $v['filename'],
             'size'  => (int)filesize($path),
             'mtime' => (int)@filemtime($path) ?: time(),
+            // Kept so per-item download counts still work when a single
+            // oversized file is served as its own part.
+            'id'    => $v['id'] ?? '',
         ];
     }
     return $out;
@@ -2958,6 +3058,59 @@ function buildPackagePlan($sourceType, $sourceId) {
 
 // --- Admin routes ---
 
+// Does a sendfile handoff actually work on this host?
+//
+// Worth having as a route rather than a note in the docs, because the failure
+// mode is silent: a host that ignores the header returns 200 with an empty body
+// and every download breaks with no error anywhere. This serves one small real
+// upload through the requested mode, so the answer is measured, not assumed.
+//
+//   GET /api/admin/sendfile-test              -> stream through PHP (control)
+//   GET /api/admin/sendfile-test?mode=location
+//   GET /api/admin/sendfile-test?mode=litespeed
+//
+// Compare byte counts against the control. A mode returning fewer bytes is not
+// supported here; leave SENDFILE=off.
+if ($method === 'GET' && $uri === '/api/admin/sendfile-test') {
+    requireAuth();
+
+    // Smallest upload available, so the test is quick on any connection.
+    $best = null; $bestSize = PHP_INT_MAX;
+    foreach (glob(UPLOADS_DIR . '/*') ?: [] as $f) {
+        if (!is_file($f)) continue;
+        $sz = (int)filesize($f);
+        if ($sz > 0 && $sz < $bestSize) { $best = $f; $bestSize = $sz; }
+    }
+    if ($best === null) respondError('No uploads to test with', 404);
+
+    $mode = strtolower((string)($_GET['mode'] ?? 'off'));
+    $isLiteSpeed = stripos($_SERVER['SERVER_SOFTWARE'] ?? '', 'litespeed') !== false;
+
+    header('X-Sendfile-Test-Mode: ' . $mode);
+    header('X-Sendfile-Test-Expected-Bytes: ' . $bestSize);
+    header('X-Sendfile-Test-Server: ' . ($isLiteSpeed ? 'litespeed' : 'other'));
+
+    @set_time_limit(0);
+    @ini_set('zlib.output_compression', '0');
+    while (ob_get_level() > 0) { ob_end_clean(); }
+    header('Content-Type: application/octet-stream');
+
+    if ($mode === 'location' && $isLiteSpeed) {
+        header('X-LiteSpeed-Location: ' . staticUploadUrl(basename($best)));
+        exit;
+    }
+    if ($mode === 'litespeed' && $isLiteSpeed) {
+        header('X-LiteSpeed-Send-File: ' . $best);
+        exit;
+    }
+    header('Content-Length: ' . $bestSize);
+    $fp = fopen($best, 'rb');
+    if ($fp === false) respondError('Could not read test file', 500);
+    fpassthru($fp);
+    fclose($fp);
+    exit;
+}
+
 // Warm the CRC cache for files uploaded before it existed.
 //
 // Scoped to one package by default, because that is proportional to what is
@@ -2969,7 +3122,6 @@ function buildPackagePlan($sourceType, $sourceId) {
 // Time-boxed either way, so the caller loops until `done`. Deliveries work
 // throughout: an unwarmed file is hashed on its first download instead, which is
 // merely the old speed rather than a failure.
-define('CRC_WARM_SLICE_SECONDS', 10);
 
 if ($method === 'POST' && $uri === '/api/admin/crc-warm') {
     requireAuth();
@@ -3232,20 +3384,30 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
 // mid-download. Files on disk should therefore be served by the web server, not
 // pushed through PHP.
 //
-// The way NOT to do that is X-LiteSpeed-Send-File. It is documented, but it is
-// not enabled on every host, and when it is not the failure is silent and total:
-// the header is passed through to the client, PHP exits without a body, and the
-// download arrives as 0 bytes. It also publishes the server's absolute path in a
-// response header. Measured on a live LiteSpeed/cPanel host, 2026-08-15.
+// There are two handoff headers and they are NOT interchangeable:
 //
-// So the handoff is opt-in and off by default. The fast path used instead is a
-// redirect to the file's ordinary static URL (see staticUploadUrl) — /uploads/
-// is already served straight off disk, which measured ~100 MB/s on the same host
-// where this streaming path is the slow one.
-function sendStaticFile($path, $downloadName, $contentType) {
+//   X-LiteSpeed-Location  — an internal redirect to a URI under the docroot.
+//     Documented, and the one LiteSpeed staff point people at. Our own headers
+//     (Content-Disposition and friends) survive it, and PHP is released the
+//     moment it exits, which matters against the 35-concurrent-connection limit
+//     on shared plans.
+//
+//   X-LiteSpeed-Send-File — takes an absolute filesystem path. Measured against
+//     a live cPanel/LiteSpeed host on 2026-08-15: not honoured. The header is
+//     passed straight through to the client, PHP exits with no body, and the
+//     download arrives as 0 bytes — while publishing the server's absolute path
+//     to anyone who looks. Kept only so an install that has it working can
+//     still ask for it.
+//
+// Both are opt-in, because a handoff the host ignores fails silently and
+// totally. Default is to stream, which works everywhere. Verify with
+// /api/admin/sendfile-test before switching an install over.
+//
+// SENDFILE=location  — X-LiteSpeed-Location (recommended where supported)
+// SENDFILE=litespeed — X-LiteSpeed-Send-File (legacy, path based)
+// SENDFILE=off       — stream through PHP (default)
+function sendStaticFile($path, $downloadName, $contentType, $publicUri = null) {
     $size = filesize($path);
-    // Opt in with SENDFILE=litespeed only after verifying it works: request a
-    // file and check the body is not empty. "auto" and "off" both stream.
     $handoff = strtolower((string)env('SENDFILE', 'off'));
     $isLiteSpeed = stripos($_SERVER['SERVER_SOFTWARE'] ?? '', 'litespeed') !== false;
 
@@ -3256,7 +3418,11 @@ function sendStaticFile($path, $downloadName, $contentType) {
     header('Content-Type: ' . $contentType);
     header('Content-Disposition: attachment; filename="' . str_replace('"', '', $downloadName) . '"');
 
-    if ($handoff === 'litespeed' && $isLiteSpeed) {
+    if ($isLiteSpeed && $handoff === 'location' && $publicUri !== null) {
+        header('X-LiteSpeed-Location: ' . $publicUri);
+        exit;
+    }
+    if ($isLiteSpeed && $handoff === 'litespeed') {
         header('X-LiteSpeed-Send-File: ' . $path);
         exit;
     }
@@ -3308,49 +3474,35 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
     if (!is_file($path)) respondError('File not found', 404);
 
     // Originals are static, so this has no size ceiling even on LiteSpeed.
-    sendStaticFile($path, basename($entry['name']), 'application/octet-stream');
+    sendStaticFile($path, basename($entry['name']), 'application/octet-stream', staticUploadUrl($entry['file']));
 }
 
-// One part, zipped as it goes out. Never touches disk.
-if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{token}/part/{index}', $uri, $params)) {
-    $m = getLivePackage($params['token']);
-    $part = null;
-    foreach ($m['parts'] as $p) { if ((int)$p['index'] === (int)$params['index']) { $part = $p; break; } }
-    if (!$part) respondError('Part not found', 404);
-
-    $label = packageFolderName($m['name']);
-
-    // A single oversized file is handed over as-is rather than wrapped.
-    if ($part['kind'] === 'file') {
-        $entry = $part['entries'][0];
-        $path = UPLOADS_DIR . '/' . basename($entry['file']);
-        if (!is_file($path)) respondError('Part not found', 404);
-        sendStaticFile($path, basename($entry['name']), 'application/octet-stream');
-    }
-
-    // Re-stat everything first. If the gallery has changed since the plan was
-    // made, the precomputed length would be a lie — so fall back to a chunked
-    // response (no Content-Length) rather than truncating the client's file.
+// Stream a set of planned entries as one zip and exit. Shared by delivery
+// packages and the client gallery's "Download all", so both produce byte-for-byte
+// the same archive and both benefit from the CRC cache.
+//
+// Entries carry: name (path inside the zip), file (stored filename), size, mtime.
+function streamZipOfEntries(array $planned, string $filename) {
+    // Re-stat everything first. If the gallery changed since the plan was made,
+    // the precomputed length would be a lie — so fall back to a chunked response
+    // (no Content-Length) rather than truncating the client's file.
     $entries = [];
     $planIntact = true;
-    foreach ($part['entries'] as $e) {
-        $path = UPLOADS_DIR . '/' . basename($e['file']);
+    foreach ($planned as $e) {
+        // Allowlisted directories only — never an arbitrary path from a manifest.
+        $base = ($e['dir'] ?? '') === 'captions' ? CAPTIONS_DIR : UPLOADS_DIR;
+        $path = $base . '/' . basename($e['file']);
         if (!is_file($path)) { $planIntact = false; continue; }
         $size = (int)filesize($path);
         if ($size !== (int)$e['size']) { $planIntact = false; $e['size'] = $size; }
         $e['path'] = $path;
-        // Cached from upload time. A file that predates the cache is hashed
-        // here, once, and every later delivery of it is fast.
+        // Cached from upload time. A file predating the cache is hashed here,
+        // once, and every later download of it is fast.
         $e['crc'] = fileCrc32($path);
         if ($e['crc'] === null) { $planIntact = false; continue; }
         $entries[] = $e;
     }
-    if (!$entries) respondError('Part not found', 404);
-
-    $partCount = count($m['parts']);
-    $filename = $partCount === 1
-        ? "$label.zip"
-        : sprintf('%s - part %d of %d.zip', $label, $part['index'], $partCount);
+    if (!$entries) respondError('Nothing to download', 404);
 
     beginBinaryResponse($filename, 'application/zip', $planIntact ? zipStreamedSize($entries) : null);
 
@@ -3374,7 +3526,8 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
         fclose($fp);
         $offset += $written;
 
-        $central[] = ['name' => $e['name'], 'crc' => $e['crc'], 'size' => $written, 'offset' => $entryOffset, 'mtime' => $e['mtime']];
+        $central[] = ['name' => $e['name'], 'crc' => $e['crc'], 'size' => $written,
+                      'offset' => $entryOffset, 'mtime' => $e['mtime']];
     }
 
     $cdOffset = $offset;
@@ -3385,6 +3538,29 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
     fclose($out);
     flush();
     exit;
+}
+
+// One part, zipped as it goes out. Never touches disk.
+if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{token}/part/{index}', $uri, $params)) {
+    $m = getLivePackage($params['token']);
+    $part = null;
+    foreach ($m['parts'] as $p) { if ((int)$p['index'] === (int)$params['index']) { $part = $p; break; } }
+    if (!$part) respondError('Part not found', 404);
+
+    $label = packageFolderName($m['name']);
+
+    // A single oversized file is handed over as-is rather than wrapped.
+    if ($part['kind'] === 'file') {
+        $entry = $part['entries'][0];
+        $path = UPLOADS_DIR . '/' . basename($entry['file']);
+        if (!is_file($path)) respondError('Part not found', 404);
+        sendStaticFile($path, basename($entry['name']), 'application/octet-stream', staticUploadUrl($entry['file']));
+    }
+
+    $partCount = count($m['parts']);
+    streamZipOfEntries($part['entries'], $partCount === 1
+        ? "$label.zip"
+        : sprintf('%s - part %d of %d.zip', $label, $part['index'], $partCount));
 }
 
 

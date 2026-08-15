@@ -788,6 +788,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // "Download all" hands the work to the server, the same way a delivery link
+  // does: the zip is streamed with checksums from the server's cache and the
+  // bytes copied straight from disk. Assembling it in the browser meant the
+  // client's CPU checksummed every byte, and on Safari, Firefox and
+  // Chrome-on-macOS the whole archive was held in memory before saving — which
+  // fell over on large galleries.
+  //
+  // The server caps how large a generated response can be, so a big gallery
+  // arrives as numbered parts. One part is a plain download; several get a small
+  // chooser so it's clear what to click.
   downloadAllBtn.addEventListener('click', async () => {
     if (downloadActive) return;
     if (!galleryData || !galleryData.videos) return;
@@ -795,134 +805,77 @@ document.addEventListener('DOMContentLoaded', () => {
     const mediaItems = galleryData.videos.filter(v => v.type === 'photo' || v.type === 'video');
     if (mediaItems.length === 0) return;
 
-    const photoCount = mediaItems.filter(v => v.type === 'photo').length;
-    const videoCount = mediaItems.length - photoCount;
-    const itemNoun = videoCount === 0 ? 'photo' : (photoCount === 0 ? 'video' : 'file');
-    const itemNounPlural = itemNoun + 's';
-
-    const usedNames = new Set();
-    const entries = [];
-    mediaItems.forEach(item => {
-      const ext = (item.filename.match(/\.([^.]+)$/) || [, ''])[1];
-      const base = sanitizeName(item.title, sanitizeName(item.filename.replace(/\.[^.]+$/, ''), 'file'));
-      const name = dedupeName(base + (ext ? '.' + ext : ''), usedNames);
-      entries.push({
-        name,
-        url: `/api/proofing/${token}/download/${item.id}`,
-        mtime: Date.now(),
-      });
-
-      // Bundle each video's caption tracks as sibling .vtt files, named to
-      // match the video so players auto-associate them.
-      if (item.type === 'video' && item.captions && item.captions.length) {
-        const videoBase = name.replace(/\.[^.]+$/, '');
-        item.captions.forEach(c => {
-          if (!c.filename) return;
-          entries.push({
-            name: dedupeName(`${videoBase}.${c.lang}.vtt`, usedNames),
-            url: '/captions/' + encodeURIComponent(c.filename),
-            mtime: Date.now(),
-          });
-        });
-      }
-    });
-
-    const galleryBase = sanitizeName(galleryData.gallery.name, 'gallery');
-    const suggestedName = galleryBase + '.zip';
-
     setDownloadActive(true);
     // Fire-and-forget: record that a "Download All" run started.
     fetch(`/api/proofing/${token}/event/download-all`, { method: 'POST', keepalive: true })
       .catch(() => {});
-    openDownloadModal(
-      `Downloading ${mediaItems.length} ${mediaItems.length === 1 ? itemNoun : itemNounPlural}`,
-      'Fetching files and packaging your zip\u2026'
-    );
-    setProgressTotals(entries.length);
 
-    const controller = new AbortController();
-    downloadAbort = controller;
+    openDownloadModal('Preparing your download', 'Getting your files ready…');
+    downloadProgressBar.classList.add('indeterminate');
+    downloadCancelBtn.style.display = 'none';
 
-    // Stream to disk via File System Access when we can; Blob fallback
-    // otherwise. We skip showSaveFilePicker on macOS + Chromium-family
-    // browsers because iCloud Drive sync on Desktop/Documents causes the
-    // picker to reject saves into the user's usual folders. The Blob
-    // fallback routes through the browser's normal download mechanism,
-    // which always works.
-    let fileStream = null;
-    const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || '');
-    if (window.showSaveFilePicker && !isMac) {
-      try {
-        const fh = await window.showSaveFilePicker({
-          suggestedName,
-          types: [{ description: 'Zip archive', accept: { 'application/zip': ['.zip'] } }],
-        });
-        fileStream = await fh.createWritable();
-      } catch (e) {
-        if (e.name === 'AbortError') { hideDownloadModal(); return; }
-        // Any other error → fall through to Blob path
-        fileStream = null;
-      }
-    }
-
-    const chunks = fileStream ? null : [];
-    const write = fileStream
-      ? async (buf) => { await fileStream.write(buf); }
-      : async (buf) => { chunks.push(buf); };
-
-    let result;
+    let plan;
     try {
-      result = await ZipWriter.zipToWriter({
-        entries,
-        write,
-        concurrency: 6,
-        signal: controller.signal,
-        onProgress: onFileDone,
-        onBytes: onChunkBytes,
-      });
+      const res = await fetch(`/api/proofing/${token}/zip`);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      plan = await res.json();
     } catch (e) {
-      if (fileStream) { try { await fileStream.abort(); } catch (_) {} }
-      if (e.name === 'AbortError') { hideDownloadModal(); return; }
       hideDownloadModal();
-      alert('Download failed: ' + (e.message || e));
+      alert('Could not prepare the download: ' + (e.message || e));
       return;
     }
 
-    if (fileStream) {
-      try { await fileStream.close(); } catch (_) {}
-    } else {
-      // Trigger native browser download — lands in the default Downloads
-      // folder with no picker, no iCloud Drive permission issues.
-      const blob = new Blob(chunks, { type: 'application/zip' });
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = suggestedName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    const parts = plan.parts || [];
+    if (!parts.length) {
+      hideDownloadModal();
+      alert('There are no files to download.');
+      return;
     }
 
-    downloadModalTitle.textContent = 'Download complete';
-    downloadModalMsg.textContent = 'Your zip was saved.';
-    downloadModalDetail.textContent = '';
-    downloadProgressBar.style.width = '100%';
-    downloadCancelBtn.style.display = 'none';
+    if (parts.length === 1) {
+      startPartDownload(parts[0].url);
+      downloadModalTitle.textContent = 'Download started';
+      downloadModalMsg.textContent =
+        `${formatBytes(parts[0].size)} — your browser is saving it now.`;
+      downloadProgressBar.classList.remove('indeterminate');
+      downloadProgressBar.style.width = '100%';
+      setTimeout(hideDownloadModal, 3000);
+      return;
+    }
 
-    const skipped = (result && result.skipped) || [];
-    setTimeout(() => {
-      hideDownloadModal();
-      if (skipped.length > 0) {
-        const list = skipped.slice(0, 10).map(s => '  \u2022 ' + s.name).join('\n');
-        const more = skipped.length > 10 ? `\n  \u2026 and ${skipped.length - 10} more` : '';
-        alert(
-          `${skipped.length} file${skipped.length === 1 ? '' : 's'} couldn't be downloaded and ` +
-          `${skipped.length === 1 ? 'was' : 'were'} skipped:\n\n${list}${more}`
-        );
-      }
-    }, 2500);
+    // Several parts: let the client take them one at a time rather than firing
+    // concurrent multi-GB downloads at their connection.
+    downloadProgressBar.classList.remove('indeterminate');
+    downloadProgressBar.style.width = '100%';
+    downloadModalTitle.textContent = `Your download is in ${parts.length} parts`;
+    downloadModalMsg.textContent =
+      'The gallery is too large for a single file. Save each part — they unzip independently.';
+    downloadModalDetail.innerHTML = parts.map(p => (
+      `<button class="dl-part-btn" data-dl-url="${escapeHtml(p.url)}">` +
+      `${escapeHtml(p.label)} · ${formatBytes(p.size)}</button>`
+    )).join('');
+    downloadModalDetail.querySelectorAll('[data-dl-url]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        startPartDownload(btn.getAttribute('data-dl-url'));
+        btn.classList.add('started');
+        btn.textContent = btn.textContent + ' ✓';
+      });
+    });
+    downloadCancelBtn.style.display = '';
+    downloadCancelBtn.textContent = 'Done';
+    downloadCancelBtn.disabled = false;
   });
+
+  // Navigating an iframe rather than the tab keeps the page (and its download
+  // buttons) alive while the browser saves the file.
+  function startPartDownload(url) {
+    const frame = document.createElement('iframe');
+    frame.style.display = 'none';
+    frame.src = url;
+    document.body.appendChild(frame);
+    setTimeout(() => frame.remove(), 120000);
+  }
+
 
   // ============ Helpers ============
 

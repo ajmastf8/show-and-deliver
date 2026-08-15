@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.4 — 2026-08-15
+- **"Download all" in a client gallery now works the same way a delivery link does** — the server streams the zip instead of the browser building it. Previously your client's own computer had to checksum every byte, and on Safari, Firefox and Chrome-on-macOS the entire archive was held in memory before saving, which fell over on large galleries. Caption files still travel with their videos. Large galleries arrive as numbered parts, each a self-contained zip, for the same server response limit that applies to deliveries.
+- Added an optional `X-LiteSpeed-Location` handoff (`SENDFILE=location`), which lets the web server deliver files directly and frees the PHP process immediately — useful against the concurrent-connection limits on shared hosting. Off by default, and there's now `/api/admin/sendfile-test` to check whether your host supports it before switching it on, since the failure mode is a silent empty download.
+- Fixed `PACKAGE_PART_MB` in `.env` being ignored — the setting was read before the `.env` file was loaded, so it always used the default of 900 MB.
+
 ## 1.6.3 — 2026-08-15
 - Files are now prepared for full-speed download when you actually send them, rather than by grinding through your whole library in the background. Opening the delivery modal hashes just that delivery's files while you fill in the form — usually instant, since anything uploaded recently was hashed on arrival. On a library of a few thousand files the old behaviour could run for hours to send three of them.
 

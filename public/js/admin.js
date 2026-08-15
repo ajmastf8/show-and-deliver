@@ -176,7 +176,6 @@ document.addEventListener('DOMContentLoaded', () => {
       await Promise.all([loadData(), loadHeaderConfig()]);
       settingsLoaded.header = true;
       renderAll();
-      warmCrcCache();
     } else {
       hide($('auth-setup')); show($('auth-login')); hide($('app'));
     }
@@ -229,26 +228,34 @@ document.addEventListener('DOMContentLoaded', () => {
     state.collections = cRes.ok ? await cRes.json() : [];
   }
 
-  // Hash any files uploaded before the CRC cache existed, a slice at a time,
-  // in the background. Deliveries work throughout — an unhashed file is just
-  // hashed on first download instead, which is slow rather than broken. New
-  // uploads are hashed as they arrive, so this only ever has to run through
-  // the existing library once.
+  // Hash the files in one delivery so its zip downloads at full speed.
+  //
+  // Scoped to the package being sent rather than the whole library: hashing is
+  // CPU-capped on shared hosting, and there's no reason to grind through
+  // thousands of files to send three. New uploads are hashed as they arrive, so
+  // this only has real work to do for galleries that predate the CRC cache.
+  //
+  // Nothing waits on it. The link works immediately either way; an unhashed
+  // file is hashed on its first download instead, which is just slower.
   let crcWarming = false;
-  async function warmCrcCache() {
-    if (crcWarming) return;
+  async function warmPackageCrc(packageId, onProgress) {
+    if (crcWarming || !packageId) return;
     crcWarming = true;
     try {
       for (;;) {
-        const res = await fetch('/api/admin/crc-warm', { method: 'POST' });
+        const res = await fetch('/api/admin/crc-warm', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ packageId }),
+        });
         if (!res.ok) break;
         const d = await res.json();
+        if (onProgress) onProgress(d);
         if (d.done || !d.hashed) break;
         // Yield between slices so this never competes with the admin's own
         // requests, or with a client downloading right now.
-        await new Promise(r => setTimeout(r, 1500));
+        await new Promise(r => setTimeout(r, 800));
       }
-    } catch (_) { /* best effort; retries next time the admin loads */ }
+    } catch (_) { /* best effort — the download hashes anything left over */ }
     crcWarming = false;
   }
 
@@ -2360,6 +2367,16 @@ document.addEventListener('DOMContentLoaded', () => {
       $('pk-message').value = pkgCurrent.message || '';
       renderPackageLink();
       $('pk-to').focus();
+
+      // Hash this delivery's files while you fill the form in. Usually there is
+      // nothing to do — uploads are hashed as they arrive — so this is silent
+      // unless the gallery predates the CRC cache.
+      warmPackageCrc(pkgCurrent.id, (p) => {
+        if (!pkgCurrent || p.done) { renderPackageLink(); return; }
+        const hint = $('pk-link-hint');
+        if (hint) hint.textContent =
+          `Preparing ${p.remaining} file${p.remaining === 1 ? '' : 's'} for full-speed download — the link already works.`;
+      });
     } catch (_) {
       $('pk-link-hint').textContent = 'Could not prepare a link. Close and try again.';
     }

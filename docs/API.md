@@ -349,15 +349,22 @@ hosting that was the single biggest limit on delivery speed. Files are hashed
 once at upload and cached in `site-data/data/crc.json`, so downloads do no
 per-byte work.
 
-Files that predate the cache are hashed in the background by the admin. You can
-also drive it yourself; each call works for a few seconds and reports progress,
-so loop until `done`:
+Files that predate the cache are hashed when you send them: opening the delivery
+modal warms that package's files in the background while you fill in the form.
+Scoping it to the delivery is deliberate — hashing is the CPU-capped part, and
+there is no reason to grind through a whole library to send three files.
+
+Each call works for a few seconds and reports progress, so loop until `done`:
 
 ```bash
 curl -X POST https://your.host/api/admin/crc-warm \
-  -H "Authorization: Bearer $API_TOKEN"
-# {"hashed": 12, "remaining": 340, "total": 2104, "done": false}
+  -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -d '{"packageId": "pkg_xxx"}'
+# {"hashed": 3, "remaining": 0, "total": 3, "done": true}
 ```
+
+Omit `packageId` to hash the entire library instead. That is available but
+rarely what you want; on a large library it runs for hours.
 
 Nothing depends on this having finished: an unhashed file is hashed on its first
 download instead, which is slower but correct.

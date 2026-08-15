@@ -60,7 +60,9 @@ site-data/             # Runtime data (gitignored)
   (locally, removing the hash made the copy loop 47x faster). With CRCs known up
   front, local headers carry them, no data descriptors are needed, and entry
   bodies go disk-to-socket via `stream_copy_to_stream()` with no PHP loop.
-  Never reintroduce per-byte work into that path.
+  Never reintroduce per-byte work into that path. Files predating the cache are
+  hashed by `POST /api/admin/crc-warm` with a `packageId`, which the delivery
+  modal drives in the background — scoped to the delivery, never the library.
   Always Zip64, so there is one code path exercised by every download rather
   than a 64-bit path that only runs on rare large transfers.
   **The size limit that matters is LiteSpeed's `Max Dynamic Response Body Size`

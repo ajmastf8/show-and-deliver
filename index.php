@@ -2960,24 +2960,39 @@ function buildPackagePlan($sourceType, $sourceId) {
 
 // Warm the CRC cache for files uploaded before it existed.
 //
-// Hashing is the slow part of a delivery and it is CPU-bound, so this runs in
-// short time-boxed slices and reports progress: the caller loops until
-// remaining hits 0. Deliveries work throughout — an unwarmed file simply gets
-// hashed on first download instead, which is the old, slow behaviour rather
-// than a failure.
+// Scoped to one package by default, because that is proportional to what is
+// actually being sent: a library-wide pass hashes thousands of files to deliver
+// three of them, and hashing is the slow, CPU-capped part. Pass a packageId and
+// only that delivery's files are hashed; omit it and the whole library is done,
+// which is available but rarely what you want.
+//
+// Time-boxed either way, so the caller loops until `done`. Deliveries work
+// throughout: an unwarmed file is hashed on its first download instead, which is
+// merely the old speed rather than a failure.
 define('CRC_WARM_SLICE_SECONDS', 10);
 
 if ($method === 'POST' && $uri === '/api/admin/crc-warm') {
     requireAuth();
     $deadline = microtime(true) + CRC_WARM_SLICE_SECONDS;
+    $input = getInput();
+    $packageId = trim((string)($input['packageId'] ?? ''));
 
-    // Everything currently referenced by a gallery, newest galleries first so
-    // recent work becomes deliverable soonest.
     $wanted = [];
-    foreach (array_reverse(readGalleries()) as $g) {
-        foreach (readGalleryVideos($g['id']) as $v) {
-            if (($v['type'] ?? '') === 'header' || empty($v['filename'])) continue;
-            $wanted[$v['filename']] = true;
+    if ($packageId !== '') {
+        $m = readPackage($packageId);
+        if (!$m) respondError('Package not found', 404);
+        foreach ($m['parts'] as $p) {
+            foreach ($p['entries'] as $e) {
+                if (!empty($e['file'])) $wanted[$e['file']] = true;
+            }
+        }
+    } else {
+        // Newest galleries first, so recent work becomes deliverable soonest.
+        foreach (array_reverse(readGalleries()) as $g) {
+            foreach (readGalleryVideos($g['id']) as $v) {
+                if (($v['type'] ?? '') === 'header' || empty($v['filename'])) continue;
+                $wanted[$v['filename']] = true;
+            }
         }
     }
     $wanted = array_keys($wanted);

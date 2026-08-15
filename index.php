@@ -2800,6 +2800,10 @@ function packagePayload($m, $includeInternals = false) {
                 'name'  => $e['name'],
                 'size'  => (int)$e['size'],
                 'url'   => "$base/api/packages/{$m['token']}/file/$fileIndex",
+                // Same bytes, served by the web server instead of PHP. The
+                // download page prefers this; the /file/ route above stays as
+                // the API-friendly equivalent.
+                'staticUrl' => $base . staticUploadUrl($e['file']),
             ];
             $fileIndex++;
         }
@@ -3091,17 +3095,26 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
 // Serve a file that already exists on disk, and exit.
 //
 // Anything PHP echoes is a "dynamic response" and is subject to LiteSpeed's
-// Max Dynamic Response Body Size (1 GiB by default), which truncates the
-// stream mid-download. Handing the path to LiteSpeed instead makes it a static
-// response: no size cap, and byte-range resume for free.
+// Max Dynamic Response Body Size (1 GiB by default), which truncates the stream
+// mid-download. Files on disk should therefore be served by the web server, not
+// pushed through PHP.
 //
-// Only used above the cap, where streaming through PHP is guaranteed to fail
-// anyway. Below it we keep the ordinary path, which works on every server.
-// Set SENDFILE=off in .env if a host mishandles the header.
+// The way NOT to do that is X-LiteSpeed-Send-File. It is documented, but it is
+// not enabled on every host, and when it is not the failure is silent and total:
+// the header is passed through to the client, PHP exits without a body, and the
+// download arrives as 0 bytes. It also publishes the server's absolute path in a
+// response header. Measured on a live LiteSpeed/cPanel host, 2026-08-15.
+//
+// So the handoff is opt-in and off by default. The fast path used instead is a
+// redirect to the file's ordinary static URL (see staticUploadUrl) — /uploads/
+// is already served straight off disk, which measured ~100 MB/s on the same host
+// where this streaming path is the slow one.
 function sendStaticFile($path, $downloadName, $contentType) {
     $size = filesize($path);
+    // Opt in with SENDFILE=litespeed only after verifying it works: request a
+    // file and check the body is not empty. "auto" and "off" both stream.
+    $handoff = strtolower((string)env('SENDFILE', 'off'));
     $isLiteSpeed = stripos($_SERVER['SERVER_SOFTWARE'] ?? '', 'litespeed') !== false;
-    $handoffAllowed = strtolower((string)env('SENDFILE', 'auto')) !== 'off';
 
     @set_time_limit(0);
     @ini_set('zlib.output_compression', '0');
@@ -3110,12 +3123,7 @@ function sendStaticFile($path, $downloadName, $contentType) {
     header('Content-Type: ' . $contentType);
     header('Content-Disposition: attachment; filename="' . str_replace('"', '', $downloadName) . '"');
 
-    // Hand off EVERY file, not just ones too big to stream. Pushing bytes out
-    // of PHP is slow at any size: the response goes through LiteSpeed's dynamic
-    // pipeline, which buffers it — that buffer is what the 1 GiB cap measures —
-    // instead of letting the kernel copy the file straight to the socket.
-    // Handing over the path gets sendfile() speed, byte-range resume, and no cap.
-    if ($isLiteSpeed && $handoffAllowed) {
+    if ($handoff === 'litespeed' && $isLiteSpeed) {
         header('X-LiteSpeed-Send-File: ' . $path);
         exit;
     }
@@ -3124,13 +3132,20 @@ function sendStaticFile($path, $downloadName, $contentType) {
     header('Accept-Ranges: bytes');
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'HEAD') exit;
 
-    // Not LiteSpeed: stream it ourselves. fpassthru() copies in C rather than
-    // shuttling every chunk through a PHP variable, with no per-chunk flush().
+    // fpassthru() copies in C rather than shuttling every chunk through a PHP
+    // variable, with no per-chunk flush().
     $fp = fopen($path, 'rb');
     if ($fp === false) respondError('File not found', 404);
     fpassthru($fp);
     fclose($fp);
     exit;
+}
+
+// The plain static URL for an upload. .htaccess maps /uploads/ straight onto
+// site-data/uploads/, so this is served by the web server with no PHP involved
+// — the only route on this install measured at full line speed.
+function staticUploadUrl($storedFilename) {
+    return '/uploads/' . rawurlencode(basename($storedFilename));
 }
 
 // Prepare a response for streaming: no buffering, no compression, no time cap.

@@ -88,10 +88,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else {
       document.getElementById('dl-toggle-label').textContent =
         `Or download files individually (${files.length})`;
+      // Prefer the static URL: those bytes come straight off disk from the web
+      // server instead of through PHP, which is the difference between line
+      // speed and a crawl. The download attribute keeps the saved filename
+      // readable, since the stored name carries an upload timestamp.
       listEl.innerHTML = files.map(f => `<div class="dl-file">
         <span class="dl-file-name">${escapeHtml(f.name)}</span>
         <span class="dl-file-size">${formatBytes(f.size)}</span>
-        <a class="dl-file-link" href="${f.url}">Download</a>
+        <a class="dl-file-link" href="${escapeHtml(f.staticUrl || f.url)}" download="${escapeHtml(f.name)}">Download</a>
       </div>`).join('');
       toggle.addEventListener('click', () => {
         const open = toggle.getAttribute('aria-expanded') === 'true';

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.1 — 2026-08-15
+- **Fixed: individual file downloads arrived as 0-byte files.** 1.6.0 handed uploads to the web server with an `X-LiteSpeed-Send-File` header, which is not enabled on every LiteSpeed host. Where it isn't, the header is passed through to the browser and the response body is empty, so every per-file download silently failed. The header also disclosed the server's absolute filesystem path. It is now off by default and opt-in via `SENDFILE=litespeed`, for hosts where it has actually been verified.
+- Per-file downloads now link to the file's ordinary static URL instead, which the web server serves straight off disk — the same route that measures ~100 MB/s where streaming through PHP crawls. Saved filenames stay readable via the browser's download attribute.
+
 ## 1.6.0 — 2026-08-14
 - **Send files to clients** — a WeTransfer-style handoff. "Deliver" on a client gallery or collection asks who you're sending to and what you want to say, then hands over a share link immediately and emails it. There is no packaging wait, however large the transfer: nothing is ever zipped onto the server's disk. The zip is generated on the fly while the client downloads it, so preparing a 200 GB delivery takes the same few milliseconds as a 200 MB one, uses no extra disk, and reads each file exactly once instead of four times.
 - The share link is a real download page: one button per download, your message, and a list of the individual files so a client who only wants one clip doesn't have to pull down the whole archive.

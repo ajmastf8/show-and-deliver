@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.6.3 — 2026-08-15
+- Files are now prepared for full-speed download when you actually send them, rather than by grinding through your whole library in the background. Opening the delivery modal hashes just that delivery's files while you fill in the form — usually instant, since anything uploaded recently was hashed on arrival. On a library of a few thousand files the old behaviour could run for hours to send three of them.
+
 ## 1.6.2 — 2026-08-15
 - **Zip downloads are much faster.** Every file in a ZIP needs a CRC32 checksum, and we were computing it during the download by hashing every byte in PHP. That is CPU work, and shared hosts cap CPU per account, so it throttled deliveries badly — measured on a live cPanel server, a zip crawled at 12 MB/s while the same files served without hashing moved at 102 MB/s. Each file is now hashed once when it's uploaded and the result cached, so downloads copy straight from disk with no per-byte work. Locally the same archive went from 304 MB/s to over 3,000 MB/s.
 - Files uploaded before this release are hashed in the background while the admin is open, a few seconds at a time. Deliveries keep working throughout — a file that hasn't been hashed yet is simply hashed on its first download, which is the old speed rather than an error.

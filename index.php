@@ -3391,17 +3391,23 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
 // There are two handoff headers and they are NOT interchangeable:
 //
 //   X-LiteSpeed-Location  — an internal redirect to a URI under the docroot.
-//     Documented, and the one LiteSpeed staff point people at. Our own headers
-//     (Content-Disposition and friends) survive it, and PHP is released the
-//     moment it exits, which matters against the 35-concurrent-connection limit
-//     on shared plans.
+//     Delivers the bytes and adds Accept-Ranges, but MEASURED ON A LIVE HOST
+//     (2026-08-15) LiteSpeed rebuilds the response headers from the static file:
+//     Content-Type survives, Content-Disposition and custom X- headers do not.
+//     Without Content-Disposition a download opens inline under the stored
+//     filename, so this is not usable for download routes as it stands.
 //
-//   X-LiteSpeed-Send-File — takes an absolute filesystem path. Measured against
-//     a live cPanel/LiteSpeed host on 2026-08-15: not honoured. The header is
-//     passed straight through to the client, PHP exits with no body, and the
-//     download arrives as 0 bytes — while publishing the server's absolute path
-//     to anyone who looks. Kept only so an install that has it working can
-//     still ask for it.
+//   X-LiteSpeed-Send-File — takes an absolute filesystem path. Same host, same
+//     day: not honoured at all. The header is passed straight through to the
+//     client, PHP exits with no body, and the download arrives as 0 bytes —
+//     while publishing the server's absolute path to anyone who looks.
+//
+// So on that host neither is usable and streaming wins, which is why `off` is
+// the default. Streaming measured ~102 MB/s there, essentially line speed, so
+// there is no throughput being left on the table. Both stay available because
+// other hosts configure this differently — run /api/admin/sendfile-test and
+// check both the byte count AND that Content-Disposition survives before
+// switching an install over.
 //
 // Both are opt-in, because a handoff the host ignores fails silently and
 // totally. Default is to stream, which works everywhere. Verify with

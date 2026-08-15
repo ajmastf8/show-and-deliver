@@ -70,12 +70,12 @@ site-data/             # Runtime data (gitignored)
   the response and appends an HTML error, producing a zip with no
   end-of-central-directory that no unarchiver will open — and PHP cannot detect
   this mid-stream. Hence `PACKAGE_PART_MB` defaults to 900. Files that exist on
-  disk go through `sendStaticFile()`. **Do not enable the
-  `X-LiteSpeed-Send-File` handoff by default** (`SENDFILE`): it is not active on
-  every host, and when it isn't, the header is passed through to the client, PHP
-  exits without a body, and every download silently arrives as 0 bytes — plus the
-  server's absolute path is disclosed in a response header. Verified broken on a
-  live cPanel/LiteSpeed host, 2026-08-15. The working fast path is the file's
+  disk go through `sendStaticFile()`. **Keep `SENDFILE=off`.** Both handoffs were
+  measured on a live cPanel/LiteSpeed host on 2026-08-15 and neither is usable
+  there: `X-LiteSpeed-Send-File` is ignored outright (0-byte downloads, and it
+  discloses the server's absolute path), and `X-LiteSpeed-Location` delivers the
+  bytes but drops `Content-Disposition`, so downloads open inline under the
+  stored filename. Streaming measures ~102 MB/s on that host anyway. The working fast path is the file's
   ordinary static URL (`staticUploadUrl()`, exposed as `staticUrl` in the package
   payload and used by download.js): `/uploads/` is served straight off disk and
   measured ~100 MB/s on the same host where PHP streaming crawls. See the block comment above `PACKAGES_DIR` in

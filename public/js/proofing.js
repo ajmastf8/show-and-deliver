@@ -26,6 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const lightboxTitle = document.getElementById('lightbox-title');
   const lightboxDownloadBtn = document.getElementById('lightbox-download-btn');
   const lightboxTranscriptsBtn = document.getElementById('lightbox-transcripts-btn');
+  const lightboxDescription = document.getElementById('lightbox-description');
   const lightboxComments = document.getElementById('lightbox-comments');
   const commentForm = document.getElementById('comment-form');
   const commentText = document.getElementById('comment-text');
@@ -453,6 +454,14 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       lightboxTranscriptsBtn.style.display = 'none';
     }
+
+    // Caption box: portfolio galleries only. A client proofing gallery keeps the
+    // lightbox it has always had, so the box stays hidden there even if an item
+    // somehow carries a description.
+    renderCaptionBox(
+      lightboxDescription,
+      galleryData.gallery.type === 'reels' ? item.description : ''
+    );
 
     // Reset send status
     lightboxSendStatus.textContent = '';

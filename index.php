@@ -23,6 +23,10 @@ define('IMPORT_DIR', SITE_DATA . '/imports');
 define('HEADER_CONFIG_PATH', DATA_DIR . '/header.json');
 define('CRC_CACHE_PATH', DATA_DIR . '/crc.json');
 
+// Cap for a portfolio item's caption box. Long enough for a paragraph of
+// credits, short enough that the field can never bloat a gallery's videos.json.
+define('DESCRIPTION_MAX_LEN', 2000);
+
 // Delivery + ZIP constants. These live up here, not beside the delivery code,
 // for the same reason as the paths above: routes execute inline as this file is
 // read, so a define() further down does not exist yet when an earlier route
@@ -1665,6 +1669,13 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}', $
 
     if (isset($input['title'])) $video['title'] = $input['title'];
     if (isset($input['visible'])) $video['visible'] = $input['visible'];
+    // Portfolio caption box. Stored trimmed, and dropped entirely when blank so
+    // the public payload carries no empty key for the player to test.
+    if (array_key_exists('description', $input)) {
+        $desc = trim((string)($input['description'] ?? ''));
+        if ($desc === '') unset($video['description']);
+        else $video['description'] = mb_substr($desc, 0, DESCRIPTION_MAX_LEN);
+    }
 
     writeGalleryVideos($params['gid'], $videos);
     respond($video);
@@ -2179,6 +2190,7 @@ function galleryPayload($gallery) {
     return [
         'gallery' => [
             'name' => $gallery['name'],
+            'type' => $gallery['type'] ?? 'proofing',
             'downloadsEnabled' => $gallery['downloadsEnabled'],
             'commentingEnabled' => $gallery['commentingEnabled'] ?? false,
         ],

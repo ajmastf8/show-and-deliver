@@ -26,6 +26,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       card.dataset.type = item.type || 'video';
       if (item.proxy) card.dataset.proxy = item.proxy;
       if (item.captions && item.captions.length) card.dataset.captions = JSON.stringify(item.captions);
+      if (item.description) card.dataset.description = item.description;
 
       let thumbContent;
       if (item.thumbnail) {
@@ -51,18 +52,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!card) return;
       const filename = card.dataset.filename;
       const proxy = card.dataset.proxy;
+      const description = card.dataset.description || '';
       const src = '/uploads/' + encodeURIComponent(filename);
       if (card.dataset.type === 'photo') {
         const photoSrc = proxy
           ? '/proxies/' + encodeURIComponent(proxy)
           : src;
-        openPhotoLightbox(photoSrc);
+        openPhotoLightbox(photoSrc, description);
       } else {
         let captions = [];
         if (card.dataset.captions) {
           try { captions = JSON.parse(card.dataset.captions); } catch (e) {}
         }
-        openLightbox(src, captions);
+        openLightbox(src, captions, description);
       }
     });
 
@@ -73,7 +75,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // --- Lightbox ---
 
-function openLightbox(videoSrc, captions) {
+function openLightbox(videoSrc, captions, description) {
   const overlay = document.createElement('div');
   overlay.className = 'lightbox-overlay';
   overlay.innerHTML = `
@@ -81,6 +83,7 @@ function openLightbox(videoSrc, captions) {
       <button class="lightbox-close">&times;</button>
       <video src="${videoSrc}" controls playsinline preload="auto"></video>
       <div class="lightbox-spinner active"></div>
+      <div class="lightbox-description" hidden></div>
     </div>
   `;
   document.body.appendChild(overlay);
@@ -88,6 +91,8 @@ function openLightbox(videoSrc, captions) {
 
   const video = overlay.querySelector('video');
   const spinner = overlay.querySelector('.lightbox-spinner');
+  const descEl = overlay.querySelector('.lightbox-description');
+  const hasDescription = renderCaptionBox(descEl, description);
 
   const CONTROL_BAR = 40;
   const isFullscreen = () =>
@@ -166,10 +171,16 @@ function openLightbox(videoSrc, captions) {
     if (!video.videoWidth) return;
     if (isFullscreen()) return;
     const availW = video.parentElement.clientWidth;
-    const availH = window.innerHeight * 0.8;
+    // The caption box renders below the control strip, so its height comes out
+    // of the budget the picture is scaled against — otherwise a long caption
+    // pushes the controls off the bottom of the viewport.
+    const descH = hasDescription ? descEl.offsetHeight : 0;
+    const availH = window.innerHeight * 0.9 - descH;
     const scale = Math.min(availW / video.videoWidth, (availH - CONTROL_BAR) / video.videoHeight);
     video.style.width = (video.videoWidth * scale) + 'px';
     video.style.height = (video.videoHeight * scale + CONTROL_BAR) + 'px';
+    // Match the box to the picture width so the two read as one unit.
+    if (hasDescription) descEl.style.width = (video.videoWidth * scale) + 'px';
     layoutCaptionOverlay();
   };
   const onFullscreen = () => {
@@ -211,17 +222,32 @@ function openLightbox(videoSrc, captions) {
   document.addEventListener('keydown', handleKey);
 }
 
-function openPhotoLightbox(imgSrc) {
+function openPhotoLightbox(imgSrc, description) {
   const overlay = document.createElement('div');
   overlay.className = 'lightbox-overlay';
   overlay.innerHTML = `
     <div class="lightbox-content lightbox-photo-content">
       <button class="lightbox-close">&times;</button>
       <img src="${imgSrc}" alt="" style="max-width:100%; max-height:90vh; object-fit:contain;">
+      <div class="lightbox-description" hidden></div>
     </div>
   `;
   document.body.appendChild(overlay);
   document.body.style.overflow = 'hidden';
+
+  const descEl = overlay.querySelector('.lightbox-description');
+  const img = overlay.querySelector('img');
+  if (renderCaptionBox(descEl, description)) {
+    // Leave room for the box under a tall photo, and match its width to the
+    // rendered picture once the browser knows how big that is.
+    const fit = () => {
+      img.style.maxHeight = Math.max(160, window.innerHeight * 0.9 - descEl.offsetHeight) + 'px';
+      descEl.style.width = img.clientWidth ? img.clientWidth + 'px' : '';
+    };
+    if (img.complete) fit(); else img.addEventListener('load', fit);
+    window.addEventListener('resize', fit);
+    overlay._cleanup = () => window.removeEventListener('resize', fit);
+  }
 
   overlay.addEventListener('click', e => {
     if (e.target === overlay || e.target.classList.contains('lightbox-close')) {

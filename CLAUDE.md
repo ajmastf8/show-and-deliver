@@ -83,7 +83,13 @@ site-data/             # Runtime data (gitignored)
   in `zipEntryOverhead()`, used by both `zipStreamedSize()` and the part
   planner so they cannot drift; if it stops matching what the streaming route
   emits, `Content-Length` lies and every download truncates.
-- **Items** in galleries can be videos or photos, plus section headers
+- **Items** in galleries can be videos or photos, plus section headers. A
+  portfolio item may carry a `description` — the caption box rendered under the
+  player by `caption-box.js`. It is a portfolio-only feature: the admin exposes
+  the editor on `reels` galleries only, and the shared gallery page checks
+  `gallery.type` before rendering it, so client proofing galleries are
+  unaffected. Not to be confused with **captions**, which everywhere else in
+  this codebase means WebVTT subtitle tracks in `site-data/captions/`.
 - **Proxy images** (2048px JPEG) are generated alongside thumbnails for fast lightbox loading
 - **Header config** is stored in `site-data/data/header.json` and rendered by `header.js`
 - **Admin credentials** are set via first-run setup wizard, stored in `site-data/data/admin.json`

@@ -1334,6 +1334,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const list = $('content-list');
     if (!list) return;
     const dlItems = (stats && stats.downloads && stats.downloads.items) || {};
+    const isPortfolio = (state.galleries.find(g => g.id === contentGid) || {}).type === 'reels';
     if (!items.length) { list.innerHTML = `<div class="drawer-empty">No items yet. Use “Add files”.</div>`; return; }
     list.innerHTML = items.map(entry => {
       if (entry.type === 'header') {
@@ -1356,6 +1357,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <input type="text" class="title-input" value="${escapeHtml(entry.title)}">
         <span class="video-dl-count" title="${dlCount} downloads">↓ ${dlCount}</span>
         <button class="btn-icon replace-btn" title="Replace file">↻</button>
+        ${isPortfolio ? `<button class="btn-icon desc-btn${entry.description ? ' has-description' : ''}" title="Caption box">&para;</button>` : ''}
         ${isPhoto ? '' : `<button class="btn-icon cc-btn${(entry.captions && entry.captions.length) ? ' has-captions' : ''}" title="Captions">CC</button>`}
         ${isPhoto ? '' : `<button class="btn-icon thumb-btn" title="Set thumbnail">▦</button>`}
         <button class="btn-icon toggle-vis ${entry.visible ? '' : 'hidden-video'}" title="${entry.visible ? 'Visible' : 'Hidden'}">${entry.visible ? '◉' : '○'}</button>
@@ -1543,6 +1545,9 @@ document.addEventListener('DOMContentLoaded', () => {
       $('replace-file-input').click();
       return;
     }
+    const desc = e.target.closest('.desc-btn');
+    if (desc && contentGid) { editDescription(desc.closest('.admin-video-item').dataset.id); return; }
+
     const cc = e.target.closest('.cc-btn');
     if (cc && contentGid) { openCaptionsModal(cc.closest('.admin-video-item').dataset.id); return; }
     const th = e.target.closest('.thumb-btn');
@@ -2008,6 +2013,28 @@ document.addEventListener('DOMContentLoaded', () => {
   const captionLangSelect = $('caption-lang');
   captionLangSelect.innerHTML = CAPTION_LANGUAGES.map(l => `<option value="${l.code}">${escapeHtml(l.label)} (${l.code})</option>`).join('') + '<option value="__custom__">Other…</option>';
   captionLangSelect.addEventListener('change', () => { $('caption-custom-lang-label').style.display = captionLangSelect.value === '__custom__' ? '' : 'none'; });
+
+  // Caption box text for one portfolio item. Saving an empty box clears it,
+  // which is why this checks for null (cancelled) rather than falsiness.
+  async function editDescription(itemId) {
+    const item = contentItems.find(i => i.id === itemId);
+    if (!item) return;
+    const text = await promptModal({
+      title: 'Caption box',
+      sub: 'Shown under the player on the portfolio. Leave blank for none; links become clickable.',
+      okText: 'Save',
+      field: { type: 'textarea', label: item.title || item.filename || '', rows: 6, maxLength: 2000, value: item.description || '' },
+    });
+    if (text === null) return;
+    const res = await fetch(`/api/admin/galleries/${contentGid}/videos/${itemId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: text }),
+    });
+    if (!res.ok) { toast('Could not save caption'); return; }
+    await loadContent();
+    toast(text.trim() ? 'Caption saved' : 'Caption cleared');
+  }
 
   function openCaptionsModal(videoId) {
     captionsVideoId = videoId;
@@ -2514,11 +2541,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const field = $('prompt-field');
     if (f.type === 'select') {
       field.innerHTML = `<div class="setting-group"><label>${escapeHtml(f.label || '')}</label><select class="setting-input" id="prompt-input">${f.options.map(o => `<option value="${escapeHtml(o.value)}">${escapeHtml(o.label)}</option>`).join('')}</select></div>`;
+    } else if (f.type === 'textarea') {
+      field.innerHTML = `<div class="setting-group"><label>${escapeHtml(f.label || '')}</label><textarea class="setting-input" id="prompt-input" rows="${f.rows || 5}" maxlength="${f.maxLength || 2000}" placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(f.value || '')}</textarea></div>`;
     } else {
       field.innerHTML = `<div class="setting-group"><label>${escapeHtml(f.label || '')}</label><input type="${f.type}" class="setting-input" id="prompt-input" placeholder="${escapeHtml(f.placeholder || '')}" value="${escapeHtml(f.value || '')}"></div>`;
     }
     modal.hidden = false;
-    const input = $('prompt-input'); input.focus(); if (input.select) input.select();
+    const input = $('prompt-input'); input.focus(); if (f.type !== 'textarea' && input.select) input.select();
     return new Promise((resolve) => {
       function cleanup() { modal.hidden = true; $('prompt-ok').removeEventListener('click', ok); $('prompt-cancel').removeEventListener('click', cancel); modal.querySelector('.modal-backdrop').removeEventListener('click', cancel); document.removeEventListener('keydown', key); }
       function ok() { const v = input.value; cleanup(); resolve(v); }

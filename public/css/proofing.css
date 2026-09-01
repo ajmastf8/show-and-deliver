@@ -578,6 +578,33 @@ a { color: inherit; text-decoration: none; }
   color: var(--color-black);
 }
 
+/* Portfolio caption box. Continues the white title bar downward as one info
+   strip under the picture; style.css styles the same class for the homepage
+   lightbox, which sits on a dark overlay, so the colours are re-stated here.
+   Loaded after style.css in proofing.html, so these win. */
+.lightbox-description {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 16px 14px;
+  max-height: 22vh;
+  overflow-y: auto;
+  background: var(--color-white);
+  border-radius: 0;
+  color: var(--color-body-text);
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.lightbox-description a {
+  color: var(--color-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.lightbox-description a:hover { color: var(--color-primary-dark); }
+
 /* ---- Comments Panel (Lightbox) ---- */
 
 .lightbox-comments-side {

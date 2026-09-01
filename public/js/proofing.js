@@ -152,10 +152,12 @@ document.addEventListener('DOMContentLoaded', () => {
       downloadAllBtn.style.display = '';
     }
 
-    // Hide commenting UI if disabled
+    // Hide the whole comments column if commenting is disabled. Hiding just the
+    // form left an empty panel inviting comments nobody can post — which is how
+    // every portfolio gallery renders, since those never enable commenting.
     if (!galleryData.gallery.commentingEnabled) {
       commentForm.style.display = 'none';
-      document.querySelector('.lightbox-comments-side h3').style.display = 'none';
+      document.querySelector('.lightbox-comments-side').style.display = 'none';
     }
 
     renderVideoList();

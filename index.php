@@ -835,9 +835,13 @@ function findReelsGallery() {
     return null;
 }
 
+// Both gallery types resolve here. /gallery/{token} is the only per-gallery
+// page there is, and a portfolio collection links its member reels galleries
+// to it (see backfillGalleryTokens above) — restricting this to proofing
+// galleries made every card on a portfolio collection page 404.
 function findGalleryByToken($token) {
     foreach (readGalleries() as $g) {
-        if ($g['token'] === $token && $g['type'] === 'proofing') return $g;
+        if ($g['token'] === $token) return $g;
     }
     return null;
 }

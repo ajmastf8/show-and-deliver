@@ -55,6 +55,14 @@ foreach ([DATA_DIR, UPLOADS_DIR, THUMBS_DIR, PROXY_DIR, CAPTIONS_DIR, IMPORT_DIR
     if (!is_dir($dir)) mkdir($dir, 0755, true);
 }
 
+// Defence in depth: the root .htaccess already denies these, but a host that
+// ignores root rules (or a stale .htaccess left by an old zip install) would
+// otherwise serve the password hash, sessions, secrets and share tokens as
+// plain files. A per-directory guard still applies there. Not on SITE_DATA
+// itself — that would also deny the media directories the rewrites expose.
+denyWebAccess(DATA_DIR);
+denyWebAccess(IMPORT_DIR);
+
 // GD decodes the full bitmap into RAM, so a 24–50MP camera JPEG can need
 // several hundred MB. The default 128M limit fatals mid-import on large photos.
 @ini_set('memory_limit', '512M');
@@ -2747,15 +2755,20 @@ function fileCrc32(string $path, bool $compute = true): ?int {
 // header, an 8-byte-per-size data descriptor, and a 24-byte extra field in its
 // central directory record.
 
-function ensurePackagesDir() {
-    if (!is_dir(PACKAGES_DIR)) @mkdir(PACKAGES_DIR, 0755, true);
-    // Manifests carry the share token, and everything else under site-data/ is
-    // served straight off disk. Deny direct access here as well as in the root
-    // .htaccess, in case a host ignores one of them.
-    $guard = PACKAGES_DIR . '/.htaccess';
+// Drops a deny-all .htaccess into $dir. Top-level, so PHP hoists it and the
+// bootstrap can call it long before this point in the file.
+function denyWebAccess($dir) {
+    $guard = $dir . '/.htaccess';
     if (!file_exists($guard)) {
         @file_put_contents($guard, "<IfModule mod_authz_core.c>\n  Require all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\n  Order allow,deny\n  Deny from all\n</IfModule>\n");
     }
+}
+
+function ensurePackagesDir() {
+    if (!is_dir(PACKAGES_DIR)) @mkdir(PACKAGES_DIR, 0755, true);
+    // Manifests carry the share token. Deny direct access here as well as in the
+    // root .htaccess, in case a host ignores one of them.
+    denyWebAccess(PACKAGES_DIR);
     return PACKAGES_DIR;
 }
 

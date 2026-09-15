@@ -7,10 +7,29 @@ RewriteRule ^gallery/.+$ public/proofing.html [L]
 RewriteRule ^collection/.+$ public/collection.html [L]
 RewriteRule ^d/.+$ public/download.html [L]
 
-# Delivery packages are token-gated and streamed by index.php. Everything else
-# under site-data/ is a real file Apache would happily serve directly, so block
-# that path explicitly.
-RewriteRule ^site-data/packages/ - [F]
+# Anything that exists on disk is served directly, so the rules below deny what
+# must never leave the server. They sit before the /uploads/ etc. rewrites so a
+# rewritten request re-entering as site-data/... is checked too.
+
+# Dotfiles and dot-dirs (.env, .git/, per-directory .htaccess guards). ACME
+# challenges under .well-known/ must stay reachable for certificate renewal.
+RewriteRule (^|/)\.(?!well-known(/|$)) - [F]
+
+# Root-level docs (CLAUDE.md, README.md, CHANGELOG.md) disclose internals and
+# the exact version, which tells an attacker which fixes a site is missing.
+RewriteRule ^[^/]+\.md$ - [F]
+
+# site-data/ is an allowlist: only the media directories are public. data/
+# (password hash, sessions, secrets, share tokens), imports/ and packages/ are
+# all denied, as is anything added there later.
+RewriteRule ^site-data/(?!(uploads|thumbnails|proxies|captions|logo)/) - [F]
+
+# No directory listings under site-data/, even where the host enables Indexes.
+# /uploads/ is rewritten to site-data/uploads/ and re-enters here, so this
+# covers both spellings. Not "Options -Indexes": that 500s on hosts whose
+# AllowOverride excludes Options.
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^site-data/ - [F]
 
 # Serve uploads, thumbnails, proxies, captions, and logo from site-data/
 RewriteRule ^uploads/(.*)$ site-data/uploads/$1 [L]

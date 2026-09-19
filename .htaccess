@@ -6,6 +6,7 @@ RewriteRule ^admin/?$ public/admin.html [L]
 RewriteRule ^gallery/.+$ public/proofing.html [L]
 RewriteRule ^collection/.+$ public/collection.html [L]
 RewriteRule ^d/.+$ public/download.html [L]
+RewriteRule ^portfolio(/.*)?$ public/portfolio.html [L]
 
 # Anything that exists on disk is served directly, so the rules below deny what
 # must never leave the server. They sit before the /uploads/ etc. rewrites so a
@@ -19,10 +20,19 @@ RewriteRule (^|/)\.(?!well-known(/|$)) - [F]
 # the exact version, which tells an attacker which fixes a site is missing.
 RewriteRule ^[^/]+\.md$ - [F]
 
+# Local development tooling (tools/dev-router.php serves files under php -S).
+RewriteRule ^tools/ - [F]
+
 # site-data/ is an allowlist: only the media directories are public. data/
 # (password hash, sessions, secrets, share tokens), imports/ and packages/ are
 # all denied, as is anything added there later.
-RewriteRule ^site-data/(?!(uploads|thumbnails|proxies|captions|logo)/) - [F]
+RewriteRule ^site-data/(?!(uploads|thumbnails|proxies|captions|logo|portfolio)/) - [F]
+
+# Portfolio folders are filled over FTP, so they serve media and captions only:
+# a .php or .html dropped in must never run or render as a page. The second rule
+# catches double extensions (evil.php.jpg) that some handlers would execute.
+RewriteRule ^site-data/portfolio/(?!.*\.(jpe?g|png|webp|gif|mp4|webm|mov|m4v|vtt)$) - [F,NC]
+RewriteRule ^site-data/portfolio/.*\.(php\d?|phtml|phar|cgi|pl|py)(\.|$) - [F,NC]
 
 # No directory listings under site-data/, even where the host enables Indexes.
 # /uploads/ is rewritten to site-data/uploads/ and re-enters here, so this
@@ -31,12 +41,14 @@ RewriteRule ^site-data/(?!(uploads|thumbnails|proxies|captions|logo)/) - [F]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^site-data/ - [F]
 
-# Serve uploads, thumbnails, proxies, captions, and logo from site-data/
+# Serve uploads, thumbnails, proxies, captions, logo, and portfolio media
+# (/media/<Category>/<Gallery>/<file>) from site-data/
 RewriteRule ^uploads/(.*)$ site-data/uploads/$1 [L]
 RewriteRule ^thumbnails/(.*)$ site-data/thumbnails/$1 [L]
 RewriteRule ^proxies/(.*)$ site-data/proxies/$1 [L]
 RewriteRule ^captions/(.*)$ site-data/captions/$1 [L]
 RewriteRule ^logo/(.*)$ site-data/logo/$1 [L]
+RewriteRule ^media/(.*)$ site-data/portfolio/$1 [L]
 
 # Route /api/* to index.php
 RewriteCond %{REQUEST_FILENAME} !-f

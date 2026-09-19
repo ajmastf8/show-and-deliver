@@ -22,6 +22,7 @@ public/
   proofing.html        # Client proofing gallery (token-based access)
   collection.html      # Collection landing page (groups of galleries)
   download.html        # Client delivery download page (/d/{token})
+  portfolio.html       # Folder-backed portfolio pages (/portfolio/...)
   css/                 # Stylesheets (style.css, proofing.css, collection.css, download.css)
   js/
     admin.js           # Admin UI logic
@@ -29,7 +30,10 @@ public/
     proofing.js        # Client proofing page logic
     collection.js      # Collection page logic
     download.js        # Delivery download page logic
+    portfolio.js       # Portfolio page logic
     header.js          # Dynamic header rendering from /api/header config
+tools/
+  dev-router.php       # php -S router replaying .htaccess (local only; denied on the web)
 site-data/             # Runtime data (gitignored)
   data/                # JSON data files (galleries, collections, settings, header, admin config, crc.json)
   uploads/             # Original uploaded files (photos + videos)
@@ -38,6 +42,8 @@ site-data/             # Runtime data (gitignored)
   logo/                # Site logo image
   imports/             # FTP import staging directory
   packages/            # Delivery plans (manifest.json only — zips are streamed, never stored)
+  portfolio/           # <Category>/<Gallery>/<files> — the portfolio itself (served at /media/)
+  portfolio-trash/     # Portfolio folders and files deleted from the admin
 ```
 
 ## Key Concepts
@@ -83,6 +89,22 @@ site-data/             # Runtime data (gitignored)
   in `zipEntryOverhead()`, used by both `zipStreamedSize()` and the part
   planner so they cannot drift; if it stops matching what the streaming route
   emits, `Content-Length` lies and every download truncates.
+- **Portfolio** is folder-backed: `site-data/portfolio/<Category>/<Gallery>/`
+  on disk is the source of truth, so a folder dropped in by FTP appears with no
+  import. Metadata lives in dot-named sidecars (`.portfolio.json`,
+  `.category.json`, `.gallery.json`) that the dotfile rule keeps off the web;
+  they move with their folder, so an FTP rename keeps the slug and metadata.
+  `portfolioTree()` reconciles disk with sidecars on every read; GD work never
+  happens there. Thumbnails and proxies are built by `portfolioProcess()` in ~8s
+  slices under a non-blocking lock (admin-driven via
+  `POST /api/admin/portfolio/process`, or `php index.php portfolio:process` from
+  cron), and a photo stays out of public payloads until it has a thumbnail.
+  Files younger than `PORTFOLIO_SETTLE_SECONDS` are treated as still uploading.
+  `<video>.poster.jpg` and `<video>.<lang>.vtt` beside a video are its poster
+  and captions. Video size and duration come from the MP4 header in pure PHP
+  (`mp4VideoDimensions()`, `mp4DurationSeconds()`). The portfolio folders only
+  serve media and `.vtt` — `.htaccess` refuses everything else there, since
+  anything can arrive over FTP. Being replaced by this: `reels` galleries.
 - **Items** in galleries can be videos or photos, plus section headers. A
   portfolio item may carry a `description` — the caption box rendered under the
   player by `caption-box.js`. It is a portfolio-only feature: the admin exposes
@@ -99,7 +121,8 @@ site-data/             # Runtime data (gitignored)
 
 All routes are in `index.php`. Key patterns:
 - `GET /api/header` — public header config
-- `GET /api/videos` — public portfolio videos
+- `GET /api/videos` — public portfolio videos (reels gallery)
+- `GET /api/portfolio`, `/api/portfolio/featured`, `/api/portfolio/c/{cat}`, `/api/portfolio/g/{cat}/{gal}` — folder-backed portfolio
 - `GET /api/proofing/{token}` — client gallery data
 - `GET /api/collections/{token}` — collection data
 - `/api/admin/*` — authenticated admin endpoints (CRUD for galleries, videos, uploads)
@@ -108,7 +131,9 @@ All routes are in `index.php`. Key patterns:
 
 ## Development
 
-No build step. Edit files directly. The site runs on cPanel with PHP — no local dev server needed unless testing locally with `php -S`.
+No build step. Edit files directly. The site runs on cPanel with PHP — no local dev server needed unless testing locally with
+`php -S localhost:8080 tools/dev-router.php`. The router replays `.htaccess`, which
+`php -S` ignores; **keep the two in sync** when changing either.
 
 Deploy via admin Settings > Update tab. Two auto-detected modes (`deployMode()` in
 `index.php`): git installs fetch + hard-reset from GitHub; zip installs (no `.git`

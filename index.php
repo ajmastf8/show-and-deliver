@@ -23,6 +23,17 @@ define('IMPORT_DIR', SITE_DATA . '/imports');
 define('HEADER_CONFIG_PATH', DATA_DIR . '/header.json');
 define('CRC_CACHE_PATH', DATA_DIR . '/crc.json');
 
+// Folder-backed portfolio: <Category>/<Gallery>/<files>, with dot-named JSON
+// sidecars beside them. The folders are the source of truth — see the
+// PORTFOLIO section. Deleted folders and files go to the trash, never unlink.
+define('PORTFOLIO_DIR', SITE_DATA . '/portfolio');
+define('PORTFOLIO_TRASH_DIR', SITE_DATA . '/portfolio-trash');
+define('PORTFOLIO_PROCESS_SLICE_SECONDS', 8);
+// A file younger than this may still be arriving over FTP. It is listed as
+// pending and left alone, so no thumbnail is ever cut from a truncated upload.
+define('PORTFOLIO_SETTLE_SECONDS', 60);
+define('PORTFOLIO_LAYOUTS', ['justified', 'masonry', 'grid', 'slideshow']);
+
 // Cap for a portfolio item's caption box. Long enough for a paragraph of
 // credits, short enough that the field can never bloat a gallery's videos.json.
 define('DESCRIPTION_MAX_LEN', 2000);
@@ -51,7 +62,7 @@ define('CRC_WARM_SLICE_SECONDS', 10);
 define('GITHUB_REPO_DEFAULT', 'ajmastf8/show-and-deliver');
 
 // Ensure directories exist
-foreach ([DATA_DIR, UPLOADS_DIR, THUMBS_DIR, PROXY_DIR, CAPTIONS_DIR, IMPORT_DIR, DATA_DIR . '/sessions', DATA_DIR . '/ratelimit'] as $dir) {
+foreach ([DATA_DIR, UPLOADS_DIR, THUMBS_DIR, PROXY_DIR, CAPTIONS_DIR, IMPORT_DIR, PORTFOLIO_DIR, DATA_DIR . '/sessions', DATA_DIR . '/ratelimit'] as $dir) {
     if (!is_dir($dir)) mkdir($dir, 0755, true);
 }
 
@@ -62,6 +73,7 @@ foreach ([DATA_DIR, UPLOADS_DIR, THUMBS_DIR, PROXY_DIR, CAPTIONS_DIR, IMPORT_DIR
 // itself — that would also deny the media directories the rewrites expose.
 denyWebAccess(DATA_DIR);
 denyWebAccess(IMPORT_DIR);
+portfolioGuardDir();
 
 // GD decodes the full bitmap into RAM, so a 24–50MP camera JPEG can need
 // several hundred MB. The default 128M limit fatals mid-import on large photos.
@@ -456,6 +468,64 @@ function resolveVideoDuration($path, $stored = 0) {
     $meta = probeVideo($path);
     if ($meta && ($meta['duration'] ?? 0) > 0) return (float)$meta['duration'];
     return mp4DurationSeconds($path);
+}
+
+// Display width/height of the first video track, read from its `tkhd` box — the
+// pure-PHP counterpart of probeVideo()'s dimensions, which need ffprobe. A 90°
+// rotation matrix (phone portrait video) swaps them, as a player would. Returns
+// null when the file isn't MP4/MOV or has no visual track.
+function mp4VideoDimensions($path) {
+    $fh = @fopen($path, 'rb');
+    if (!$fh) return null;
+    try {
+        return mp4FindTkhd($fh, @filesize($path) ?: 0, 0);
+    } finally {
+        fclose($fh);
+    }
+}
+function mp4FindTkhd($fh, $end, $start) {
+    $pos = $start;
+    while ($pos + 8 <= $end) {
+        fseek($fh, $pos);
+        $hdr = fread($fh, 8);
+        if (strlen($hdr) < 8) break;
+        $size = unpack('N', substr($hdr, 0, 4))[1];
+        $type = substr($hdr, 4, 4);
+        $headerLen = 8;
+        if ($size === 1) {
+            $p = unpack('Nhi/Nlo', fread($fh, 8));
+            $size = $p['hi'] * 4294967296 + $p['lo'];
+            $headerLen = 16;
+        } elseif ($size === 0) {
+            $size = $end - $pos;
+        }
+        if ($size < $headerLen) break;
+        $contentStart = $pos + $headerLen;
+        $contentEnd = $pos + $size;
+        if ($type === 'moov' || $type === 'trak') {
+            $d = mp4FindTkhd($fh, min($contentEnd, $end), $contentStart);
+            if ($d) return $d;
+        } elseif ($type === 'tkhd') {
+            fseek($fh, $contentStart);
+            $ver = ord(fread($fh, 1));
+            fread($fh, 3);
+            // Times, track id, reserved, duration: 20 bytes in v0, 32 in v1.
+            // Then reserved(8) layer(2) group(2) volume(2) reserved(2).
+            fread($fh, ($ver === 1 ? 32 : 20) + 16);
+            $m = unpack('N9', fread($fh, 36));
+            $wh = unpack('Nw/Nh', fread($fh, 8));
+            $w = (int)round($wh['w'] / 65536);
+            $h = (int)round($wh['h'] / 65536);
+            // Audio tracks carry 0×0; keep looking for the picture.
+            if ($w > 0 && $h > 0) {
+                // Matrix a=0 with b=±1 is a quarter turn.
+                if ($m[1] === 0 && ($m[2] === 0x00010000 || $m[2] === 0xFFFF0000)) [$w, $h] = [$h, $w];
+                return ['width' => $w, 'height' => $h];
+            }
+        }
+        $pos = $contentEnd;
+    }
+    return null;
 }
 
 // ---- WebVTT timecode helpers -------------------------------------------------
@@ -1117,6 +1187,24 @@ migrateIfNeeded();
 // ============================================================
 // ROUTER
 // ============================================================
+
+// CLI: `php index.php portfolio:process` builds every missing portfolio
+// thumbnail and proxy, for hosts where folders arrive by FTP and nobody opens
+// the admin to drive processing. Suitable for cron. Shares the web route's
+// lock, so the two never run GD at the same time.
+if (PHP_SAPI === 'cli') {
+    if (($argv[1] ?? '') !== 'portfolio:process') {
+        fwrite(STDERR, "Usage: php index.php portfolio:process\n");
+        exit(1);
+    }
+    do {
+        $r = portfolioProcess(null, PORTFOLIO_PROCESS_SLICE_SECONDS);
+        if (!empty($r['busy'])) { fwrite(STDERR, "Another process run holds the lock.\n"); exit(1); }
+        echo "processed {$r['processed']}, remaining {$r['remaining']}\n";
+    } while ($r['processed'] > 0 && $r['remaining'] > 0);
+    if ($r['needsPoster']) echo count($r['needsPoster']) . " video(s) need a poster: open the admin, or add <name>.poster.jpg beside them.\n";
+    exit(0);
+}
 
 $method = $_SERVER['REQUEST_METHOD'];
 $uri = $_SERVER['REQUEST_URI'];
@@ -4108,6 +4196,827 @@ if ($method === 'DELETE' && $uri === '/api/settings/api-token') {
     unset($_ENV['API_TOKEN']);
     putenv('API_TOKEN');
     respond(['ok' => true]);
+}
+
+// ============================================================
+// PORTFOLIO (folder-backed)
+// ============================================================
+//
+// site-data/portfolio/<Category>/<Gallery>/ on disk IS the portfolio. A folder
+// dropped in by FTP or File Manager appears with no import step, and the admin
+// edits those same folders. What a file can't carry lives in dot-named sidecars,
+// which the root .htaccess dotfile rule already refuses to serve:
+//
+//   .portfolio.json  {version, order:[category id]}
+//   .category.json   {version, id, slug, title, description, visible, order:[gallery id]}
+//   .gallery.json    {version, id, slug, title, description, layout, cover,
+//                     visible, order:[filename | header id], headers, items}
+//
+// Sidecars travel with their folder, so renaming a folder by FTP keeps its URL
+// (the slug is stored once, never re-derived) and all its metadata. Items are
+// keyed by filename: a rename through the admin rewrites the key, and an FTP
+// rename is matched up by size when exactly one file left and one arrived.
+//
+// Scanning is cheap and happens on every read (portfolioTree()). GD work never
+// does: thumbnails and proxies are built by portfolioProcess() in short slices
+// that the admin drives (or the CLI, for cron), and a photo stays out of public
+// payloads until it has a thumbnail. Derivatives share thumbnails/ and proxies/
+// with gallery items, keyed by item id, so the flat directories never collide.
+//
+// Videos: `<name>.poster.<jpg|png|webp>` beside a video is its poster, and
+// `<name>.<lang>.vtt` a caption track. Without a poster file, the admin captures
+// a frame in the browser (prod has no ffmpeg), as it already does for uploads.
+
+// Allows media and captions only. Folders here are filled over FTP, so a .php
+// or .html dropped in must never execute or be served as a page. The root
+// .htaccess enforces the same allowlist; this covers hosts that ignore it.
+function portfolioGuardDir() {
+    if (!is_dir(PORTFOLIO_DIR)) return;
+    $guard = PORTFOLIO_DIR . '/.htaccess';
+    if (file_exists($guard)) return;
+    @file_put_contents($guard, implode("\n", [
+        '# Written by Show & Deliver. Media and captions only: nothing uploaded here',
+        '# may run as code or be served as a page.',
+        '<IfModule mod_authz_core.c>',
+        '  Require all denied',
+        '  <FilesMatch "(?i)\.(jpe?g|png|webp|gif|mp4|webm|mov|m4v|vtt)$">',
+        '    Require all granted',
+        '  </FilesMatch>',
+        '  <FilesMatch "(?i)\.(php\d?|phtml|phar|cgi|pl|py|sh|s?html?|svg|js)(\.|$)">',
+        '    Require all denied',
+        '  </FilesMatch>',
+        '</IfModule>',
+        '',
+    ]));
+}
+
+// Names the scanner never treats as content: dotfiles (sidecars, .DS_Store,
+// macOS ._ AppleDouble files), Windows litter, and partial downloads/uploads.
+function portfolioIgnoredName($name) {
+    if ($name === '' || $name[0] === '.') return true;
+    $lower = strtolower($name);
+    if ($lower === 'thumbs.db' || $lower === 'desktop.ini' || $name === "Icon\r") return true;
+    return (bool)preg_match('/\.(part|filepart|partial|tmp|crdownload)$/', $lower);
+}
+
+// URL slug from a folder name. Accents fold to ASCII ("Été" → "ete"); a name
+// with nothing foldable (e.g. "東京") comes back empty and the caller falls back
+// to an id-based slug.
+function portfolioSlugify($s) {
+    if (class_exists('Normalizer')) $s = Normalizer::normalize($s, Normalizer::FORM_D);
+    $s = preg_replace('/\p{Mn}+/u', '', $s);
+    if (function_exists('iconv')) {
+        $t = @iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $s);
+        if ($t !== false) $s = $t;
+    }
+    $s = strtolower($s);
+    $s = preg_replace('/[^a-z0-9]+/', '-', $s);
+    return substr(trim($s, '-'), 0, 60);
+}
+
+function portfolioUniqueSlug($base, array $taken, $fallback) {
+    $slug = $base !== '' ? $base : $fallback;
+    $try = $slug;
+    for ($n = 2; in_array($try, $taken, true); $n++) $try = $slug . '-' . $n;
+    return $try;
+}
+
+// jsonUpdate(), except the file is only rewritten when the mutator changed
+// something — reconciliation runs on every public read and must not turn each
+// page view into a write. A sidecar that fails to parse is set aside rather
+// than silently replaced, since it may hold hours of captions and ordering.
+function portfolioSidecarUpdate($path, callable $mutator) {
+    $fp = @fopen($path, 'c+');
+    if (!$fp) {
+        // Unwritable folder (e.g. uploaded by FTP as another user): work from
+        // what's there without persisting.
+        $d = jsonRead($path);
+        return $mutator(is_array($d) ? $d : []);
+    }
+    flock($fp, LOCK_EX);
+    $raw = stream_get_contents($fp);
+    $data = [];
+    if ($raw !== '' && $raw !== false) {
+        $data = json_decode($raw, true);
+        if (!is_array($data)) {
+            @file_put_contents($path . '.corrupt-' . time(), $raw);
+            $data = [];
+        }
+    }
+    $after = $mutator($data);
+    if ($after !== $data) {
+        rewind($fp);
+        ftruncate($fp, 0);
+        fwrite($fp, json_encode($after, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        fflush($fp);
+    }
+    flock($fp, LOCK_UN);
+    fclose($fp);
+    return $after;
+}
+
+// Subfolders of $dir that the scanner treats as categories or galleries, plus
+// warnings for loose files that sit at a level where only folders belong.
+function portfolioListDirs($dir, $where) {
+    $dirs = [];
+    $warnings = [];
+    foreach (@scandir($dir) ?: [] as $n) {
+        if (portfolioIgnoredName($n)) continue;
+        if (is_dir("$dir/$n")) $dirs[] = $n;
+        else $warnings[] = "\"$n\" is loose in $where and is ignored — files belong inside a gallery folder.";
+    }
+    usort($dirs, 'strnatcasecmp');
+    return [$dirs, $warnings];
+}
+
+// Classifies one gallery folder's entries. $trusted names skip the settle wait:
+// an admin upload has fully arrived even though its mtime is seconds old.
+function portfolioScanGallery($dir, array $trusted = []) {
+    $files = [];
+    $videoBases = [];
+    $warnings = [];
+    foreach (@scandir($dir) ?: [] as $n) {
+        if (portfolioIgnoredName($n)) continue;
+        if (is_dir("$dir/$n")) {
+            $warnings[] = "Folder \"$n\" is nested too deep and is ignored — a portfolio is Category / Gallery / files.";
+            continue;
+        }
+        $files[] = $n;
+        if (in_array(strtolower(pathinfo($n, PATHINFO_EXTENSION)), VIDEO_EXTS, true)) {
+            $videoBases[strtolower(pathinfo($n, PATHINFO_FILENAME))] = $n;
+        }
+    }
+    $media = [];
+    $posters = [];
+    $captions = [];
+    $pending = [];
+    $now = time();
+    foreach ($files as $n) {
+        $ext = strtolower(pathinfo($n, PATHINFO_EXTENSION));
+        if (preg_match('/^(.+)\.poster\.(jpe?g|png|webp)$/i', $n, $m) && isset($videoBases[strtolower($m[1])])) {
+            $posters[$videoBases[strtolower($m[1])]] = $n;
+            continue;
+        }
+        if ($ext === CAPTION_EXT) {
+            $lang = '';
+            if (preg_match('/^(.+)\.([a-z]{2,3}(?:-[a-z]{2,4})?)\.vtt$/i', $n, $m) && isset($videoBases[strtolower($m[1])])) {
+                $lang = normalizeCaptionLang($m[2]);
+            }
+            if ($lang !== '') $captions[$videoBases[strtolower($m[1])]][$lang] = $n;
+            else $warnings[] = "Caption \"$n\" doesn't match a video — name it <video name>.<language>.vtt, e.g. clip.en.vtt.";
+            continue;
+        }
+        if (!in_array($ext, MEDIA_EXTS, true)) {
+            $warnings[] = "\"$n\" isn't a supported photo or video and is ignored.";
+            continue;
+        }
+        $mtime = (int)@filemtime("$dir/$n");
+        $settling = $now - $mtime < PORTFOLIO_SETTLE_SECONDS && !in_array($n, $trusted, true);
+        if ($settling) $pending[] = $n;
+        $media[$n] = [
+            'size' => (int)@filesize("$dir/$n"),
+            'mtime' => $mtime,
+            'type' => in_array($ext, VIDEO_EXTS, true) ? 'video' : 'photo',
+            'settling' => $settling,
+        ];
+    }
+    uksort($media, 'strnatcasecmp');
+    foreach ($captions as &$c) ksort($c);
+    unset($c);
+    return ['media' => $media, 'posters' => $posters, 'captions' => $captions, 'warnings' => $warnings, 'pending' => $pending];
+}
+
+// Merges a gallery folder's contents into its sidecar and returns the result.
+// New files join the end of the order; vanished ones drop out, along with their
+// thumbnail and proxy. A file still arriving (see PORTFOLIO_SETTLE_SECONDS) is
+// not added yet, and a known file being replaced keeps its entry untouched.
+function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trusted = []) {
+    $scan = portfolioScanGallery($dir, $trusted);
+    $removedIds = [];
+    $g = portfolioSidecarUpdate("$dir/.gallery.json", function ($g) use ($scan, $folder, $takenSlugs, &$removedIds) {
+        $g['version'] = 1;
+        if (empty($g['id'])) $g['id'] = generateId('pg_');
+        if (empty($g['slug']) || in_array($g['slug'], $takenSlugs, true)) {
+            $g['slug'] = portfolioUniqueSlug(portfolioSlugify($folder), $takenSlugs, 'g-' . substr($g['id'], 3, 6));
+        }
+        $g += [
+            'title' => null, 'description' => '', 'layout' => 'justified', 'cover' => null,
+            'visible' => true, 'createdAt' => date('c'), 'order' => [], 'headers' => [], 'items' => [],
+        ];
+        if (!in_array($g['layout'], PORTFOLIO_LAYOUTS, true)) $g['layout'] = 'justified';
+        $items = is_array($g['items']) ? $g['items'] : [];
+        $headers = is_array($g['headers']) ? $g['headers'] : [];
+        $order = is_array($g['order']) ? $g['order'] : [];
+
+        $present = $scan['media'];
+        $missing = array_diff_key($items, $present);
+        $new = array_filter(array_diff_key($present, $items), fn($f) => !$f['settling']);
+
+        // Renamed over FTP: one file gone, one arrived, same size and type.
+        if (count($missing) === 1 && count($new) === 1) {
+            $old = array_key_first($missing);
+            $arrived = array_key_first($new);
+            if ((int)($items[$old]['size'] ?? -1) === $new[$arrived]['size']
+                && strcasecmp(pathinfo($old, PATHINFO_EXTENSION), pathinfo($arrived, PATHINFO_EXTENSION)) === 0) {
+                $items[$arrived] = $items[$old];
+                unset($items[$old]);
+                $order = array_map(fn($o) => $o === $old ? $arrived : $o, $order);
+                if ($g['cover'] === $old) $g['cover'] = $arrived;
+                $missing = [];
+                $new = [];
+            }
+        }
+        foreach ($missing as $name => $it) {
+            if (!empty($it['id'])) $removedIds[] = $it['id'];
+            unset($items[$name]);
+        }
+        foreach ($new as $name => $f) {
+            $items[$name] = [
+                'id' => generateId($f['type'] === 'video' ? 'v_' : 'p_'),
+                'title' => '', 'description' => '', 'visible' => true,
+                'width' => 0, 'height' => 0, 'thumb' => 0, 'proxy' => 0,
+                'addedAt' => date('c'),
+            ];
+        }
+        foreach ($items as $name => &$it) {
+            $f = $present[$name];
+            $it['type'] = $f['type'];
+            if (!$f['settling']) {
+                $it['size'] = $f['size'];
+                $it['mtime'] = $f['mtime'];
+            }
+            if ($f['type'] === 'video') {
+                $it['posterFile'] = $scan['posters'][$name] ?? null;
+                $it['captions'] = $scan['captions'][$name] ?? [];
+            }
+        }
+        unset($it);
+
+        $kept = [];
+        foreach ($order as $o) {
+            if (is_string($o) && !isset($kept[$o]) && (isset($items[$o]) || isset($headers[$o]))) $kept[$o] = true;
+        }
+        foreach ($items as $name => $_) {
+            if (!isset($kept[$name])) $kept[$name] = true;
+        }
+        $g['order'] = array_map('strval', array_keys($kept));
+        $g['headers'] = array_intersect_key($headers, $kept);
+        $g['items'] = $items;
+        if ($g['cover'] !== null && !isset($items[$g['cover']])) $g['cover'] = null;
+        return $g;
+    });
+    foreach ($removedIds as $id) {
+        @unlink(THUMBS_DIR . "/$id.jpg");
+        @unlink(PROXY_DIR . "/{$id}_proxy.jpg");
+    }
+    return ['sidecar' => $g, 'warnings' => $scan['warnings'], 'pending' => $scan['pending']];
+}
+
+// Walks the category folder's galleries in their saved order (new ones after,
+// by name), reconciling each so gallery slugs stay unique within the category.
+function portfolioReconcileCategory($dir, $folder, array $takenSlugs) {
+    [$names, $warnings] = portfolioListDirs($dir, "category \"$folder\"");
+    $existing = jsonRead("$dir/.category.json");
+    $savedOrder = is_array($existing['order'] ?? null) ? $existing['order'] : [];
+    $byId = [];
+    $rest = [];
+    foreach ($names as $n) {
+        $id = jsonRead("$dir/$n/.gallery.json")['id'] ?? null;
+        if ($id && !isset($byId[$id])) $byId[$id] = $n;
+        else $rest[] = $n;
+    }
+    $sequence = [];
+    foreach ($savedOrder as $id) {
+        if (isset($byId[$id])) { $sequence[] = $byId[$id]; unset($byId[$id]); }
+    }
+    $rest = array_merge(array_values($byId), $rest);
+    usort($rest, 'strnatcasecmp');
+    $sequence = array_merge($sequence, $rest);
+
+    $galleries = [];
+    $slugs = [];
+    foreach ($sequence as $n) {
+        $r = portfolioReconcileGallery("$dir/$n", $n, $slugs);
+        $slugs[] = $r['sidecar']['slug'];
+        $galleries[] = [
+            'id' => $r['sidecar']['id'],
+            'slug' => $r['sidecar']['slug'],
+            'folder' => $n,
+            'dir' => "$dir/$n",
+            'sidecar' => $r['sidecar'],
+            'warnings' => $r['warnings'],
+            'pending' => $r['pending'],
+        ];
+    }
+    $ids = array_column($galleries, 'id');
+    $c = portfolioSidecarUpdate("$dir/.category.json", function ($c) use ($folder, $takenSlugs, $ids) {
+        $c['version'] = 1;
+        if (empty($c['id'])) $c['id'] = generateId('pc_');
+        if (empty($c['slug']) || in_array($c['slug'], $takenSlugs, true)) {
+            $c['slug'] = portfolioUniqueSlug(portfolioSlugify($folder), $takenSlugs, 'c-' . substr($c['id'], 3, 6));
+        }
+        $c += ['title' => null, 'description' => '', 'visible' => true, 'createdAt' => date('c')];
+        $c['order'] = $ids;
+        return $c;
+    });
+    return ['sidecar' => $c, 'galleries' => $galleries, 'warnings' => $warnings];
+}
+
+// The whole portfolio, reconciled against disk. Memoised per request; pass
+// $refresh after a write so later reads in the same request see it.
+function portfolioTree($refresh = false) {
+    static $tree = null;
+    if ($tree !== null && !$refresh) return $tree;
+    [$names, $warnings] = portfolioListDirs(PORTFOLIO_DIR, 'the portfolio folder');
+    $root = jsonRead(PORTFOLIO_DIR . '/.portfolio.json');
+    $savedOrder = is_array($root['order'] ?? null) ? $root['order'] : [];
+    $byId = [];
+    $rest = [];
+    foreach ($names as $n) {
+        $id = jsonRead(PORTFOLIO_DIR . "/$n/.category.json")['id'] ?? null;
+        if ($id && !isset($byId[$id])) $byId[$id] = $n;
+        else $rest[] = $n;
+    }
+    $sequence = [];
+    foreach ($savedOrder as $id) {
+        if (isset($byId[$id])) { $sequence[] = $byId[$id]; unset($byId[$id]); }
+    }
+    $rest = array_merge(array_values($byId), $rest);
+    usort($rest, 'strnatcasecmp');
+    $sequence = array_merge($sequence, $rest);
+
+    $categories = [];
+    $slugs = [];
+    foreach ($sequence as $n) {
+        $r = portfolioReconcileCategory(PORTFOLIO_DIR . "/$n", $n, $slugs);
+        $slugs[] = $r['sidecar']['slug'];
+        foreach ($r['galleries'] as &$gal) {
+            $gal['category'] = $r['sidecar']['id'];
+        }
+        unset($gal);
+        $categories[] = [
+            'id' => $r['sidecar']['id'],
+            'slug' => $r['sidecar']['slug'],
+            'folder' => $n,
+            'dir' => PORTFOLIO_DIR . "/$n",
+            'sidecar' => $r['sidecar'],
+            'galleries' => $r['galleries'],
+            'warnings' => $r['warnings'],
+        ];
+    }
+    $ids = array_column($categories, 'id');
+    portfolioSidecarUpdate(PORTFOLIO_DIR . '/.portfolio.json', function ($p) use ($ids) {
+        $p['version'] = 1;
+        $p['order'] = $ids;
+        return $p;
+    });
+    $tree = ['categories' => $categories, 'warnings' => $warnings];
+    return $tree;
+}
+
+function portfolioFindGallery($id) {
+    foreach (portfolioTree()['categories'] as $cat) {
+        foreach ($cat['galleries'] as $gal) {
+            if ($gal['id'] === $id) return [$cat, $gal];
+        }
+    }
+    return null;
+}
+
+function portfolioFindCategoryBySlug($slug) {
+    foreach (portfolioTree()['categories'] as $cat) {
+        if ($cat['slug'] === $slug) return $cat;
+    }
+    return null;
+}
+
+function portfolioFindBySlug($catSlug, $galSlug) {
+    $cat = portfolioFindCategoryBySlug($catSlug);
+    if (!$cat) return null;
+    foreach ($cat['galleries'] as $gal) {
+        if ($gal['slug'] === $galSlug) return [$cat, $gal];
+    }
+    return null;
+}
+
+// --- Derivatives ---
+
+// What an item still needs. 'work' is server-side (GD resize, or reading a
+// video's duration and size from its header); 'capture' means a video has no
+// poster file and the admin must grab a frame in the browser.
+function portfolioItemTasks($dir, $name, array $it) {
+    $t = ['work' => false, 'capture' => false];
+    $mtime = (int)($it['mtime'] ?? 0);
+    // Reconcile only records a file's mtime once it has settled, so a mismatch
+    // means it's still arriving (or changed since this request's scan).
+    if ($mtime === 0 || (int)@filemtime("$dir/$name") !== $mtime) return $t;
+    if ((int)($it['error'] ?? 0) === $mtime) return $t;
+    $id = $it['id'];
+    $thumbOk = !empty($it['thumb']) && is_file(THUMBS_DIR . "/$id.jpg");
+    if ($it['type'] === 'photo') {
+        $t['work'] = !$thumbOk || !is_file(PROXY_DIR . "/{$id}_proxy.jpg")
+            || (int)($it['thumb'] ?? 0) !== $mtime || (int)($it['proxy'] ?? 0) !== $mtime;
+        return $t;
+    }
+    if ((int)($it['metaOf'] ?? 0) !== $mtime) $t['work'] = true;
+    $source = $it['thumbSource'] ?? '';
+    if (!empty($it['posterFile'])) {
+        $pm = (int)@filemtime("$dir/{$it['posterFile']}");
+        if (!$thumbOk || $source !== 'file' || (int)($it['thumbOf'] ?? 0) !== $pm) $t['work'] = true;
+    } elseif (!$thumbOk || $source === 'file' || ($source === 'capture' && (int)($it['thumbOf'] ?? 0) !== $mtime)) {
+        $t['capture'] = true;
+    }
+    return $t;
+}
+
+// Does one item's server-side work and returns the sidecar fields to patch.
+function portfolioProcessItem($dir, $name, array $it) {
+    $path = "$dir/$name";
+    $id = $it['id'];
+    $mtime = (int)$it['mtime'];
+    if ($it['type'] === 'photo') {
+        $dims = probeImage($path);
+        $ok = $dims
+            && generatePhotoThumbnail($path, THUMBS_DIR . "/$id.jpg")
+            && generatePhotoProxy($path, PROXY_DIR . "/{$id}_proxy.jpg");
+        if (!$ok) return ['error' => $mtime];
+        return ['width' => $dims['width'], 'height' => $dims['height'], 'thumb' => $mtime, 'proxy' => $mtime, 'error' => null];
+    }
+    $patch = [];
+    if ((int)($it['metaOf'] ?? 0) !== $mtime) {
+        $patch['duration'] = round(mp4DurationSeconds($path), 3);
+        $dims = mp4VideoDimensions($path);
+        if ($dims) {
+            $patch['width'] = $dims['width'];
+            $patch['height'] = $dims['height'];
+        }
+        $patch['metaOf'] = $mtime;
+    }
+    if (!empty($it['posterFile'])) {
+        $pp = "$dir/{$it['posterFile']}";
+        if (generatePhotoThumbnail($pp, THUMBS_DIR . "/$id.jpg") && generatePhotoProxy($pp, PROXY_DIR . "/{$id}_proxy.jpg")) {
+            $patch += ['thumb' => time(), 'thumbSource' => 'file', 'thumbOf' => (int)@filemtime($pp)];
+            // No size from the video header (e.g. WebM): the poster's will do.
+            if (empty($patch['width']) && empty($it['width']) && ($pd = probeImage($pp))) {
+                $patch['width'] = $pd['width'];
+                $patch['height'] = $pd['height'];
+            }
+        } else {
+            $patch['error'] = $mtime;
+        }
+    }
+    return $patch;
+}
+
+// Applies a patch to one item under the sidecar lock. A null value removes the
+// field. Silently skips an item that vanished meanwhile.
+function portfolioPatchItem($dir, $name, array $patch) {
+    return portfolioSidecarUpdate("$dir/.gallery.json", function ($g) use ($name, $patch) {
+        if (!isset($g['items'][$name])) return $g;
+        foreach ($patch as $k => $v) {
+            if ($v === null) unset($g['items'][$name][$k]);
+            else $g['items'][$name][$k] = $v;
+        }
+        return $g;
+    });
+}
+
+// Builds missing or stale derivatives for up to $sliceSeconds, starting with
+// $galleryId when given. One run at a time across web and CLI (non-blocking
+// lock), so a second admin tab or an overlapping cron never doubles CPU use
+// under the host's per-account cap.
+function portfolioProcess($galleryId, $sliceSeconds) {
+    $lock = @fopen(DATA_DIR . '/portfolio-process.lock', 'c');
+    if (!$lock || !flock($lock, LOCK_EX | LOCK_NB)) {
+        return ['busy' => true, 'processed' => 0, 'remaining' => 0, 'failed' => 0, 'needsPoster' => []];
+    }
+    @set_time_limit(max(60, $sliceSeconds * 4));
+    $start = microtime(true);
+    $galleries = [];
+    foreach (portfolioTree(true)['categories'] as $cat) {
+        foreach ($cat['galleries'] as $gal) {
+            $gal['catFolder'] = $cat['folder'];
+            if ($gal['id'] === $galleryId) array_unshift($galleries, $gal);
+            else $galleries[] = $gal;
+        }
+    }
+    $processed = 0;
+    $remaining = 0;
+    $failed = 0;
+    $needsPoster = [];
+    foreach ($galleries as $gal) {
+        foreach ($gal['sidecar']['items'] as $name => $it) {
+            $name = (string)$name;
+            $t = portfolioItemTasks($gal['dir'], $name, $it);
+            if ($t['work']) {
+                if (microtime(true) - $start >= $sliceSeconds) {
+                    $remaining++;
+                    continue;
+                }
+                $patch = portfolioProcessItem($gal['dir'], $name, $it);
+                $g = portfolioPatchItem($gal['dir'], $name, $patch);
+                $processed++;
+                if (isset($patch['error'])) $failed++;
+                $it = $g['items'][$name] ?? $it;
+                $t = portfolioItemTasks($gal['dir'], $name, $it);
+            }
+            if ($t['capture']) {
+                $needsPoster[] = [
+                    'galleryId' => $gal['id'],
+                    'file' => $name,
+                    'src' => portfolioMediaUrl($gal['catFolder'], $gal['folder'], $name),
+                ];
+            }
+        }
+    }
+    flock($lock, LOCK_UN);
+    fclose($lock);
+    return ['busy' => false, 'processed' => $processed, 'remaining' => $remaining, 'failed' => $failed, 'needsPoster' => $needsPoster];
+}
+
+// --- Payloads ---
+
+function portfolioMediaUrl($catFolder, $galFolder, $file) {
+    return '/media/' . rawurlencode($catFolder) . '/' . rawurlencode($galFolder) . '/' . rawurlencode($file);
+}
+
+function portfolioCategoryUrl($cat) { return '/portfolio/' . $cat['slug']; }
+function portfolioGalleryUrl($cat, $gal) { return '/portfolio/' . $cat['slug'] . '/' . $gal['slug']; }
+function portfolioTitle($node) {
+    $t = trim((string)($node['sidecar']['title'] ?? ''));
+    return $t !== '' ? $t : $node['folder'];
+}
+
+// Public visibility of one item: hidden items never show, and a photo waits
+// for its thumbnail. Videos show without a poster (the page draws a placeholder)
+// so a folder of fresh videos isn't invisible until someone opens the admin.
+function portfolioItemIsPublic(array $it) {
+    if (($it['visible'] ?? true) === false) return false;
+    if (($it['type'] ?? '') === 'photo') return !empty($it['thumb']) && is_file(THUMBS_DIR . "/{$it['id']}.jpg");
+    return true;
+}
+
+function portfolioItemPayload($cat, $gal, $name, array $it) {
+    $id = $it['id'];
+    $thumb = !empty($it['thumb']) && is_file(THUMBS_DIR . "/$id.jpg") ? "/thumbnails/$id.jpg?v={$it['thumb']}" : null;
+    $proxy = null;
+    $proxyV = $it['type'] === 'photo' ? ($it['proxy'] ?? 0) : ($it['thumb'] ?? 0);
+    if ($proxyV && is_file(PROXY_DIR . "/{$id}_proxy.jpg")) $proxy = "/proxies/{$id}_proxy.jpg?v=$proxyV";
+    $p = [
+        'id' => $id,
+        'type' => $it['type'],
+        'title' => $it['title'] ?? '',
+        'description' => $it['description'] ?? '',
+        'src' => portfolioMediaUrl($cat['folder'], $gal['folder'], $name),
+        'thumb' => $thumb,
+        'width' => (int)($it['width'] ?? 0),
+        'height' => (int)($it['height'] ?? 0),
+    ];
+    if ($it['type'] === 'photo') {
+        $p['proxy'] = $proxy;
+    } else {
+        $p['poster'] = $proxy ?: $thumb;
+        $p['duration'] = (float)($it['duration'] ?? 0);
+        $labels = is_array($it['captionLabels'] ?? null) ? $it['captionLabels'] : [];
+        $p['captions'] = [];
+        foreach (($it['captions'] ?? []) as $lang => $file) {
+            $p['captions'][] = [
+                'lang' => $lang,
+                'label' => $labels[$lang] ?? captionLangLabel($lang),
+                'src' => portfolioMediaUrl($cat['folder'], $gal['folder'], $file),
+            ];
+        }
+    }
+    return $p;
+}
+
+// Items in display order, headers included. Public payloads leave out hidden
+// and unprocessed items, and any header left with nothing under it.
+function portfolioGalleryItems($cat, $gal, $admin = false) {
+    $g = $gal['sidecar'];
+    $out = [];
+    foreach ($g['order'] as $key) {
+        $key = (string)$key;
+        if (isset($g['headers'][$key])) {
+            $out[] = ['type' => 'header', 'id' => $key, 'text' => (string)($g['headers'][$key]['text'] ?? '')];
+            continue;
+        }
+        $it = $g['items'][$key] ?? null;
+        if (!$it) continue;
+        if (!$admin && !portfolioItemIsPublic($it)) continue;
+        $p = portfolioItemPayload($cat, $gal, $key, $it);
+        if ($admin) {
+            $t = portfolioItemTasks($gal['dir'], $key, $it);
+            $p['file'] = $key;
+            $p['visible'] = ($it['visible'] ?? true) !== false;
+            $p['processing'] = $t['work'];
+            $p['needsPoster'] = $t['capture'];
+            $p['failed'] = !empty($it['error']);
+        }
+        $out[] = $p;
+    }
+    if ($admin) return $out;
+    $clean = [];
+    foreach ($out as $i => $p) {
+        $next = $out[$i + 1] ?? null;
+        if ($p['type'] === 'header' && (!$next || $next['type'] === 'header')) continue;
+        $clean[] = $p;
+    }
+    return $clean;
+}
+
+function portfolioGalleryCover($cat, $gal) {
+    $g = $gal['sidecar'];
+    $candidates = $g['cover'] !== null ? array_merge([$g['cover']], $g['order']) : $g['order'];
+    foreach ($candidates as $key) {
+        $it = $g['items'][(string)$key] ?? null;
+        if ($it && portfolioItemIsPublic($it) && !empty($it['thumb']) && is_file(THUMBS_DIR . "/{$it['id']}.jpg")) {
+            return "/thumbnails/{$it['id']}.jpg?v={$it['thumb']}";
+        }
+    }
+    return null;
+}
+
+function portfolioPublicItemCount($gal) {
+    $n = 0;
+    foreach ($gal['sidecar']['items'] as $it) {
+        if (portfolioItemIsPublic($it)) $n++;
+    }
+    return $n;
+}
+
+// A gallery is listed publicly when it and its category are visible and it
+// has at least one item a visitor can see.
+function portfolioGalleryIsPublic($cat, $gal) {
+    return ($cat['sidecar']['visible'] ?? true) !== false
+        && ($gal['sidecar']['visible'] ?? true) !== false
+        && portfolioPublicItemCount($gal) > 0;
+}
+
+function portfolioGallerySummary($cat, $gal) {
+    return [
+        'id' => $gal['id'],
+        'slug' => $gal['slug'],
+        'title' => portfolioTitle($gal),
+        'url' => portfolioGalleryUrl($cat, $gal),
+        'cover' => portfolioGalleryCover($cat, $gal),
+        'count' => portfolioPublicItemCount($gal),
+    ];
+}
+
+function portfolioCategoryPayload($cat) {
+    $galleries = [];
+    foreach ($cat['galleries'] as $gal) {
+        if (portfolioGalleryIsPublic($cat, $gal)) $galleries[] = portfolioGallerySummary($cat, $gal);
+    }
+    return [
+        'id' => $cat['id'],
+        'slug' => $cat['slug'],
+        'title' => portfolioTitle($cat),
+        'description' => (string)($cat['sidecar']['description'] ?? ''),
+        'url' => portfolioCategoryUrl($cat),
+        'galleries' => $galleries,
+    ];
+}
+
+function portfolioGalleryPayload($cat, $gal) {
+    $g = $gal['sidecar'];
+    return [
+        'id' => $gal['id'],
+        'slug' => $gal['slug'],
+        'title' => portfolioTitle($gal),
+        'description' => (string)($g['description'] ?? ''),
+        'layout' => $g['layout'],
+        'url' => portfolioGalleryUrl($cat, $gal),
+        'category' => ['slug' => $cat['slug'], 'title' => portfolioTitle($cat), 'url' => portfolioCategoryUrl($cat)],
+        'items' => portfolioGalleryItems($cat, $gal),
+    ];
+}
+
+// Public categories, each with its public galleries; empty ones are left out.
+function portfolioPublicCategories() {
+    $out = [];
+    foreach (portfolioTree()['categories'] as $cat) {
+        if (($cat['sidecar']['visible'] ?? true) === false) continue;
+        $p = portfolioCategoryPayload($cat);
+        if ($p['galleries']) $out[] = $p;
+    }
+    return $out;
+}
+
+// The homepage gallery: the one chosen in settings if it's public, otherwise
+// the first public gallery, so a fresh install shows something.
+function portfolioFeatured() {
+    $id = readSettings()['portfolioFeaturedId'] ?? null;
+    if ($id && ($found = portfolioFindGallery($id)) && portfolioGalleryIsPublic(...$found)) return $found;
+    foreach (portfolioTree()['categories'] as $cat) {
+        foreach ($cat['galleries'] as $gal) {
+            if (portfolioGalleryIsPublic($cat, $gal)) return [$cat, $gal];
+        }
+    }
+    return null;
+}
+
+// --- Public routes ---
+
+if ($method === 'GET' && $uri === '/api/portfolio') {
+    respond(['categories' => portfolioPublicCategories()]);
+}
+
+if ($method === 'GET' && $uri === '/api/portfolio/featured') {
+    $found = portfolioFeatured();
+    respond(['gallery' => $found ? portfolioGalleryPayload(...$found) : null]);
+}
+
+if ($method === 'GET' && matchRoute('/api/portfolio/c/{cat}', $uri, $params)) {
+    $cat = portfolioFindCategoryBySlug($params['cat']);
+    if (!$cat || ($cat['sidecar']['visible'] ?? true) === false) respondError('Not found', 404);
+    respond(['category' => portfolioCategoryPayload($cat)]);
+}
+
+if ($method === 'GET' && matchRoute('/api/portfolio/g/{cat}/{gal}', $uri, $params)) {
+    $found = portfolioFindBySlug($params['cat'], $params['gal']);
+    if (!$found || !portfolioGalleryIsPublic(...$found)) respondError('Not found', 404);
+    respond(['gallery' => portfolioGalleryPayload(...$found)]);
+}
+
+// --- Admin routes ---
+
+// The whole tree as the admin sees it: hidden and empty folders included, with
+// scan warnings, files still arriving, and per-gallery processing counts.
+if ($method === 'GET' && $uri === '/api/admin/portfolio') {
+    requireAuth();
+    $tree = portfolioTree();
+    $categories = [];
+    foreach ($tree['categories'] as $cat) {
+        $galleries = [];
+        foreach ($cat['galleries'] as $gal) {
+            $g = $gal['sidecar'];
+            $work = 0;
+            $capture = 0;
+            $failed = 0;
+            foreach ($g['items'] as $name => $it) {
+                $t = portfolioItemTasks($gal['dir'], (string)$name, $it);
+                if ($t['work']) $work++;
+                if ($t['capture']) $capture++;
+                if (!empty($it['error'])) $failed++;
+            }
+            $galleries[] = [
+                'id' => $gal['id'],
+                'slug' => $gal['slug'],
+                'folder' => $gal['folder'],
+                'title' => portfolioTitle($gal),
+                'visible' => ($g['visible'] ?? true) !== false,
+                'layout' => $g['layout'],
+                'url' => portfolioGalleryUrl($cat, $gal),
+                'cover' => portfolioGalleryCover($cat, $gal),
+                'itemCount' => count($g['items']),
+                'publicCount' => portfolioPublicItemCount($gal),
+                'processing' => $work,
+                'needsPoster' => $capture,
+                'failed' => $failed,
+                'pending' => $gal['pending'],
+                'warnings' => $gal['warnings'],
+            ];
+        }
+        $categories[] = [
+            'id' => $cat['id'],
+            'slug' => $cat['slug'],
+            'folder' => $cat['folder'],
+            'title' => portfolioTitle($cat),
+            'visible' => ($cat['sidecar']['visible'] ?? true) !== false,
+            'url' => portfolioCategoryUrl($cat),
+            'galleries' => $galleries,
+            'warnings' => $cat['warnings'],
+        ];
+    }
+    respond([
+        'categories' => $categories,
+        'warnings' => $tree['warnings'],
+        'featuredId' => readSettings()['portfolioFeaturedId'] ?? null,
+    ]);
+}
+
+if ($method === 'GET' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri, $params)) {
+    requireAuth();
+    $found = portfolioFindGallery($params['gid']);
+    if (!$found) respondError('Gallery not found', 404);
+    [$cat, $gal] = $found;
+    $p = portfolioGalleryPayload($cat, $gal);
+    $p['items'] = portfolioGalleryItems($cat, $gal, true);
+    $p['folder'] = $gal['folder'];
+    $p['visible'] = ($gal['sidecar']['visible'] ?? true) !== false;
+    $p['cover'] = $gal['sidecar']['cover'];
+    $p['pending'] = $gal['pending'];
+    $p['warnings'] = $gal['warnings'];
+    respond(['gallery' => $p]);
+}
+
+// One slice of derivative work; the admin calls it again while `remaining` > 0.
+if ($method === 'POST' && $uri === '/api/admin/portfolio/process') {
+    requireAuth();
+    $input = getInput();
+    respond(portfolioProcess($input['galleryId'] ?? null, PORTFOLIO_PROCESS_SLICE_SECONDS));
 }
 
 // ============================================================

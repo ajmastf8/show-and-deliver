@@ -380,3 +380,111 @@
   .pf-with-nav-left, .pf-with-nav-right { grid-template-columns: 1fr; }
   .pf-catnav { position: static; flex-direction: row; flex-wrap: wrap; gap: 14px; }
 }
+
+/* --- Home cover --- */
+
+/* Full-bleed: the page has side padding, so pull back out to the window edge. */
+.pf-hero {
+  position: relative;
+  margin: -40px calc(50% - 50vw) 40px;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.pf-hero-full { height: 100vh; }
+.pf-hero-large { height: 68vh; }
+
+.pf-hero img,
+.pf-hero video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.pf-hero-words {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 0 24px 9vh;
+  text-align: center;
+  color: #fff;
+  text-shadow: 0 2px 26px rgba(0, 0, 0, 0.55);
+}
+
+.pf-hero-title {
+  margin: 0;
+  font-size: clamp(30px, 6vw, 68px);
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.pf-hero-sub {
+  margin: 10px 0 0;
+  font-size: clamp(14px, 1.6vw, 19px);
+  letter-spacing: 1px;
+}
+
+/* --- Plain pages (about, contact) --- */
+
+.pf-page-with-image {
+  display: grid;
+  grid-template-columns: minmax(240px, 380px) 1fr;
+  gap: 46px;
+  align-items: start;
+}
+
+.pf-page-image { margin: 0; }
+.pf-page-image img { width: 100%; border-radius: var(--radius-card); display: block; }
+
+.pf-page-text { max-width: 68ch; color: var(--color-body-text); line-height: 1.75; }
+.pf-page-text p { margin: 0 0 1.1em; white-space: pre-wrap; }
+.pf-page-text a { color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px; }
+
+.pf-contact-form { display: flex; flex-direction: column; gap: 14px; max-width: 520px; margin-top: 26px; }
+
+.pf-contact-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  color: var(--color-gray-text);
+}
+
+.pf-contact-form input,
+.pf-contact-form textarea {
+  padding: 11px 13px;
+  border: 1px solid var(--color-gray-mid);
+  border-radius: 4px;
+  background: var(--color-white);
+  color: var(--color-black);
+  font-family: var(--font-family);
+  font-size: 15px;
+}
+
+.pf-contact-form input:focus,
+.pf-contact-form textarea:focus { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+
+.pf-contact-form button {
+  align-self: flex-start;
+  padding: 12px 28px;
+  border: 0;
+  border-radius: 4px;
+  background: var(--color-primary);
+  color: var(--color-on-accent);
+  font-family: var(--font-family);
+  font-size: 14px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.pf-contact-form button:disabled { opacity: 0.6; cursor: default; }
+.pf-form-status { margin: 0; font-size: 14px; color: var(--color-body-text); }
+
+/* The honeypot: off-screen for people, irresistible to bots. */
+.pf-hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+
+@media (max-width: 760px) {
+  .pf-page-with-image { grid-template-columns: 1fr; gap: 26px; }
+}

@@ -1672,3 +1672,24 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 .pfa-seg button:last-child { border-right: 0; }
 .pfa-seg button:hover { color: var(--text-2); }
 .pfa-seg button.active { background: var(--accent-dim); color: var(--accent); }
+
+/* Pages panel */
+.pfa-page-list { max-width: 720px; }
+
+.pfa-page-row {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 13px 4px;
+  border-bottom: 1px solid var(--border-row);
+  cursor: pointer;
+}
+
+.pfa-page-row:hover { background: var(--hover); }
+.pfa-page-title { color: var(--text); font-size: 14px; }
+.pfa-page-meta { color: var(--text-5); font-size: 12px; }
+.pfa-page-body { width: 100%; max-width: 780px; font-family: var(--font); line-height: 1.6; }
+
+/* Home cover row */
+.pfa-hero-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.pfa-hero-row .setting-input { min-width: 210px; }

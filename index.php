@@ -28,6 +28,10 @@ define('HEADER_CONFIG_PATH', DATA_DIR . '/header.json');
 // Up here with the other paths: the portfolio index routes read it long before
 // the theme section of this file is reached.
 define('THEME_CONFIG_PATH', DATA_DIR . '/theme.json');
+// Plain pages (about, contact), and the reserved portfolio folder their
+// pictures live in so /media/ serves them with no new rewrite rules.
+define('PAGES_PATH', DATA_DIR . '/pages.json');
+define('PORTFOLIO_PAGES_FOLDER', '_pages');
 define('CRC_CACHE_PATH', DATA_DIR . '/crc.json');
 
 // Folder-backed portfolio: <Category>/<Gallery>/<files>, with dot-named JSON
@@ -4586,7 +4590,8 @@ function portfolioTree($refresh = false) {
     static $tree = null;
     if ($tree !== null && !$refresh) return $tree;
     [$names, $warnings] = portfolioListDirs(PORTFOLIO_DIR, 'the portfolio folder');
-    $names = array_values(array_filter($names, fn($n) => $n !== PORTFOLIO_HOME_FOLDER));
+    $reserved = [PORTFOLIO_HOME_FOLDER, PORTFOLIO_PAGES_FOLDER];
+    $names = array_values(array_filter($names, fn($n) => !in_array($n, $reserved, true)));
     $root = jsonRead(PORTFOLIO_DIR . '/.portfolio.json');
     $savedOrder = is_array($root['order'] ?? null) ? $root['order'] : [];
     $byId = [];
@@ -5035,6 +5040,26 @@ function portfolioCategoryPayload($cat) {
     ];
 }
 
+// The home page's opening screen, resolved to something the page can render.
+// The picture is one of the home gallery's own entries, so it is managed like
+// any other item rather than being a second kind of upload.
+function portfolioHeroPayload($gal) {
+    $hero = $gal['sidecar']['hero'] ?? null;
+    if (!is_array($hero) || empty($hero['file'])) return null;
+    $r = portfolioResolveKey($gal, (string)$hero['file']);
+    if (!$r || !in_array($r['kind'], ['item', 'ref'], true)) return null;
+    $p = portfolioItemPayload($r['gal'], $r['file'], $r['item']);
+    return [
+        'type' => $p['type'],
+        'src' => $p['type'] === 'video' ? $p['src'] : ($p['proxy'] ?: $p['src']),
+        'poster' => $p['poster'] ?? $p['thumb'],
+        'title' => (string)($hero['title'] ?? ''),
+        'subtitle' => (string)($hero['subtitle'] ?? ''),
+        'height' => ($hero['height'] ?? 'full') === 'large' ? 'large' : 'full',
+        'file' => (string)$hero['file'],
+    ];
+}
+
 function portfolioGalleryPayload($cat, $gal) {
     $g = $gal['sidecar'];
     return [
@@ -5046,6 +5071,7 @@ function portfolioGalleryPayload($cat, $gal) {
         'options' => portfolioNormalizeOptions($g['options'] ?? []),
         'url' => portfolioGalleryUrl($cat, $gal),
         'category' => ['slug' => $cat['slug'], 'title' => portfolioTitle($cat), 'url' => portfolioCategoryUrl($cat)],
+        'hero' => portfolioHeroPayload($gal),
         'items' => portfolioGalleryItems($cat, $gal),
     ];
 }
@@ -5480,6 +5506,15 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
         }
         if (array_key_exists('visible', $input)) $g['visible'] = (bool)$input['visible'];
         if (!empty($input['layout']) && in_array($input['layout'], PORTFOLIO_LAYOUTS, true)) $g['layout'] = $input['layout'];
+        if (array_key_exists('hero', $input)) {
+            $h = is_array($input['hero']) ? $input['hero'] : [];
+            $g['hero'] = empty($h['file']) ? null : [
+                'file' => (string)$h['file'],
+                'title' => mb_substr((string)($h['title'] ?? ''), 0, 160),
+                'subtitle' => mb_substr((string)($h['subtitle'] ?? ''), 0, 200),
+                'height' => ($h['height'] ?? 'full') === 'large' ? 'large' : 'full',
+            ];
+        }
         if (isset($input['options']) && is_array($input['options'])) {
             $g['options'] = portfolioNormalizeOptions(array_merge($g['options'] ?? [], $input['options']));
         }
@@ -5770,6 +5805,174 @@ if ($method === 'POST' && $uri === '/api/admin/portfolio/process') {
     requireAuth();
     $input = getInput();
     respond(portfolioProcess($input['galleryId'] ?? null, PORTFOLIO_PROCESS_SLICE_SECONDS));
+}
+
+// ============================================================
+// PAGES (about, contact, and anything else that isn't a gallery)
+// ============================================================
+//
+// Plain pages kept in site-data/data/pages.json: a title, some text, an
+// optional picture, and a type. A "contact" page also renders a form that
+// emails the address in Settings > Email. Pictures live in the reserved
+// portfolio folder _pages, so they are served by the same /media/ rules as
+// everything else and need no new .htaccess.
+
+function readPages() { return jsonRead(PAGES_PATH) ?: []; }
+function writePages($pages) { jsonWrite(PAGES_PATH, array_values($pages)); }
+
+function pagePayload($p, $admin = false) {
+    $out = [
+        'id' => $p['id'],
+        'slug' => $p['slug'],
+        'title' => $p['title'],
+        'type' => $p['type'] ?? 'text',
+        'body' => $p['body'] ?? '',
+        'image' => $p['image'] ?? null,
+        'url' => '/p/' . rawurlencode($p['slug']),
+    ];
+    if ($admin) $out['visible'] = ($p['visible'] ?? true) !== false;
+    return $out;
+}
+
+function findPage($needle, $byId = false) {
+    foreach (readPages() as $p) {
+        if ($byId ? $p['id'] === $needle : $p['slug'] === $needle) return $p;
+    }
+    return null;
+}
+
+// Unique across pages, and never a slug the router already uses.
+function pageUniqueSlug($title, $exceptId = null) {
+    $taken = ['admin', 'gallery', 'collection', 'portfolio', 'media', 'api', 'p', 'd'];
+    foreach (readPages() as $p) {
+        if ($p['id'] !== $exceptId) $taken[] = $p['slug'];
+    }
+    return portfolioUniqueSlug(portfolioSlugify($title), $taken, 'page');
+}
+
+// --- Public ---
+
+if ($method === 'GET' && $uri === '/api/pages') {
+    $out = [];
+    foreach (readPages() as $p) {
+        if (($p['visible'] ?? true) !== false) $out[] = ['slug' => $p['slug'], 'title' => $p['title'], 'url' => '/p/' . rawurlencode($p['slug'])];
+    }
+    respond(['pages' => $out]);
+}
+
+if ($method === 'GET' && matchRoute('/api/pages/{slug}', $uri, $params)) {
+    $p = findPage(rawurldecode($params['slug']));
+    if (!$p || ($p['visible'] ?? true) === false) respondError('Not found', 404);
+    respond(['page' => pagePayload($p)]);
+}
+
+// The contact form. Rate limited per address, with a honeypot field browsers
+// leave empty and bots fill in.
+if ($method === 'POST' && $uri === '/api/contact') {
+    $input = getInput();
+    if (!empty($input['website'])) respond(['ok' => true]);   // bot: accept and drop
+    rateLimitCheck('contact:' . ($_SERVER['REMOTE_ADDR'] ?? ''), 5, 3600);
+
+    $name = trim(mb_substr((string)($input['name'] ?? ''), 0, 120));
+    $from = trim(mb_substr((string)($input['email'] ?? ''), 0, 200));
+    $message = trim(mb_substr((string)($input['message'] ?? ''), 0, 5000));
+    if ($name === '' || $message === '') respondError('Please fill in your name and a message', 400);
+    if (!filter_var($from, FILTER_VALIDATE_EMAIL)) respondError('Please enter a valid email address', 400);
+
+    $config = getEmailConfig();
+    $to = $config['adminEmail'] ?: $config['from'];
+    if (!$to) respondError('This site has no contact address configured yet', 503);
+
+    $subject = emailSubject('Message from the website', $name);
+    $text = "From: $name <$from>\n\n$message";
+    $html = emailShell([
+        'title' => 'New message from your site',
+        'lead' => escHtml($name) . ' &lt;' . escHtml($from) . '&gt;',
+        'body' => '<p style="white-space:pre-wrap">' . escHtml($message) . '</p>',
+    ]);
+    $sent = sendEmail($to, $subject, $text, $html);
+    if (!$sent) respondError('Could not send the message. Please email directly instead.', 502);
+    respond(['ok' => true]);
+}
+
+// --- Admin ---
+
+if ($method === 'GET' && $uri === '/api/admin/pages') {
+    requireAuth();
+    respond(['pages' => array_map(fn($p) => pagePayload($p, true), readPages())]);
+}
+
+if ($method === 'POST' && $uri === '/api/admin/pages') {
+    requireAuth();
+    $input = getInput();
+    $title = trim(mb_substr((string)($input['title'] ?? ''), 0, 120));
+    if ($title === '') respondError('Give the page a title', 400);
+    $page = [
+        'id' => generateId('pp_'),
+        'slug' => pageUniqueSlug($title),
+        'title' => $title,
+        'type' => ($input['type'] ?? '') === 'contact' ? 'contact' : 'text',
+        'body' => '',
+        'image' => null,
+        'visible' => true,
+        'updatedAt' => date('c'),
+    ];
+    $pages = readPages();
+    $pages[] = $page;
+    writePages($pages);
+    respond(['ok' => true, 'page' => pagePayload($page, true)]);
+}
+
+if ($method === 'PUT' && matchRoute('/api/admin/pages/{id}', $uri, $params)) {
+    requireAuth();
+    $input = getInput();
+    $pages = readPages();
+    $found = null;
+    foreach ($pages as &$p) {
+        if ($p['id'] !== $params['id']) continue;
+        if (isset($input['title']) && trim($input['title']) !== '') $p['title'] = mb_substr(trim($input['title']), 0, 120);
+        if (isset($input['body'])) $p['body'] = mb_substr((string)$input['body'], 0, 20000);
+        if (array_key_exists('image', $input)) $p['image'] = $input['image'] ?: null;
+        if (array_key_exists('visible', $input)) $p['visible'] = (bool)$input['visible'];
+        if (!empty($input['slug'])) $p['slug'] = pageUniqueSlug((string)$input['slug'], $p['id']);
+        if (isset($input['type'])) $p['type'] = $input['type'] === 'contact' ? 'contact' : 'text';
+        $p['updatedAt'] = date('c');
+        $found = $p;
+        break;
+    }
+    unset($p);
+    if (!$found) respondError('Page not found', 404);
+    writePages($pages);
+    respond(['ok' => true, 'page' => pagePayload($found, true)]);
+}
+
+if ($method === 'DELETE' && matchRoute('/api/admin/pages/{id}', $uri, $params)) {
+    requireAuth();
+    $pages = array_values(array_filter(readPages(), fn($p) => $p['id'] !== $params['id']));
+    writePages($pages);
+    respond(['ok' => true]);
+}
+
+// A page's picture goes into the reserved _pages folder, so /media/ serves it
+// like any other portfolio file.
+if ($method === 'POST' && matchRoute('/api/admin/pages/{id}/image', $uri, $params)) {
+    requireAuth();
+    if (empty($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) respondError('No file uploaded', 400);
+    if (!isImageFile($_FILES['file']['name'])) respondError('Pick an image file', 400);
+    $dir = PORTFOLIO_DIR . '/' . PORTFOLIO_PAGES_FOLDER;
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) respondError('Could not create the folder', 500);
+    $name = portfolioUniqueChildName($dir, portfolioSafeFileName($_FILES['file']['name']));
+    if (!move_uploaded_file($_FILES['file']['tmp_name'], "$dir/$name")) respondError('Could not save the image', 500);
+    @chmod("$dir/$name", 0644);
+    $url = portfolioMediaUrl(PORTFOLIO_PAGES_FOLDER, $name);
+
+    $pages = readPages();
+    foreach ($pages as &$p) {
+        if ($p['id'] === $params['id']) { $p['image'] = $url; $p['updatedAt'] = date('c'); }
+    }
+    unset($p);
+    writePages($pages);
+    respond(['ok' => true, 'image' => $url]);
 }
 
 // ============================================================

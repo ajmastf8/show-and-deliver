@@ -17,6 +17,9 @@
     galleryId: null,    // open gallery editor
     gallery: null,      // its payload
     design: false,      // the Site design panel
+    pagesView: false,   // the Pages panel
+    pages: [],
+    pageId: null,
     header: null,       // header.json, while that panel is open
     theme: null,
     loading: false,
@@ -190,7 +193,8 @@
 
   function render() {
     renderRail();
-    if (state.design) renderDesign();
+    if (state.pagesView) renderPages();
+    else if (state.design) renderDesign();
     else if (state.galleryId && state.gallery) renderGalleryEditor();
     else renderBrowse();
   }
@@ -215,6 +219,9 @@
         <span class="rail-name">${home ? 'Home page' : '+ Set up home page'}</span>
         ${home ? `<span class="rail-count">${home.publicCount}</span>` : ''}
       </div>
+      <div class="rail-row ${state.pagesView ? 'active' : ''}" id="pfa-pages-row">
+        <span class="rail-name">Pages</span>
+      </div>
       <div class="rail-row ${state.design ? 'active' : ''}" id="pfa-design-row">
         <span class="rail-name">Site design</span>
       </div>
@@ -238,12 +245,14 @@
         state.galleryId = null;
         state.gallery = null;
         state.design = false;
+        state.pagesView = false;
         render();
       });
     });
     $('pfa-new-cat').addEventListener('click', newCategory);
     $('pfa-home-row').addEventListener('click', openHome);
     $('pfa-design-row').addEventListener('click', openDesign);
+    $('pfa-pages-row').addEventListener('click', openPages);
 
     // Drag to reorder categories; the order is what the public nav follows.
     const list = $('pfa-cat-list');
@@ -357,6 +366,7 @@
   async function openGallery(gid) {
     try {
       state.design = false;
+      state.pagesView = false;
       await loadGallery(gid);
       state.categoryId = state.gallery.categoryId;
       render();
@@ -411,6 +421,23 @@
               <input class="setting-input" id="pfa-slug" value="${esc(g.slug)}">
             </label>
             <label class="pfa-check"><input type="checkbox" id="pfa-visible" ${g.visible ? 'checked' : ''}> Visible on the site</label>`}
+          ${isHome ? `
+            <div class="pfa-field wide">
+              <span>Opening cover</span>
+              <div class="pfa-hero-row">
+                <select class="setting-input" id="pfa-hero-file">
+                  <option value="">No cover — start with the gallery</option>
+                  ${g.items.filter(i => i.type === 'photo' || i.type === 'video').map(i =>
+                    `<option value="${esc(i.file)}" ${(g.hero || {}).file === i.file ? 'selected' : ''}>${esc(i.title || (i.source ? i.source.file : i.file))}</option>`).join('')}
+                </select>
+                <input class="setting-input" id="pfa-hero-title" placeholder="Your name" value="${esc((g.hero || {}).title || '')}">
+                <input class="setting-input" id="pfa-hero-sub" placeholder="What you do, where" value="${esc((g.hero || {}).subtitle || '')}">
+                <div class="pfa-seg">
+                  ${[['full', 'Full screen'], ['large', 'Tall band']].map(([v, l]) =>
+                    `<button type="button" class="${((g.hero || {}).height || 'full') === v ? 'active' : ''}" data-hero-height="${v}">${l}</button>`).join('')}
+                </div>
+              </div>
+            </div>` : ''}
           ${optionControls(g.options || {})}
           ${['slideshow', 'fullscreen'].includes(g.layout) ? `
             <label class="pfa-check"><input type="checkbox" id="pfa-autoplay" ${(g.options || {}).autoplay ? 'checked' : ''}> Play automatically</label>
@@ -510,6 +537,18 @@
     $('pfa-centre').querySelectorAll('[data-opt]').forEach(btn => {
       btn.addEventListener('click', () => put({ options: { [btn.dataset.opt]: btn.dataset.val } }));
     });
+    const hero = () => ({
+      file: $('pfa-hero-file').value,
+      title: $('pfa-hero-title').value,
+      subtitle: $('pfa-hero-sub').value,
+      height: $('pfa-centre').querySelector('[data-hero-height].active')?.dataset.heroHeight || 'full',
+    });
+    if ($('pfa-hero-file')) {
+      ['pfa-hero-file', 'pfa-hero-title', 'pfa-hero-sub'].forEach(id =>
+        $(id).addEventListener('change', () => put({ hero: hero() })));
+      $('pfa-centre').querySelectorAll('[data-hero-height]').forEach(b =>
+        b.addEventListener('click', () => put({ hero: { ...hero(), height: b.dataset.heroHeight } })));
+    }
     const autoplay = $('pfa-autoplay');
     if (autoplay) autoplay.addEventListener('change', e => put({ options: { autoplay: e.target.checked } }));
     const interval = $('pfa-interval');
@@ -688,6 +727,7 @@
 
   async function openDesign() {
     state.design = true;
+    state.pagesView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -902,6 +942,135 @@
       S().setScreen('settings');
       const tab = document.querySelector('[data-settings-tab="header"]');
       if (tab) tab.click();
+    });
+  }
+
+  // ---------- Pages ----------
+
+  async function openPages() {
+    state.pagesView = true;
+    state.design = false;
+    state.galleryId = null;
+    state.gallery = null;
+    try {
+      state.pages = (await req('/api/admin/pages')).pages;
+      render();
+    } catch (err) {
+      S().toast(err.message || 'Could not load the pages');
+    }
+  }
+
+  function renderPages() {
+    const page = state.pages.find(p => p.id === state.pageId) || null;
+    $('pfa-centre').innerHTML = `
+      <div class="centre-header">
+        <div>
+          <h1>${page ? esc(page.title) : 'Pages'}</h1>
+          <p class="centre-sub">${page
+            ? `<a href="${esc(page.url)}" target="_blank" rel="noopener">${esc(page.url)}</a>${page.type === 'contact' ? ' · contact form' : ''}`
+            : 'About, contact and anything else that isn\'t a gallery'}</p>
+        </div>
+        <div class="centre-controls">
+          ${page ? '<button class="ctrl" id="pfa-page-back">&larr; All pages</button>' : ''}
+          ${page ? '<button class="ctrl" id="pfa-page-delete">Delete</button>' : ''}
+          ${page ? '' : '<button class="ctrl" id="pfa-new-contact">New contact page</button>'}
+          ${page ? '' : '<button class="btn-primary small" id="pfa-new-page">New page</button>'}
+        </div>
+      </div>
+      <div class="pfa-scroll">
+        ${page ? pageEditor(page) : (state.pages.length ? `
+          <div class="pfa-page-list">
+            ${state.pages.map(p => `
+              <div class="pfa-page-row" data-page="${esc(p.id)}">
+                <span class="pfa-page-title">${esc(p.title)}</span>
+                <span class="pfa-page-meta">${esc(p.url)}${p.type === 'contact' ? ' · form' : ''}${p.visible ? '' : ' · hidden'}</span>
+              </div>`).join('')}
+          </div>`
+          : `<div class="pfa-empty"><p>No pages yet.</p>
+               <p class="pfa-hint">An About page and a Contact page with a form are the usual pair.
+               Add them to the menu in Settings &rarr; Header once they exist.</p></div>`)}
+      </div>`;
+
+    if (!page) {
+      $('pfa-new-page').addEventListener('click', () => newPage('text'));
+      $('pfa-new-contact').addEventListener('click', () => newPage('contact'));
+      $('pfa-centre').querySelectorAll('[data-page]').forEach(row =>
+        row.addEventListener('click', () => { state.pageId = row.dataset.page; render(); }));
+      return;
+    }
+    wirePageEditor(page);
+  }
+
+  function pageEditor(page) {
+    return `
+      <div class="pfa-settings">
+        <label class="pfa-field"><span>Title</span><input class="setting-input" id="pfa-page-title" value="${esc(page.title)}"></label>
+        <label class="pfa-field"><span>Web address</span><input class="setting-input" id="pfa-page-slug" value="${esc(page.slug)}"></label>
+        <label class="pfa-check"><input type="checkbox" id="pfa-page-visible" ${page.visible ? 'checked' : ''}> Visible on the site</label>
+        <div class="pfa-field">
+          <span>Picture</span>
+          <div class="pfa-logo-row">
+            ${page.image ? `<img src="${esc(page.image)}" alt="" class="pfa-logo-preview">` : '<span class="pfa-hint">None</span>'}
+            <button class="ctrl" id="pfa-page-image-btn">${page.image ? 'Replace' : 'Add'}</button>
+            ${page.image ? '<button class="ctrl" id="pfa-page-image-remove">Remove</button>' : ''}
+            <input type="file" id="pfa-page-image-file" accept="image/*" hidden>
+          </div>
+        </div>
+      </div>
+      <label class="pfa-field wide">
+        <span>Text — blank lines start a new paragraph, and links are detected</span>
+        <textarea class="setting-input pfa-page-body" id="pfa-page-body" rows="16" maxlength="20000">${esc(page.body)}</textarea>
+      </label>
+      ${page.type === 'contact' ? '<p class="pfa-hint">The form appears under this text and emails the address in Settings &rarr; Email.</p>' : ''}`;
+  }
+
+  function wirePageEditor(page) {
+    const save = (patch) => act(async () => {
+      await send('/api/admin/pages/' + encodeURIComponent(page.id), 'PUT', patch);
+      state.pages = (await req('/api/admin/pages')).pages;
+      state.pagesView = true;
+    });
+    $('pfa-page-back').addEventListener('click', () => { state.pageId = null; render(); });
+    $('pfa-page-title').addEventListener('change', e => save({ title: e.target.value }));
+    $('pfa-page-slug').addEventListener('change', e => save({ slug: e.target.value }));
+    $('pfa-page-visible').addEventListener('change', e => save({ visible: e.target.checked }));
+    $('pfa-page-body').addEventListener('change', e => save({ body: e.target.value }));
+    const file = $('pfa-page-image-file');
+    $('pfa-page-image-btn').addEventListener('click', () => file.click());
+    file.addEventListener('change', () => {
+      if (!file.files.length) return;
+      const fd = new FormData();
+      fd.append('file', file.files[0]);
+      act(async () => {
+        await req(`/api/admin/pages/${encodeURIComponent(page.id)}/image`, { method: 'POST', body: fd });
+        state.pages = (await req('/api/admin/pages')).pages;
+        state.pagesView = true;
+      });
+    });
+    const rm = $('pfa-page-image-remove');
+    if (rm) rm.addEventListener('click', () => save({ image: '' }));
+    $('pfa-page-delete').addEventListener('click', async () => {
+      const ok = await S().confirm({ title: 'Delete this page?', message: `"${page.title}" and its text are removed.`, okText: 'Delete', danger: true });
+      if (!ok) return;
+      await act(() => req('/api/admin/pages/' + encodeURIComponent(page.id), { method: 'DELETE' }));
+      state.pageId = null;
+      state.pages = (await req('/api/admin/pages')).pages;
+      state.pagesView = true;
+      render();
+    });
+  }
+
+  async function newPage(type) {
+    const title = await S().prompt({
+      title: type === 'contact' ? 'New contact page' : 'New page', okText: 'Create',
+      field: { label: 'Page title', type: 'text', value: type === 'contact' ? 'Contact' : '' },
+    });
+    if (!title || !title.trim()) return;
+    await act(async () => {
+      const r = await send('/api/admin/pages', 'POST', { title, type });
+      state.pages = (await req('/api/admin/pages')).pages;
+      state.pageId = r.page.id;
+      state.pagesView = true;
     });
   }
 

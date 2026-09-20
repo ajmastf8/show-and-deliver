@@ -109,7 +109,37 @@ function sections(items) {
   return out.filter(s => s.items.length);
 }
 
+// The home page's opening screen: a full-bleed picture or a muted looping
+// video, with the site's name over it and the gallery below the fold.
+function renderHero(hero) {
+  const section = el('section', 'pf-hero pf-hero-' + hero.height);
+  if (hero.type === 'video') {
+    const v = document.createElement('video');
+    v.src = hero.src;
+    v.muted = true;
+    v.loop = true;
+    v.autoplay = true;
+    v.playsInline = true;
+    if (hero.poster) v.poster = hero.poster;
+    v.play().catch(() => {});
+    section.appendChild(v);
+  } else {
+    const img = el('img');
+    img.src = hero.src;
+    img.alt = '';
+    section.appendChild(img);
+  }
+  if (hero.title || hero.subtitle) {
+    const words = el('div', 'pf-hero-words');
+    if (hero.title) words.appendChild(el('h1', 'pf-hero-title', hero.title));
+    if (hero.subtitle) words.appendChild(el('p', 'pf-hero-sub', hero.subtitle));
+    section.appendChild(words);
+  }
+  return section;
+}
+
 function renderGallery(gallery, opts = {}) {
+  if (opts.home && gallery.hero) root.appendChild(renderHero(gallery.hero));
   // The home page is a gallery too, but it reads as a landing page: no
   // breadcrumb, no title above the pictures.
   if (!opts.home) {

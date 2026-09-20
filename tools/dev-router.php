@@ -98,6 +98,7 @@ $pages = [
     '#^collection/.+$#' => 'public/collection.html',
     '#^d/.+$#' => 'public/download.html',
     '#^portfolio(/.*)?$#' => 'public/portfolio.html',
+    '#^p/.+$#' => 'public/page.html',
 ];
 foreach ($pages as $re => $target) {
     if (preg_match($re, $rel)) return devServe("$root/$target");

@@ -7,6 +7,7 @@ RewriteRule ^gallery/.+$ public/proofing.html [L]
 RewriteRule ^collection/.+$ public/collection.html [L]
 RewriteRule ^d/.+$ public/download.html [L]
 RewriteRule ^portfolio(/.*)?$ public/portfolio.html [L]
+RewriteRule ^p/.+$ public/page.html [L]
 
 # Anything that exists on disk is served directly, so the rules below deny what
 # must never leave the server. They sit before the /uploads/ etc. rewrites so a

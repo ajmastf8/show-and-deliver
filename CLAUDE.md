@@ -133,7 +133,16 @@ site-data/             # Runtime data (gitignored)
   one file on disk and one thumbnail, so edits to the original show everywhere,
   while each pick keeps its own position, visibility and optional title and
   caption. A pick whose file is gone is flagged in the admin and skipped
-  publicly. Video size and duration come from the MP4 header in pure PHP
+  publicly.
+- **Pages** (`site-data/data/pages.json`, rendered by `page.js` at `/p/<slug>`)
+  cover what isn't a gallery: an About page, and a Contact page whose form posts
+  to `/api/contact` and emails the address in Settings > Email, guarded by a
+  honeypot field and a per-IP rate limit. Page pictures live in the reserved
+  portfolio folder `_pages/`, so `/media/` serves them with no new rewrite rules
+  — like `_home/`, it is skipped by the category scan.
+- **The home cover** is the home gallery's `hero`: one of its own entries shown
+  full-bleed (a video plays muted and looping) with a title and subtitle over
+  it, and the gallery below the fold. Video size and duration come from the MP4 header in pure PHP
   (`mp4VideoDimensions()`, `mp4DurationSeconds()`). The portfolio folders only
   serve media and `.vtt` — `.htaccess` refuses everything else there, since
   anything can arrive over FTP. Being replaced by this: `reels` galleries.

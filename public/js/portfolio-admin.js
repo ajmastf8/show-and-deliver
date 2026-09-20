@@ -454,6 +454,7 @@
                   ${[['full', 'Full screen'], ['large', 'Tall band']].map(([v, l]) =>
                     `<button type="button" class="${((g.hero || {}).height || 'full') === v ? 'active' : ''}" data-hero-height="${v}">${l}</button>`).join('')}
                 </div>
+                <label class="pfa-check"><input type="checkbox" id="pfa-hero-only" ${(g.hero || {}).only ? 'checked' : ''}> Cover only — nothing below it</label>
               </div>
             </div>` : ''}
           ${optionControls(g.options || {})}
@@ -555,17 +556,14 @@
     $('pfa-centre').querySelectorAll('[data-opt]').forEach(btn => {
       btn.addEventListener('click', () => put({ options: { [btn.dataset.opt]: btn.dataset.val } }));
     });
-    const hero = () => ({
-      file: $('pfa-hero-file').value,
-      title: $('pfa-hero-title').value,
-      subtitle: $('pfa-hero-sub').value,
-      height: $('pfa-centre').querySelector('[data-hero-height].active')?.dataset.heroHeight || 'full',
-    });
+    // Each control sends only its own field; the server merges.
     if ($('pfa-hero-file')) {
-      ['pfa-hero-file', 'pfa-hero-title', 'pfa-hero-sub'].forEach(id =>
-        $(id).addEventListener('change', () => put({ hero: hero() })));
+      $('pfa-hero-file').addEventListener('change', e => put({ hero: { file: e.target.value } }));
+      $('pfa-hero-title').addEventListener('change', e => put({ hero: { title: e.target.value } }));
+      $('pfa-hero-sub').addEventListener('change', e => put({ hero: { subtitle: e.target.value } }));
+      $('pfa-hero-only').addEventListener('change', e => put({ hero: { only: e.target.checked } }));
       $('pfa-centre').querySelectorAll('[data-hero-height]').forEach(b =>
-        b.addEventListener('click', () => put({ hero: { ...hero(), height: b.dataset.heroHeight } })));
+        b.addEventListener('click', () => put({ hero: { height: b.dataset.heroHeight } })));
     }
     const autoplay = $('pfa-autoplay');
     if (autoplay) autoplay.addEventListener('change', e => put({ options: { autoplay: e.target.checked } }));

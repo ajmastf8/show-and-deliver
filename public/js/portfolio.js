@@ -112,7 +112,17 @@ function sections(items) {
 // The home page's opening screen: a full-bleed picture or a muted looping
 // video, with the site's name over it and the gallery below the fold.
 function renderHero(hero) {
-  const section = el('section', 'pf-hero pf-hero-' + hero.height);
+  const section = el('section', 'pf-hero pf-hero-' + hero.height + (hero.only ? ' pf-hero-alone' : ''));
+  // A full-height cover should fill what's left under the header, not overflow
+  // it. The sidebar arrangement runs down the side, so it takes nothing off.
+  const measure = () => {
+    const header = document.querySelector('.site-header');
+    const sidebar = document.documentElement.dataset.header === 'sidebar';
+    const h = !header || sidebar ? 0 : Math.round(header.getBoundingClientRect().height);
+    document.documentElement.style.setProperty('--pf-header-h', h + 'px');
+  };
+  measure();
+  window.addEventListener('resize', measure);
   if (hero.type === 'video') {
     const v = document.createElement('video');
     v.src = hero.src;
@@ -139,7 +149,12 @@ function renderHero(hero) {
 }
 
 function renderGallery(gallery, opts = {}) {
-  if (opts.home && gallery.hero) root.appendChild(renderHero(gallery.hero));
+  if (opts.home && gallery.hero) {
+    root.appendChild(renderHero(gallery.hero));
+    // The cover is the whole page; the pictures under it are only there to
+    // give the cover something to point at.
+    if (gallery.hero.only) return;
+  }
   // The home page is a gallery too, but it reads as a landing page: no
   // breadcrumb, no title above the pictures.
   if (!opts.home) {

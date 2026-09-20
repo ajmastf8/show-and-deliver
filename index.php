@@ -5085,6 +5085,9 @@ function portfolioHeroPayload($gal) {
         'title' => (string)($hero['title'] ?? ''),
         'subtitle' => (string)($hero['subtitle'] ?? ''),
         'height' => ($hero['height'] ?? 'full') === 'large' ? 'large' : 'full',
+        // Cover on its own: the picture is the whole home page, with no
+        // gallery under it.
+        'only' => !empty($hero['only']),
         'file' => (string)$hero['file'],
     ];
 }
@@ -5573,14 +5576,22 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
         // Password protection with no password would just be unlisted.
         if ($g['access'] === 'password' && empty($g['passwordHash'])) $g['access'] = 'unlisted';
         if (!empty($input['layout']) && in_array($input['layout'], PORTFOLIO_LAYOUTS, true)) $g['layout'] = $input['layout'];
+        // Merged, not replaced: the editor sends the field you changed, so a
+        // tab left open with older values can't quietly undo the rest.
         if (array_key_exists('hero', $input)) {
             $h = is_array($input['hero']) ? $input['hero'] : [];
-            $g['hero'] = empty($h['file']) ? null : [
-                'file' => (string)$h['file'],
-                'title' => mb_substr((string)($h['title'] ?? ''), 0, 160),
-                'subtitle' => mb_substr((string)($h['subtitle'] ?? ''), 0, 200),
-                'height' => ($h['height'] ?? 'full') === 'large' ? 'large' : 'full',
-            ];
+            $current = is_array($g['hero'] ?? null) ? $g['hero'] : [];
+            if (array_key_exists('file', $h) && (string)$h['file'] === '') {
+                $g['hero'] = null;
+            } else {
+                $next = array_merge(['file' => '', 'title' => '', 'subtitle' => '', 'height' => 'full', 'only' => false], $current);
+                if (isset($h['file'])) $next['file'] = (string)$h['file'];
+                if (isset($h['title'])) $next['title'] = mb_substr((string)$h['title'], 0, 160);
+                if (isset($h['subtitle'])) $next['subtitle'] = mb_substr((string)$h['subtitle'], 0, 200);
+                if (isset($h['height'])) $next['height'] = $h['height'] === 'large' ? 'large' : 'full';
+                if (array_key_exists('only', $h)) $next['only'] = !empty($h['only']);
+                $g['hero'] = $next['file'] === '' ? null : $next;
+            }
         }
         if (isset($input['options']) && is_array($input['options'])) {
             $g['options'] = portfolioNormalizeOptions(array_merge($g['options'] ?? [], $input['options']));

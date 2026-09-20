@@ -150,7 +150,13 @@ site-data/             # Runtime data (gitignored)
   exactly as `/uploads/` does for client galleries.
 - **The home cover** is the home gallery's `hero`: one of its own entries shown
   full-bleed (a video plays muted and looping) with a title and subtitle over
-  it, and the gallery below the fold. Video size and duration come from the MP4 header in pure PHP
+  it, and the gallery below the fold — or, with `only` set, the cover alone with
+  nothing under it and nothing to scroll to. A full-height cover fills what is
+  left under the header (`--pf-header-h`, measured in `portfolio.js`), so it is
+  exactly one screen. The hero saves **merge**, field by field, so an editor
+  left open with older values can't undo the rest. For large pictures without a
+  cover, the home gallery can simply use the `fullscreen` or `slideshow`
+  layout. Video size and duration come from the MP4 header in pure PHP
   (`mp4VideoDimensions()`, `mp4DurationSeconds()`). The portfolio folders only
   serve media and `.vtt` — `.htaccess` refuses everything else there, since
   anything can arrive over FTP. Being replaced by this: `reels` galleries.

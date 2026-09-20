@@ -391,8 +391,11 @@
   overflow: hidden;
 }
 
-.pf-hero-full { height: 100vh; }
+.pf-hero-full { height: calc(100vh - var(--pf-header-h, 0px)); }
 .pf-hero-large { height: 68vh; }
+
+/* Cover on its own: one screen, nothing under it, nothing to scroll to. */
+.pf-hero-alone { margin-bottom: -40px; }
 
 .pf-hero img,
 .pf-hero video {

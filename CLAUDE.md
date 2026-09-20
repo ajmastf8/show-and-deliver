@@ -151,7 +151,11 @@ site-data/             # Runtime data (gitignored)
   tab's Site design.
 - **Site design** (`site-data/data/theme.json`, returned inside `/api/header`)
   holds a colour preset (light/dark/warm), one accent, the header arrangement
-  (bar/stacked/sidebar) and the contact line. `theme.js` loads in `<head>` on
+  (bar/stacked/sidebar), the contact line, and how gallery listings are
+  presented (`index`: layout grid/fullwidth/columns/fullscreen, a category
+  filter bar, and an optional category sidebar). The index settings ride along
+  with `GET /api/portfolio` and the category route so those pages still make
+  one request. `theme.js` loads in `<head>` on
   every public page and paints the saved palette before the first frame by
   setting the `--color-*` custom properties inline on `<html>`, so the whole
   site — portfolio, proofing, collection and download — follows one theme.

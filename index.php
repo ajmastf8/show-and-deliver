@@ -21,6 +21,13 @@ define('IMPORT_DIR', SITE_DATA . '/imports');
 // name for subject lines, and uploads hash into the CRC cache — both happen well
 // before the sections those constants would otherwise live in.
 define('HEADER_CONFIG_PATH', DATA_DIR . '/header.json');
+// How the public pages look: a colour preset with one accent, how the header is
+// arranged, the contact line, and how gallery listings are presented. Kept
+// apart from header.json so saving the header's links and logo can't wipe it,
+// and returned with the header config so every page still makes one request.
+// Up here with the other paths: the portfolio index routes read it long before
+// the theme section of this file is reached.
+define('THEME_CONFIG_PATH', DATA_DIR . '/theme.json');
 define('CRC_CACHE_PATH', DATA_DIR . '/crc.json');
 
 // Folder-backed portfolio: <Category>/<Gallery>/<files>, with dot-named JSON
@@ -5064,7 +5071,7 @@ function portfolioHome() {
 // --- Public routes ---
 
 if ($method === 'GET' && $uri === '/api/portfolio') {
-    respond(['categories' => portfolioPublicCategories()]);
+    respond(['categories' => portfolioPublicCategories(), 'index' => readThemeConfig()['index']]);
 }
 
 // The home page. Null means nothing has been put there yet, and the page falls
@@ -5077,7 +5084,12 @@ if ($method === 'GET' && $uri === '/api/portfolio/home') {
 if ($method === 'GET' && matchRoute('/api/portfolio/c/{cat}', $uri, $params)) {
     $cat = portfolioFindCategoryBySlug($params['cat']);
     if (!$cat || ($cat['sidecar']['visible'] ?? true) === false) respondError('Not found', 404);
-    respond(['category' => portfolioCategoryPayload($cat)]);
+    respond([
+        'category' => portfolioCategoryPayload($cat),
+        'index' => readThemeConfig()['index'],
+        // The sidebar and filter bar need every category, not just this one.
+        'categories' => array_map(fn($c) => ['slug' => $c['slug'], 'title' => $c['title'], 'url' => $c['url']], portfolioPublicCategories()),
+    ]);
 }
 
 if ($method === 'GET' && matchRoute('/api/portfolio/g/{cat}/{gal}', $uri, $params)) {
@@ -5841,12 +5853,6 @@ function expandPortfolioNav(array $config) {
     return $config;
 }
 
-// How the public pages look: a colour preset with one accent, how the header is
-// arranged, and the contact line. Kept apart from header.json so saving the
-// header's links and logo can't wipe it, and returned with the header config so
-// every page still makes one request.
-define('THEME_CONFIG_PATH', DATA_DIR . '/theme.json');
-
 function readThemeConfig() {
     $t = jsonRead(THEME_CONFIG_PATH) ?: [];
     return [
@@ -5856,6 +5862,13 @@ function readThemeConfig() {
         'contact' => [
             'show' => ($t['contact']['show'] ?? true) !== false,
             'text' => mb_substr((string)($t['contact']['text'] ?? ''), 0, 200),
+        ],
+        // How the list of galleries is presented, on /portfolio and on a
+        // category page.
+        'index' => [
+            'layout' => in_array($t['index']['layout'] ?? '', ['grid', 'fullwidth', 'columns', 'fullscreen'], true) ? $t['index']['layout'] : 'grid',
+            'filters' => !empty($t['index']['filters']),
+            'sidebar' => in_array($t['index']['sidebar'] ?? '', ['off', 'left', 'right'], true) ? $t['index']['sidebar'] : 'off',
         ],
     ];
 }
@@ -5879,6 +5892,7 @@ if ($method === 'PUT' && $uri === '/api/settings/theme') {
             'show' => array_key_exists('contact', $input) ? (($input['contact']['show'] ?? true) !== false) : $current['contact']['show'],
             'text' => array_key_exists('contact', $input) ? (string)($input['contact']['text'] ?? '') : $current['contact']['text'],
         ],
+        'index' => array_key_exists('index', $input) ? array_merge($current['index'], (array)$input['index']) : $current['index'],
     ];
     jsonWrite(THEME_CONFIG_PATH, $next);
     respond(['ok' => true, 'theme' => readThemeConfig()]);

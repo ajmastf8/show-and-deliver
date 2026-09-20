@@ -47,12 +47,53 @@ function coverCard(href, cover, title, subtitle) {
   return a;
 }
 
-function renderGalleryCards(container, galleries) {
-  const grid = el('div', 'pf-card-grid');
+// How gallery covers are listed: an even grid, full-width bands, one big
+// column, or one cover per screen. The shape is CSS; this only tags it.
+function renderGalleryCards(container, galleries, index = {}) {
+  const layout = ['grid', 'fullwidth', 'columns', 'fullscreen'].includes(index.layout) ? index.layout : 'grid';
+  const grid = el('div', 'pf-card-grid pf-index-' + layout);
   galleries.forEach(g => {
-    grid.appendChild(coverCard(g.url, g.cover, g.title, g.count === 1 ? '1 item' : `${g.count} items`));
+    const card = coverCard(g.url, g.cover, g.title, g.count === 1 ? '1 item' : `${g.count} items`);
+    if (g.categorySlug) card.dataset.category = g.categorySlug;
+    grid.appendChild(card);
   });
   container.appendChild(grid);
+  return grid;
+}
+
+// A category list beside the covers, as an alternative to the top menu.
+function renderSidebar(categories, active, side) {
+  const nav = el('nav', 'pf-catnav pf-catnav-' + side);
+  const all = el('a', 'pf-catnav-link' + (active ? '' : ' active'), 'All work');
+  all.href = '/portfolio';
+  nav.appendChild(all);
+  categories.forEach(c => {
+    const a = el('a', 'pf-catnav-link' + (c.slug === active ? ' active' : ''), c.title);
+    a.href = c.url;
+    nav.appendChild(a);
+  });
+  return nav;
+}
+
+// Category buttons that filter the covers in place, for sites that would
+// rather show everything on one page than make people navigate.
+function renderFilters(grid, categories) {
+  const bar = el('div', 'pf-filters');
+  const make = (label, slug) => {
+    const b = el('button', 'pf-filter' + (slug === null ? ' active' : ''), label);
+    b.type = 'button';
+    b.addEventListener('click', () => {
+      bar.querySelectorAll('.pf-filter').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      grid.querySelectorAll('.pf-card').forEach(card => {
+        card.hidden = slug !== null && card.dataset.category !== slug;
+      });
+    });
+    return b;
+  };
+  bar.appendChild(make('All', null));
+  categories.forEach(c => bar.appendChild(make(c.title, c.slug)));
+  return bar;
 }
 
 // --- Gallery ---
@@ -211,6 +252,19 @@ function createLightbox(media) {
   return lightbox;
 }
 
+// Wraps the page in a sidebar layout when one is switched on, and returns the
+// element the page content goes into.
+function withSidebar(categories, activeSlug, index) {
+  const side = index.sidebar;
+  if (side !== 'left' && side !== 'right') return root;
+  const wrap = el('div', 'pf-with-nav pf-with-nav-' + side);
+  const body = el('div', 'pf-with-nav-body');
+  const nav = renderSidebar(categories, activeSlug, side);
+  wrap.append(side === 'left' ? nav : body, side === 'left' ? body : nav);
+  root.appendChild(wrap);
+  return body;
+}
+
 // --- Routing ---
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -239,27 +293,36 @@ document.addEventListener('DOMContentLoaded', async () => {
       const { gallery } = await load(`/api/portfolio/g/${encodeURIComponent(parts[0])}/${encodeURIComponent(parts[1])}`);
       renderGallery(gallery);
     } else if (parts.length === 1) {
-      const { category } = await load(`/api/portfolio/c/${encodeURIComponent(parts[0])}`);
+      const { category, index, categories } = await load(`/api/portfolio/c/${encodeURIComponent(parts[0])}`);
       document.title = category.title;
+      const body = withSidebar(categories || [], category.slug, index || {});
       const head = el('header', 'pf-head');
       head.appendChild(el('h1', 'pf-title', category.title));
       if (category.description) head.appendChild(el('p', 'pf-description', category.description));
-      root.appendChild(head);
-      renderGalleryCards(root, category.galleries);
+      body.appendChild(head);
+      renderGalleryCards(body, category.galleries, index);
     } else {
-      const { categories } = await load('/api/portfolio');
+      const { categories, index = {} } = await load('/api/portfolio');
       if (!categories.length) {
         root.appendChild(el('div', 'empty-state', 'Nothing here yet.'));
         return;
       }
-      categories.forEach(c => {
-        const h = el('h2', 'pf-section');
-        const a = el('a', null, c.title);
-        a.href = c.url;
-        h.appendChild(a);
-        root.appendChild(h);
-        renderGalleryCards(root, c.galleries);
-      });
+      const body = withSidebar(categories, null, index);
+      if (index.filters) {
+        // One page, every gallery, filtered in place.
+        const all = categories.flatMap(c => c.galleries.map(g => ({ ...g, categorySlug: c.slug })));
+        const grid = renderGalleryCards(body, all, index);
+        body.insertBefore(renderFilters(grid, categories), grid);
+      } else {
+        categories.forEach(c => {
+          const h = el('h2', 'pf-section');
+          const a = el('a', null, c.title);
+          a.href = c.url;
+          h.appendChild(a);
+          body.appendChild(h);
+          renderGalleryCards(body, c.galleries, index);
+        });
+      }
     }
   } catch (err) {
     root.replaceChildren(el('div', 'empty-state', 'Not found.'));

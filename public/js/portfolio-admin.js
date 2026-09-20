@@ -679,6 +679,13 @@
     ['sidebar', 'Sidebar', '<rect x="1" y="2" width="12" height="6"/><rect x="1" y="11" width="9" height="3"/><rect x="1" y="16" width="9" height="3"/><rect x="1" y="21" width="9" height="3"/><rect x="17" y="2" width="26" height="22" opacity="0.35"/>'],
   ];
 
+  const INDEX_LAYOUTS = [
+    ['grid', 'Grid', '<rect x="1" y="2" width="13" height="10"/><rect x="16" y="2" width="13" height="10"/><rect x="31" y="2" width="12" height="10"/><rect x="1" y="14" width="13" height="10"/><rect x="16" y="14" width="13" height="10"/><rect x="31" y="14" width="12" height="10"/>'],
+    ['fullwidth', 'Full width', '<rect x="1" y="2" width="42" height="9"/><rect x="1" y="13" width="42" height="9"/>'],
+    ['columns', 'One column', '<rect x="9" y="2" width="26" height="9"/><rect x="9" y="13" width="26" height="9"/>'],
+    ['fullscreen', 'One per screen', '<rect x="1" y="2" width="42" height="22"/>'],
+  ];
+
   async function openDesign() {
     state.design = true;
     state.galleryId = null;
@@ -747,6 +754,26 @@
         </section>
 
         <section>
+          <h4>Gallery listings</h4>
+          <p class="pfa-hint">How covers are listed on /portfolio and on a category page.</p>
+          <div class="pfa-layouts">
+            ${INDEX_LAYOUTS.map(([v, label, shape]) => `
+              <button type="button" class="pfa-layout-opt ${(t.index || {}).layout === v ? 'active' : ''}" data-index-layout="${v}" title="${label}">
+                <svg viewBox="0 0 44 26" aria-hidden="true">${shape}</svg>
+                <span>${label}</span>
+              </button>`).join('')}
+          </div>
+          <label class="pfa-check"><input type="checkbox" id="pfa-index-filters" ${(t.index || {}).filters ? 'checked' : ''}> Show every gallery on one page, with category filter buttons</label>
+          <div class="pfa-field">
+            <span>Category sidebar</span>
+            <div class="pfa-seg">
+              ${[['off', 'Off'], ['left', 'Left'], ['right', 'Right']].map(([v, l]) =>
+                `<button type="button" class="${((t.index || {}).sidebar || 'off') === v ? 'active' : ''}" data-index-sidebar="${v}">${l}</button>`).join('')}
+            </div>
+          </div>
+        </section>
+
+        <section>
           <h4>Wordmark or logo</h4>
           <div class="pfa-brand">
             <label class="pfa-field">
@@ -805,6 +832,12 @@
       b.addEventListener('click', () => saveTheme({ preset: b.dataset.preset })));
     $('pfa-centre').querySelectorAll('[data-header-layout]').forEach(b =>
       b.addEventListener('click', () => saveTheme({ headerLayout: b.dataset.headerLayout })));
+    const index = (patch) => saveTheme({ index: { ...(state.theme.index || {}), ...patch } });
+    $('pfa-centre').querySelectorAll('[data-index-layout]').forEach(b =>
+      b.addEventListener('click', () => index({ layout: b.dataset.indexLayout })));
+    $('pfa-centre').querySelectorAll('[data-index-sidebar]').forEach(b =>
+      b.addEventListener('click', () => index({ sidebar: b.dataset.indexSidebar })));
+    $('pfa-index-filters').addEventListener('change', e => index({ filters: e.target.checked }));
     $('pfa-accent').addEventListener('change', e => saveTheme({ accent: e.target.value }));
     $('pfa-accent-hex').addEventListener('change', e => {
       const v = e.target.value.trim();

@@ -5012,6 +5012,18 @@ if ($method === 'GET' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
     respond(['gallery' => $p]);
 }
 
+// The gallery shown on the homepage.
+if ($method === 'PUT' && $uri === '/api/settings/portfolio') {
+    requireAuth();
+    $input = getInput();
+    $id = $input['featuredId'] ?? null;
+    if ($id !== null && $id !== '' && !portfolioFindGallery($id)) respondError('Gallery not found', 404);
+    $settings = readSettings();
+    $settings['portfolioFeaturedId'] = ($id === '' ? null : $id);
+    writeSettings($settings);
+    respond(['ok' => true, 'featuredId' => $settings['portfolioFeaturedId']]);
+}
+
 // One slice of derivative work; the admin calls it again while `remaining` > 0.
 if ($method === 'POST' && $uri === '/api/admin/portfolio/process') {
     requireAuth();
@@ -5047,9 +5059,42 @@ function readHeaderConfig() {
     ];
 }
 
+// Expands a {type:'portfolio'} nav entry into the current categories, so the
+// menu follows the folders instead of being re-typed in Settings whenever one
+// is added. 'dropdown' nests them under one label; 'inline' lists them flat.
+function expandPortfolioNav(array $config) {
+    $nav = $config['nav'] ?? [];
+    if (!is_array($nav)) return $config;
+    $expanded = [];
+    foreach ($nav as $entry) {
+        if (($entry['type'] ?? '') !== 'portfolio') {
+            $expanded[] = $entry;
+            continue;
+        }
+        $children = [];
+        foreach (portfolioPublicCategories() as $cat) {
+            $children[] = ['label' => $cat['title'], 'url' => $cat['url']];
+        }
+        if (!$children) continue;
+        if (($entry['mode'] ?? 'dropdown') === 'inline') {
+            foreach ($children as $c) {
+                $expanded[] = ['type' => 'link', 'label' => $c['label'], 'url' => $c['url'], 'external' => false];
+            }
+        } else {
+            $expanded[] = [
+                'type' => 'dropdown',
+                'label' => $entry['label'] ?? 'Portfolio',
+                'children' => $children,
+            ];
+        }
+    }
+    $config['nav'] = $expanded;
+    return $config;
+}
+
 // GET header config (public — used by all pages)
 if ($method === 'GET' && $uri === '/api/header') {
-    respond(readHeaderConfig());
+    respond(expandPortfolioNav(readHeaderConfig()));
 }
 
 // PUT header config (admin)

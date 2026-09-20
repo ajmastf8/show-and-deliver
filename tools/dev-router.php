@@ -66,12 +66,18 @@ function devServe($file) {
     }
     header('Content-Length: ' . ($end - $start + 1));
     if ($_SERVER['REQUEST_METHOD'] === 'HEAD') return true;
+    // Flush every chunk. Without this the built-in server holds a large
+    // response until the script ends, so a browser's <video> sits at
+    // readyState 0 for the whole download and never shows a first frame.
+    @set_time_limit(0);
+    while (ob_get_level() > 0) ob_end_flush();
     $fh = fopen($file, 'rb');
     fseek($fh, $start);
     $left = $end - $start + 1;
     while ($left > 0 && !feof($fh)) {
         $chunk = fread($fh, min(1 << 20, $left));
         echo $chunk;
+        flush();
         $left -= strlen($chunk);
     }
     fclose($fh);

@@ -23,14 +23,17 @@ public/
   collection.html      # Collection landing page (groups of galleries)
   download.html        # Client delivery download page (/d/{token})
   portfolio.html       # Folder-backed portfolio pages (/portfolio/...)
-  css/                 # Stylesheets (style.css, proofing.css, collection.css, download.css)
+  css/                 # Stylesheets (style.css, proofing.css, collection.css, download.css, portfolio.css)
+  vendor/              # Vendored MIT libraries, no build step (PhotoSwipe 5)
   js/
     admin.js           # Admin UI logic
     public.js          # Public portfolio page logic
     proofing.js        # Client proofing page logic
     collection.js      # Collection page logic
     download.js        # Delivery download page logic
-    portfolio.js       # Portfolio page logic
+    portfolio.js       # Portfolio page logic (routing, tiles, PhotoSwipe)
+    layouts.js         # Gallery layouts: justified, masonry, grid, slideshow
+    media-stage.js     # Shared video player (controls strip, caption overlay, caption box)
     header.js          # Dynamic header rendering from /api/header config
 tools/
   dev-router.php       # php -S router replaying .htaccess (local only; denied on the web)
@@ -101,7 +104,12 @@ site-data/             # Runtime data (gitignored)
   cron), and a photo stays out of public payloads until it has a thumbnail.
   Files younger than `PORTFOLIO_SETTLE_SECONDS` are treated as still uploading.
   `<video>.poster.jpg` and `<video>.<lang>.vtt` beside a video are its poster
-  and captions. Video size and duration come from the MP4 header in pure PHP
+  and captions. Each gallery picks one of four layouts (`justified`, `masonry`,
+  `grid`, `slideshow`) rendered by `layouts.js`; photos open in PhotoSwipe and
+  videos in the shared `media-stage.js` player, which `public.js` uses too, so
+  the caption overlay and caption box behave the same everywhere. A
+  `{type:'portfolio'}` header nav entry is expanded server-side into the current
+  categories, so the menu follows the folders. Video size and duration come from the MP4 header in pure PHP
   (`mp4VideoDimensions()`, `mp4DurationSeconds()`). The portfolio folders only
   serve media and `.vtt` — `.htaccess` refuses everything else there, since
   anything can arrive over FTP. Being replaced by this: `reels` galleries.

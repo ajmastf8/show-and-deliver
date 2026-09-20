@@ -450,7 +450,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderRail() {
     const rail = $('rail');
     const all = state.galleries.filter(g => g.active !== false);
-    const portfolio = all.filter(g => g.type === 'reels');
     const client = all.filter(g => g.type === 'proofing');
     const ungrouped = client.filter(g => !g.collectionId).length;
     const archived = state.galleries.filter(g => g.active === false).length;
@@ -480,10 +479,6 @@ document.addEventListener('DOMContentLoaded', () => {
     html += collectionRows('proofing');
     html += `<div class="rail-row compact new-collection" data-new-collection="proofing">+ New collection</div>`;
 
-    html += `<div class="rail-section-label">Portfolio</div>`;
-    html += railRow('portfolio', 'All portfolio', portfolio.length);
-    html += collectionRows('reels');
-    html += `<div class="rail-row compact new-collection" data-new-collection="reels">+ New portfolio collection</div>`;
     rail.innerHTML = html;
 
     wireFavButtons(rail);

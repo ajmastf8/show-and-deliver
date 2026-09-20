@@ -31,6 +31,8 @@ define('THEME_CONFIG_PATH', DATA_DIR . '/theme.json');
 // Plain pages (about, contact), and the reserved portfolio folder their
 // pictures live in so /media/ serves them with no new rewrite rules.
 define('PAGES_PATH', DATA_DIR . '/pages.json');
+// Progress of the reels-to-folders migration, so a timeout resumes.
+define('MIGRATION_PATH', DATA_DIR . '/portfolio-migration.json');
 define('PORTFOLIO_PAGES_FOLDER', '_pages');
 define('CRC_CACHE_PATH', DATA_DIR . '/crc.json');
 
@@ -1197,23 +1199,10 @@ function migrateIfNeeded() {
     $galleriesPath = DATA_DIR . '/galleries.json';
     if (file_exists($galleriesPath)) return;
 
-    $reelsId = generateId('g_');
-    $gallery = [
-        'id' => $reelsId,
-        'name' => 'Video Reels',
-        'type' => 'reels',
-        'token' => null,
-        'password' => null,
-        'downloadsEnabled' => false,
-        'commentingEnabled' => false,
-        'expiresAt' => null,
-        'active' => true,
-        'createdAt' => date('c'),
-    ];
-    ensureGalleryDir($reelsId);
-    writeGalleryVideos($reelsId, []);
-    writeGalleryComments($reelsId, []);
-    writeGalleries([$gallery]);
+    // Nothing to create any more: the portfolio lives in folders (made during
+    // bootstrap) and client galleries are made when someone makes one. This
+    // used to seed a "Video Reels" gallery, which is now migrated away.
+    writeGalleries([]);
 }
 migrateIfNeeded();
 
@@ -1489,10 +1478,6 @@ if ($method === 'DELETE' && matchRoute('/api/galleries/{id}', $uri, $params)) {
         if ($g['id'] === $params['id']) { $gallery = $g; $idx = $i; break; }
     }
     if ($idx === null) respondError('Not found', 404);
-
-    if ($gallery['type'] === 'reels' && count(array_filter($galleries, fn($g) => $g['type'] === 'reels')) <= 1) {
-        respondError('Cannot delete the only reels gallery', 400);
-    }
 
     $dir = galleryDir($gallery['id']);
     if (is_dir($dir)) {
@@ -2315,6 +2300,12 @@ function markCollectionUnlocked($collectionId) {
 function getProofingGallery($token) {
     $gallery = findGalleryByToken($token);
     if (!$gallery) respondError('Not found', 404);
+    // A reels gallery that moved into the portfolio: send the visitor on
+    // rather than showing them a dead link.
+    if (!empty($gallery['migratedTo'])) {
+        $url = migrationState()['tokens'][$token] ?? null;
+        if ($url) respond(['redirect' => $url]);
+    }
     $gallery = resolveEffectiveSettings($gallery);
     if (($gallery['active'] ?? true) === false) respondError('Not found', 404);
     if (!empty($gallery['expiresAt']) && strtotime($gallery['expiresAt']) < time()) {
@@ -2598,7 +2589,9 @@ if ($method === 'POST' && $uri === '/api/collections') {
     requireAuth();
     $input = getInput();
     $collections = readCollections();
-    $type = ($input['type'] ?? 'proofing') === 'reels' ? 'reels' : 'proofing';
+    // Portfolio collections were the old grouping; categories replaced them.
+    if (($input['type'] ?? '') === 'reels') respondError('Portfolio collections are now categories in the Portfolio tab', 400);
+    $type = 'proofing';
     // Portfolio collections are public by definition: no password, no expiry,
     // no client commenting. Downloads stay a per-collection choice.
     $isPortfolio = $type === 'reels';
@@ -2854,6 +2847,15 @@ function crcCacheStore(string $storedName, int $crc, int $size): void {
 
 // Cached CRC32, hashing the file if this is the first time we've seen it.
 // Pass $compute = false to ask "is it warm yet?" without paying for the pass.
+// Drops a cached checksum for a file that is no longer in uploads/, so the
+// entry can't be matched against some later file of the same name and size.
+function crcCacheForget(string $storedName): void {
+    jsonUpdate(CRC_CACHE_PATH, function ($cache) use ($storedName) {
+        unset($cache[$storedName]);
+        return $cache;
+    });
+}
+
 function fileCrc32(string $path, bool $compute = true): ?int {
     $storedName = basename($path);
     $size = (int)@filesize($path);
@@ -6051,6 +6053,285 @@ if ($method === 'POST' && matchRoute('/api/admin/pages/{id}/image', $uri, $param
     unset($p);
     writePages($pages);
     respond(['ok' => true, 'image' => $url]);
+}
+
+// ============================================================
+// MIGRATION: reels galleries -> portfolio folders
+// ============================================================
+//
+// Reels galleries were the portfolio before folders existed. This moves each
+// one into site-data/portfolio/<Category>/<Gallery>/ and leaves the old record
+// behind, archived, so nothing is destroyed and old links keep working.
+//
+// It runs one gallery per request from the admin, recording progress in
+// DATA_DIR/portfolio-migration.json so a timeout resumes instead of starting
+// over, and it never runs on its own: moving a photographer's masters should be
+// something someone chose to do.
+
+function migrationState() {
+    $s = jsonRead(MIGRATION_PATH) ?: [];
+    return [
+        'done' => is_array($s['done'] ?? null) ? $s['done'] : [],
+        'map' => is_array($s['map'] ?? null) ? $s['map'] : [],
+        'tokens' => is_array($s['tokens'] ?? null) ? $s['tokens'] : [],
+        'startedAt' => $s['startedAt'] ?? null,
+        'finishedAt' => $s['finishedAt'] ?? null,
+        'backup' => $s['backup'] ?? null,
+    ];
+}
+
+function writeMigrationState($s) { jsonWrite(MIGRATION_PATH, $s); }
+
+// Reels galleries that still hold items. An archived one has already moved.
+function migrationPending() {
+    $out = [];
+    $state = migrationState();
+    foreach (readGalleries() as $g) {
+        if (($g['type'] ?? '') !== 'reels' || !empty($g['archived'])) continue;
+        if (in_array($g['id'], $state['done'], true)) continue;
+        $out[] = $g;
+    }
+    return $out;
+}
+
+// A live delivery package pointing at a reels gallery would break the moment
+// its files move, so migration waits for those to expire.
+function migrationBlockers() {
+    $blockers = [];
+    $reels = [];
+    foreach (readGalleries() as $g) {
+        if (($g['type'] ?? '') === 'reels') $reels[$g['id']] = $g['name'];
+    }
+    foreach (glob(PACKAGES_DIR . '/*/manifest.json') ?: [] as $path) {
+        $m = jsonRead($path);
+        if (!$m || ($m['expiresAt'] ?? 0) < time()) continue;
+        $source = $m['sourceId'] ?? '';
+        if (isset($reels[$source])) $blockers[] = $reels[$source] . ' — delivery "' . ($m['name'] ?? $source) . '"';
+    }
+    return $blockers;
+}
+
+// Copies the files a migration could disturb, so a wrong turn is recoverable
+// without touching a backup tape.
+function migrationBackup() {
+    $dir = DATA_DIR . '/backup-pre-portfolio-' . date('Ymd-His');
+    if (!@mkdir($dir, 0755, true)) return null;
+    foreach (['galleries.json', 'collections.json', 'header.json', 'settings.json'] as $f) {
+        if (file_exists(DATA_DIR . '/' . $f)) @copy(DATA_DIR . '/' . $f, "$dir/$f");
+    }
+    foreach (readGalleries() as $g) {
+        if (($g['type'] ?? '') !== 'reels') continue;
+        $src = galleryDir($g['id']) . '/videos.json';
+        if (file_exists($src)) @copy($src, $dir . '/videos-' . $g['id'] . '.json');
+    }
+    return basename($dir);
+}
+
+// Which category a reels gallery lands in: the reels collection it belongs to,
+// or "Portfolio" for the ungrouped ones.
+function migrationCategoryFor($gallery) {
+    $name = 'Portfolio';
+    foreach (readCollections() as $col) {
+        if (collectionType($col) !== 'reels') continue;
+        if (in_array($gallery['id'], $col['galleryIds'] ?? [], true)) { $name = $col['name']; break; }
+    }
+    $folder = portfolioSafeName($name) ?: 'Portfolio';
+    foreach (portfolioTree()['categories'] as $cat) {
+        if (strcasecmp($cat['folder'], $folder) === 0) return $cat;
+    }
+    @mkdir(PORTFOLIO_DIR . '/' . $folder, 0755, true);
+    portfolioTree(true);
+    foreach (portfolioTree()['categories'] as $cat) {
+        if ($cat['folder'] === $folder) return $cat;
+    }
+    return null;
+}
+
+// Moves one gallery: its files, their derivatives, captions, titles, caption
+// boxes, section headers and order.
+function migrateOneGallery($gallery) {
+    $cat = migrationCategoryFor($gallery);
+    if (!$cat) return ['ok' => false, 'error' => 'Could not create the category folder'];
+
+    $folder = portfolioUniqueChildName($cat['dir'], portfolioSafeName($gallery['name']) ?: 'Gallery');
+    $dir = $cat['dir'] . '/' . $folder;
+    if (!@mkdir($dir, 0755, true)) return ['ok' => false, 'error' => 'Could not create ' . $folder];
+
+    $items = [];
+    $order = [];
+    $headers = [];
+    $moved = 0;
+    $captionsMoved = 0;
+
+    foreach (readGalleryVideos($gallery['id']) as $v) {
+        if (($v['type'] ?? '') === 'header') {
+            $hid = $v['id'] ?: generateId('h_');
+            $headers[$hid] = ['text' => (string)($v['text'] ?? '')];
+            $order[] = $hid;
+            continue;
+        }
+        $stored = (string)($v['filename'] ?? '');
+        $src = UPLOADS_DIR . '/' . basename($stored);
+        if ($stored === '' || !is_file($src)) continue;
+
+        // The stored name carries an upload timestamp; the title is what the
+        // owner actually called it.
+        $ext = strtolower(pathinfo($stored, PATHINFO_EXTENSION));
+        $base = portfolioSafeName((string)($v['title'] ?? '')) ?: portfolioSafeName(pathinfo($stored, PATHINFO_FILENAME));
+        $name = portfolioUniqueChildName($dir, ($base ?: 'file') . ($ext ? ".$ext" : ''));
+        if (!@rename($src, "$dir/$name")) continue;
+        $moved++;
+
+        $mtime = (int)@filemtime("$dir/$name");
+        $isPhoto = isImageFile($name);
+        $id = (string)($v['id'] ?? '') ?: generateId($isPhoto ? 'p_' : 'v_');
+        $item = [
+            'id' => $id,
+            'type' => $isPhoto ? 'photo' : 'video',
+            'title' => (string)($v['title'] ?? ''),
+            'description' => (string)($v['description'] ?? ''),
+            'visible' => ($v['visible'] ?? true) !== false,
+            'width' => (int)($v['width'] ?? 0),
+            'height' => (int)($v['height'] ?? 0),
+            'size' => (int)@filesize("$dir/$name"),
+            'mtime' => $mtime,
+            'addedAt' => $v['createdAt'] ?? date('c'),
+        ];
+
+        // Thumbnails and proxies are named after the item id, which came with
+        // it, so nothing has to be rebuilt.
+        $hasThumb = !empty($v['thumbnail']) && is_file(THUMBS_DIR . '/' . basename($v['thumbnail']));
+        if ($hasThumb && basename($v['thumbnail']) !== "$id.jpg") {
+            @copy(THUMBS_DIR . '/' . basename($v['thumbnail']), THUMBS_DIR . "/$id.jpg");
+        }
+        if ($isPhoto) {
+            $item['thumb'] = is_file(THUMBS_DIR . "/$id.jpg") ? $mtime : 0;
+            $item['proxy'] = is_file(PROXY_DIR . "/{$id}_proxy.jpg") ? $mtime : 0;
+        } else {
+            $item['duration'] = (float)($v['duration'] ?? 0);
+            $item['metaOf'] = $mtime;
+            $item['thumb'] = is_file(THUMBS_DIR . "/$id.jpg") ? time() : 0;
+            $item['thumbSource'] = 'capture';
+            $item['thumbOf'] = $mtime;
+            $item['captionLabels'] = [];
+            foreach (($v['captions'] ?? []) as $c) {
+                $lang = normalizeCaptionLang($c['lang'] ?? '');
+                $from = CAPTIONS_DIR . '/' . basename($c['filename'] ?? '');
+                if ($lang === '' || !is_file($from)) continue;
+                $target = pathinfo($name, PATHINFO_FILENAME) . ".$lang.vtt";
+                if (@rename($from, "$dir/$target")) {
+                    $captionsMoved++;
+                    if (!empty($c['label'])) $item['captionLabels'][$lang] = $c['label'];
+                }
+            }
+        }
+        $items[$name] = $item;
+        $order[] = $name;
+        // The file left uploads/, so its cached checksum is stale.
+        crcCacheForget(basename($stored));
+    }
+
+    portfolioSidecarUpdate("$dir/.gallery.json", function ($g) use ($gallery, $items, $order, $headers) {
+        $g['version'] = 1;
+        $g['id'] = $g['id'] ?? generateId('pg_');
+        $g['title'] = $gallery['name'];
+        $g['description'] = '';
+        $g['layout'] = 'justified';
+        $g['cover'] = null;
+        $g['visible'] = ($gallery['active'] ?? true) !== false;
+        $g['access'] = ($gallery['active'] ?? true) !== false ? 'public' : 'hidden';
+        $g['createdAt'] = $gallery['createdAt'] ?? date('c');
+        $g['items'] = $items;
+        $g['headers'] = $headers;
+        $g['refs'] = [];
+        $g['order'] = $order;
+        $g['options'] = portfolioNormalizeOptions([]);
+        return $g;
+    });
+    portfolioTree(true);
+
+    // Leave the old record in place, archived, so nothing is lost and old
+    // links can still be redirected.
+    $newId = null;
+    $newUrl = null;
+    foreach (portfolioTree()['categories'] as $c) {
+        foreach ($c['galleries'] as $g) {
+            if ($g['dir'] !== $dir) continue;
+            $newId = $g['id'];
+            $newUrl = portfolioGalleryUrl($c, $g);
+        }
+    }
+    $galleries = readGalleries();
+    foreach ($galleries as &$g) {
+        if ($g['id'] === $gallery['id']) {
+            $g['archived'] = true;
+            $g['active'] = false;
+            $g['migratedTo'] = $newId;
+        }
+    }
+    unset($g);
+    writeGalleries($galleries);
+
+    return [
+        'ok' => true,
+        'name' => $gallery['name'],
+        'category' => $cat['folder'],
+        'folder' => $folder,
+        'moved' => $moved,
+        'captions' => $captionsMoved,
+        'galleryId' => $newId,
+        'token' => $gallery['token'] ?? null,
+        'url' => $newUrl,
+    ];
+}
+
+// What the admin shows before anyone commits to it.
+if ($method === 'GET' && $uri === '/api/admin/portfolio/migrate') {
+    requireAuth();
+    $pending = migrationPending();
+    $state = migrationState();
+    $items = 0;
+    foreach ($pending as $g) {
+        $items += count(array_filter(readGalleryVideos($g['id']), fn($v) => ($v['type'] ?? '') !== 'header'));
+    }
+    respond([
+        'pending' => array_map(fn($g) => ['id' => $g['id'], 'name' => $g['name']], $pending),
+        'items' => $items,
+        'blockers' => migrationBlockers(),
+        'done' => count($state['done']),
+        'finishedAt' => $state['finishedAt'],
+        'backup' => $state['backup'],
+    ]);
+}
+
+// One gallery per call; the admin keeps calling while `remaining` is above zero.
+if ($method === 'POST' && $uri === '/api/admin/portfolio/migrate') {
+    requireAuth();
+    $blockers = migrationBlockers();
+    if ($blockers) respondError('Wait for these deliveries to expire first: ' . implode('; ', $blockers), 409);
+
+    $state = migrationState();
+    if (!$state['startedAt']) {
+        $state['startedAt'] = date('c');
+        $state['backup'] = migrationBackup();
+    }
+    $pending = migrationPending();
+    if (!$pending) {
+        $state['finishedAt'] = $state['finishedAt'] ?: date('c');
+        writeMigrationState($state);
+        respond(['done' => true, 'remaining' => 0, 'backup' => $state['backup']]);
+    }
+
+    @set_time_limit(300);
+    $result = migrateOneGallery($pending[0]);
+    if (empty($result['ok'])) respondError($result['error'] ?? 'Migration failed', 500);
+
+    $state['done'][] = $pending[0]['id'];
+    if ($result['galleryId']) $state['map'][$pending[0]['id']] = $result['galleryId'];
+    if (!empty($result['token'])) $state['tokens'][$result['token']] = $result['url'];
+    writeMigrationState($state);
+
+    respond(['done' => false, 'remaining' => count($pending) - 1, 'result' => $result, 'backup' => $state['backup']]);
 }
 
 // ============================================================

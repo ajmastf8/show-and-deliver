@@ -74,6 +74,12 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadGallery() {
     try {
       const res = await fetch(`/api/proofing/${token}`);
+      // An old portfolio link whose gallery moved into the folders.
+      const peek = res.clone();
+      try {
+        const early = await peek.json();
+        if (early && early.redirect) { location.replace(early.redirect); return; }
+      } catch (_) {}
       if (res.status === 404) {
         showError('Gallery Not Found', 'This gallery may have been removed or the link is incorrect.');
         return;

@@ -1693,3 +1693,20 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 /* Home cover row */
 .pfa-hero-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .pfa-hero-row .setting-input { min-width: 210px; }
+
+/* One-time offer to move an old reels portfolio into folders */
+.pfa-migrate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 26px;
+  margin-bottom: 20px;
+  padding: 16px 18px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-dim);
+}
+
+.pfa-migrate strong { color: var(--text); font-size: 14px; }
+.pfa-migrate p { margin: 5px 0 0; max-width: 70ch; }
+.pfa-migrate button { flex-shrink: 0; }

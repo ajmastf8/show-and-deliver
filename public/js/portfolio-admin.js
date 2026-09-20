@@ -20,6 +20,7 @@
     pagesView: false,   // the Pages panel
     pages: [],
     pageId: null,
+    migration: null,    // reels galleries still waiting to move into folders
     header: null,       // header.json, while that panel is open
     theme: null,
     loading: false,
@@ -84,6 +85,7 @@
 
   async function loadTree() {
     state.tree = await req('/api/admin/portfolio');
+    state.migration = await req('/api/admin/portfolio/migrate').catch(() => null);
     if (state.categoryId && !state.tree.categories.some(c => c.id === state.categoryId)) state.categoryId = null;
   }
 
@@ -306,6 +308,7 @@
         </div>
       </div>
       <div class="pfa-scroll">
+        ${migrationBanner()}
         ${warnings.length ? `<div class="pfa-warnings">${warnings.map(w => `<div>${esc(w)}</div>`).join('')}</div>` : ''}
         ${galleries.length ? `<div class="pfa-cards" id="pfa-cards">${galleries.map(galleryCard).join('')}</div>`
           : `<div class="pfa-empty">
@@ -318,6 +321,8 @@
     renderProgress();
 
     $('pfa-rescan').addEventListener('click', () => act(async () => { S().toast('Rescanned'); }));
+    const migrateBtn = $('pfa-migrate');
+    if (migrateBtn) migrateBtn.addEventListener('click', runMigration);
     $('pfa-new-gallery').addEventListener('click', newGallery);
     if (cat) {
       $('pfa-cat-rename').addEventListener('click', () => renameCategory(cat));
@@ -340,6 +345,49 @@
         },
       });
     }
+  }
+
+  // Installs that predate folders still have their portfolio in reels
+  // galleries. This offers to move it, once, deliberately.
+  function migrationBanner() {
+    const m = state.migration;
+    if (!m || !m.pending || !m.pending.length) return '';
+    const names = m.pending.map(p => p.name).join(', ');
+    if (m.blockers && m.blockers.length) {
+      return `<div class="pfa-warnings">
+        <div><strong>${m.pending.length} portfolio ${m.pending.length === 1 ? 'gallery' : 'galleries'} can move into folders</strong>, but a live delivery still points at them:</div>
+        ${m.blockers.map(b => `<div>${esc(b)}</div>`).join('')}
+        <div>Deliveries expire after seven days; this can run once they have.</div>
+      </div>`;
+    }
+    return `<div class="pfa-migrate">
+      <div>
+        <strong>Move your old portfolio into folders</strong>
+        <p class="pfa-hint">${esc(names)} — ${m.items} file${m.items === 1 ? '' : 's'}.
+          Each gallery becomes a folder under its collection's name, keeping titles, captions,
+          caption boxes and order. Your files are copied to a backup first, and the old
+          galleries are archived rather than deleted, so old links still work.</p>
+      </div>
+      <button class="btn-primary small" id="pfa-migrate">Move ${m.pending.length} ${m.pending.length === 1 ? 'gallery' : 'galleries'}</button>
+    </div>`;
+  }
+
+  async function runMigration() {
+    const btn = $('pfa-migrate');
+    btn.disabled = true;
+    try {
+      for (let i = 0; i < 200; i++) {
+        btn.textContent = 'Moving…';
+        const r = await send('/api/admin/portfolio/migrate', 'POST', {});
+        if (r.done) break;
+        if (r.result) S().toast(`${r.result.name}: ${r.result.moved} file${r.result.moved === 1 ? '' : 's'} into ${r.result.category}`);
+        if (!r.remaining) break;
+      }
+      S().toast('Moved. Your portfolio is folders now.');
+    } catch (err) {
+      S().toast(err.message || 'Migration failed');
+    }
+    await act(async () => {});
   }
 
   function galleryCard(g) {

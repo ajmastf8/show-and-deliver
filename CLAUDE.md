@@ -104,6 +104,18 @@ site-data/             # Runtime data (gitignored)
   `POST /api/admin/portfolio/process`, or `php index.php portfolio:process` from
   cron), and a photo stays out of public payloads until it has a thumbnail.
   Files younger than `PORTFOLIO_SETTLE_SECONDS` are treated as still uploading.
+  **Migration:** installs that predate folders keep their portfolio in `reels`
+  galleries. `POST /api/admin/portfolio/migrate` moves one gallery per call
+  (resumable via `portfolio-migration.json`), mapping each reels collection to a
+  category and ungrouped galleries to "Portfolio". Files move out of `uploads/`
+  renamed to their titles, keeping item ids so thumbnails and proxies still
+  match, with captions renamed to the sidecar convention and section headers
+  preserved. The old record stays, archived with `migratedTo`, so
+  `/api/proofing/{token}` can answer `{redirect}` and old links keep working.
+  It refuses to run while a live delivery package points at a reels gallery, and
+  backs up the JSON first. Creating new `reels` galleries or collections is gone;
+  `/api/videos` and `renderReelsGrid()` stay only as the homepage fallback for
+  installs that haven't migrated yet.
   `<video>.poster.jpg` and `<video>.<lang>.vtt` beside a video are its poster
   and captions. Each gallery picks one of four layouts (`justified`, `masonry`,
   `grid`, `slideshow`, `horizontal`, `fullscreen`, `featured`) rendered by

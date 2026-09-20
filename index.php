@@ -5749,7 +5749,27 @@ function readHeaderConfig() {
         'phone' => '',
         'tagline' => '',
         'nav' => [],
+        'social' => [],
     ];
+}
+
+// Social links, cleaned: a known network (or "website") and an http(s) or
+// mailto URL. Stored with the rest of the header config.
+function sanitizeSocial($list) {
+    $known = ['instagram', 'facebook', 'x', 'youtube', 'vimeo', 'linkedin', 'tiktok',
+              'pinterest', 'behance', 'flickr', 'threads', 'bluesky', 'website', 'email'];
+    $out = [];
+    foreach ((array)$list as $item) {
+        $url = trim((string)($item['url'] ?? ''));
+        if ($url === '') continue;
+        if (!preg_match('#^(https?://|mailto:)#i', $url)) $url = 'https://' . ltrim($url, '/');
+        $network = strtolower((string)($item['network'] ?? ''));
+        $out[] = [
+            'network' => in_array($network, $known, true) ? $network : 'website',
+            'url' => mb_substr($url, 0, 300),
+        ];
+    }
+    return array_slice($out, 0, 12);
 }
 
 // Expands a {type:'portfolio'} nav entry into the current categories, so the
@@ -5785,16 +5805,59 @@ function expandPortfolioNav(array $config) {
     return $config;
 }
 
-// GET header config (public — used by all pages)
-if ($method === 'GET' && $uri === '/api/header') {
-    respond(expandPortfolioNav(readHeaderConfig()));
+// How the public pages look: a colour preset with one accent, how the header is
+// arranged, and the contact line. Kept apart from header.json so saving the
+// header's links and logo can't wipe it, and returned with the header config so
+// every page still makes one request.
+define('THEME_CONFIG_PATH', DATA_DIR . '/theme.json');
+
+function readThemeConfig() {
+    $t = jsonRead(THEME_CONFIG_PATH) ?: [];
+    return [
+        'preset' => in_array($t['preset'] ?? '', ['light', 'dark', 'warm'], true) ? $t['preset'] : 'light',
+        'accent' => preg_match('/^#[0-9a-f]{6}$/i', $t['accent'] ?? '') ? strtolower($t['accent']) : '#0019ff',
+        'headerLayout' => in_array($t['headerLayout'] ?? '', ['bar', 'stacked', 'sidebar'], true) ? $t['headerLayout'] : 'bar',
+        'contact' => [
+            'show' => ($t['contact']['show'] ?? true) !== false,
+            'text' => mb_substr((string)($t['contact']['text'] ?? ''), 0, 200),
+        ],
+    ];
 }
 
-// PUT header config (admin)
+// GET header config (public — used by all pages)
+if ($method === 'GET' && $uri === '/api/header') {
+    $config = expandPortfolioNav(readHeaderConfig());
+    $config['theme'] = readThemeConfig();
+    respond($config);
+}
+
+if ($method === 'PUT' && $uri === '/api/settings/theme') {
+    requireAuth();
+    $input = getInput();
+    $current = readThemeConfig();
+    $next = [
+        'preset' => $input['preset'] ?? $current['preset'],
+        'accent' => $input['accent'] ?? $current['accent'],
+        'headerLayout' => $input['headerLayout'] ?? $current['headerLayout'],
+        'contact' => [
+            'show' => array_key_exists('contact', $input) ? (($input['contact']['show'] ?? true) !== false) : $current['contact']['show'],
+            'text' => array_key_exists('contact', $input) ? (string)($input['contact']['text'] ?? '') : $current['contact']['text'],
+        ],
+    ];
+    jsonWrite(THEME_CONFIG_PATH, $next);
+    respond(['ok' => true, 'theme' => readThemeConfig()]);
+}
+
+// PUT header config (admin). Merged, not replaced: the Settings panel and the
+// Portfolio tab's Site design panel each send the fields they own, and neither
+// should wipe the other's.
 if ($method === 'PUT' && $uri === '/api/settings/header') {
     requireAuth();
     $input = getInput();
-    jsonWrite(HEADER_CONFIG_PATH, $input);
+    $config = array_merge(readHeaderConfig(), $input);
+    if (isset($input['logo'])) $config['logo'] = array_merge(readHeaderConfig()['logo'] ?? [], (array)$input['logo']);
+    $config['social'] = sanitizeSocial($config['social'] ?? []);
+    jsonWrite(HEADER_CONFIG_PATH, $config);
     respond(['ok' => true]);
 }
 

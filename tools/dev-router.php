@@ -54,6 +54,14 @@ function devServe($file) {
     $ext = strtolower(pathinfo($file, PATHINFO_EXTENSION));
     $size = filesize($file);
     header('Content-Type: ' . ($types[$ext] ?? 'application/octet-stream'));
+    // .htaccess does this for HTML on the real server: a cached page keeps
+    // loading the script versions it was built with, so edits appear to do
+    // nothing until a hard reload.
+    if ($ext === 'html') {
+        header('Cache-Control: no-cache, no-store, must-revalidate');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+    }
     header('Accept-Ranges: bytes');
     $start = 0;
     $end = $size - 1;

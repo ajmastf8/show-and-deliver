@@ -1603,3 +1603,54 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 }
 
 /* The home page's own layout on the public site: full-bleed, no page padding. */
+
+/* Site design panel */
+.pfa-design section { max-width: 760px; margin-bottom: 30px; padding-bottom: 24px; border-bottom: 1px solid var(--border-row); }
+.pfa-design section:last-child { border-bottom: 0; }
+.pfa-design h4 { margin: 0 0 12px; color: var(--text-2); font-size: 13px; letter-spacing: 1px; text-transform: uppercase; }
+.pfa-design .pfa-field { margin-top: 14px; }
+.pfa-design .pfa-check { margin-top: 14px; }
+.pfa-design .setting-input { max-width: 420px; }
+
+.pfa-presets { display: flex; gap: 10px; }
+
+.pfa-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-input);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-5);
+  font-family: var(--font);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.pfa-preset-swatch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 34px;
+  border: 1px solid var(--border-menu);
+  border-radius: 3px;
+  font-size: 13px;
+}
+
+.pfa-preset:hover { color: var(--text-3); border-color: var(--border-menu); }
+.pfa-preset.active { border-color: var(--accent); color: var(--text); }
+
+.pfa-accent { display: flex; align-items: center; gap: 10px; }
+.pfa-accent input[type="color"] { width: 42px; height: 32px; padding: 0; border: 1px solid var(--border-input); border-radius: 4px; background: none; cursor: pointer; }
+.pfa-accent .setting-input { width: 110px; }
+
+.pfa-brand { display: flex; flex-wrap: wrap; gap: 18px 26px; align-items: flex-end; }
+.pfa-logo-row { display: flex; align-items: center; gap: 12px; }
+.pfa-logo-preview { max-height: 40px; max-width: 160px; background: var(--panel); padding: 4px; border-radius: 4px; }
+
+.pfa-social-row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+.pfa-social-row select { width: 150px; }
+.pfa-social-row input { flex: 1; max-width: 420px; }

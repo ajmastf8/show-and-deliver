@@ -1,0 +1,80 @@
+/* Header arrangements and the few surfaces a colour preset can't reach through
+   the palette variables alone. theme.js sets data-theme and data-header on
+   <html>, plus the palette itself as inline custom properties. */
+
+/* --- Centered: logo over the links, the classic portfolio masthead --- */
+
+[data-header="stacked"] .header-inner {
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-top: 18px;
+  text-align: center;
+}
+
+[data-header="stacked"] .header-nav { justify-content: center; flex-wrap: wrap; }
+[data-header="stacked"] .header-contact { margin: 0; }
+
+/* --- Sidebar: a fixed column down the left, gallery fills the rest --- */
+
+@media (min-width: 900px) {
+  [data-header="sidebar"] .site-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 232px;
+    padding: 0;
+    border-right: 1px solid var(--color-gray-mid);
+    overflow-y: auto;
+  }
+
+  [data-header="sidebar"] .header-inner {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    height: 100%;
+    padding: 34px 24px;
+    gap: 22px;
+  }
+
+  [data-header="sidebar"] .header-nav { flex-direction: column; align-items: flex-start; gap: 12px; }
+  [data-header="sidebar"] .header-contact { flex-direction: column; align-items: flex-start; gap: 4px; }
+  [data-header="sidebar"] .header-contact .contact-sep { display: none; }
+  [data-header="sidebar"] .header-social { justify-content: flex-start; }
+  [data-header="sidebar"] .logo-text { font-size: 30px; white-space: normal; }
+  [data-header="sidebar"] body { padding-left: 232px; }
+  /* The dropdown opens beside the column rather than under it. */
+  [data-header="sidebar"] .nav-dropdown-menu { top: 0; left: 100%; }
+}
+
+/* --- Social links --- */
+
+.header-social {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-social a {
+  display: inline-flex;
+  color: var(--color-gray-text);
+  transition: color 0.2s ease;
+}
+
+.header-social a:hover { color: var(--color-primary); }
+.header-social svg { width: 19px; height: 19px; fill: currentColor; display: block; }
+
+.mobile-nav-social { display: flex; gap: 16px; padding: 18px 0 6px; }
+.mobile-nav-social svg { width: 22px; height: 22px; fill: currentColor; }
+
+/* --- Dark preset touch-ups --- */
+
+/* These two paint themselves white rather than through the palette, because
+   they are normally read against a photograph. */
+[data-theme="dark"] .mobile-nav { background: var(--color-white); }
+[data-theme="dark"] .pf-tile,
+[data-theme="dark"] .pf-card-frame { background: var(--color-gray-light); }
+[data-theme="dark"] .pf-tile-placeholder {
+  background: repeating-linear-gradient(45deg, #1b1b1b, #1b1b1b 10px, #222 10px, #222 20px);
+}

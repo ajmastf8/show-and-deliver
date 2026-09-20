@@ -141,7 +141,18 @@ site-data/             # Runtime data (gitignored)
   unaffected. Not to be confused with **captions**, which everywhere else in
   this codebase means WebVTT subtitle tracks in `site-data/captions/`.
 - **Proxy images** (2048px JPEG) are generated alongside thumbnails for fast lightbox loading
-- **Header config** is stored in `site-data/data/header.json` and rendered by `header.js`
+- **Header config** is stored in `site-data/data/header.json` (logo, nav, contact
+  fields, social links) and rendered by `header.js`. `PUT /api/settings/header`
+  **merges**, because two panels write it: Settings > Header and the Portfolio
+  tab's Site design.
+- **Site design** (`site-data/data/theme.json`, returned inside `/api/header`)
+  holds a colour preset (light/dark/warm), one accent, the header arrangement
+  (bar/stacked/sidebar) and the contact line. `theme.js` loads in `<head>` on
+  every public page and paints the saved palette before the first frame by
+  setting the `--color-*` custom properties inline on `<html>`, so the whole
+  site — portfolio, proofing, collection and download — follows one theme.
+  `--color-white` is the surface role and themes repaint it; text on an accent
+  button uses `--color-on-accent`, which never changes.
 - **Admin credentials** are set via first-run setup wizard, stored in `site-data/data/admin.json`
 - **SESSION_SECRET** is auto-generated on first run if not in `.env`
 

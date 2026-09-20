@@ -16,6 +16,9 @@
     categoryId: null,   // rail selection; null means every category
     galleryId: null,    // open gallery editor
     gallery: null,      // its payload
+    design: false,      // the Site design panel
+    header: null,       // header.json, while that panel is open
+    theme: null,
     loading: false,
     processing: { running: false, remaining: 0, needsPoster: [] },
     uploads: new Map(), // name -> percent, while a drop is in flight
@@ -164,7 +167,8 @@
 
   function render() {
     renderRail();
-    if (state.galleryId && state.gallery) renderGalleryEditor();
+    if (state.design) renderDesign();
+    else if (state.galleryId && state.gallery) renderGalleryEditor();
     else renderBrowse();
   }
 
@@ -188,6 +192,9 @@
         <span class="rail-name">${home ? 'Home page' : '+ Set up home page'}</span>
         ${home ? `<span class="rail-count">${home.publicCount}</span>` : ''}
       </div>
+      <div class="rail-row ${state.design ? 'active' : ''}" id="pfa-design-row">
+        <span class="rail-name">Site design</span>
+      </div>
       <div class="rail-section-label">Categories</div>
       <div class="rail-row ${state.categoryId ? '' : 'active'}" data-cat="">
         <span class="rail-name">All galleries</span>
@@ -207,11 +214,13 @@
         state.categoryId = row.dataset.cat || null;
         state.galleryId = null;
         state.gallery = null;
+        state.design = false;
         render();
       });
     });
     $('pfa-new-cat').addEventListener('click', newCategory);
     $('pfa-home-row').addEventListener('click', openHome);
+    $('pfa-design-row').addEventListener('click', openDesign);
 
     // Drag to reorder categories; the order is what the public nav follows.
     const list = $('pfa-cat-list');
@@ -324,6 +333,7 @@
 
   async function openGallery(gid) {
     try {
+      state.design = false;
       await loadGallery(gid);
       state.categoryId = state.gallery.categoryId;
       render();
@@ -598,6 +608,222 @@
       act(() => req(base, { method: 'POST', body: fd }));
     });
     picker.click();
+  }
+
+  // ---------- Site design ----------
+
+  const PRESETS = [
+    ['light', 'Light', '#ffffff', '#111111'],
+    ['dark', 'Dark', '#101010', '#f2f2f2'],
+    ['warm', 'Warm', '#f7f3ee', '#241f1b'],
+  ];
+
+  // Kept here rather than read from header.js, which the admin page doesn't
+  // load. Must match the networks index.php accepts.
+  const NETWORKS = [
+    ['instagram', 'Instagram'], ['facebook', 'Facebook'], ['x', 'X'], ['youtube', 'YouTube'],
+    ['vimeo', 'Vimeo'], ['linkedin', 'LinkedIn'], ['tiktok', 'TikTok'], ['pinterest', 'Pinterest'],
+    ['behance', 'Behance'], ['flickr', 'Flickr'], ['threads', 'Threads'], ['bluesky', 'Bluesky'],
+    ['website', 'Website'], ['email', 'Email'],
+  ];
+
+  const HEADER_LAYOUTS = [
+    ['bar', 'Bar', '<rect x="1" y="2" width="12" height="7"/><rect x="17" y="4" width="7" height="3"/><rect x="27" y="4" width="7" height="3"/><rect x="37" y="4" width="6" height="3"/>'],
+    ['stacked', 'Centered', '<rect x="14" y="2" width="16" height="6"/><rect x="9" y="11" width="8" height="3"/><rect x="20" y="11" width="8" height="3"/><rect x="31" y="11" width="5" height="3"/>'],
+    ['sidebar', 'Sidebar', '<rect x="1" y="2" width="12" height="6"/><rect x="1" y="11" width="9" height="3"/><rect x="1" y="16" width="9" height="3"/><rect x="1" y="21" width="9" height="3"/><rect x="17" y="2" width="26" height="22" opacity="0.35"/>'],
+  ];
+
+  async function openDesign() {
+    state.design = true;
+    state.galleryId = null;
+    state.gallery = null;
+    try {
+      state.header = await req('/api/header');
+      state.theme = state.header.theme;
+      render();
+    } catch (err) {
+      S().toast(err.message || 'Could not load the site settings');
+    }
+  }
+
+  function renderDesign() {
+    const h = state.header || {};
+    const t = state.theme || {};
+    const logo = h.logo || {};
+    const social = h.social || [];
+    const networks = NETWORKS;
+
+    $('pfa-centre').innerHTML = `
+      <div class="centre-header">
+        <div>
+          <h1>Site design</h1>
+          <p class="centre-sub">Colours, header and links for every public page</p>
+        </div>
+        <div class="centre-controls">
+          <button class="ctrl" id="pfa-design-links">Edit menu links</button>
+          <a class="ctrl" href="/" target="_blank" rel="noopener">View site</a>
+        </div>
+      </div>
+      <div class="pfa-scroll pfa-design">
+        <section>
+          <h4>Colour</h4>
+          <div class="pfa-presets">
+            ${PRESETS.map(([v, label, bg, fg]) => `
+              <button type="button" class="pfa-preset ${t.preset === v ? 'active' : ''}" data-preset="${v}">
+                <span class="pfa-preset-swatch" style="background:${bg};color:${fg}">Aa</span>
+                <span>${label}</span>
+              </button>`).join('')}
+          </div>
+          <label class="pfa-field">
+            <span>Accent (links, hovers, buttons)</span>
+            <span class="pfa-accent">
+              <input type="color" id="pfa-accent" value="${esc(t.accent || '#0019ff')}">
+              <input type="text" class="setting-input" id="pfa-accent-hex" value="${esc(t.accent || '#0019ff')}" maxlength="7">
+            </span>
+          </label>
+        </section>
+
+        <section>
+          <h4>Header</h4>
+          <div class="pfa-layouts">
+            ${HEADER_LAYOUTS.map(([v, label, shape]) => `
+              <button type="button" class="pfa-layout-opt ${t.headerLayout === v ? 'active' : ''}" data-header-layout="${v}" title="${label}">
+                <svg viewBox="0 0 44 26" aria-hidden="true">${shape}</svg>
+                <span>${label}</span>
+              </button>`).join('')}
+          </div>
+          <label class="pfa-check"><input type="checkbox" id="pfa-contact-show" ${(t.contact || {}).show !== false ? 'checked' : ''}> Show a contact line</label>
+          <label class="pfa-field wide">
+            <span>Contact line</span>
+            <input class="setting-input" id="pfa-contact-text" value="${esc((t.contact || {}).text || '')}" placeholder="e.g. Contact me — hello@studio.com">
+            <span class="pfa-hint">Leave empty to show the email, phone and tagline from Settings.</span>
+          </label>
+        </section>
+
+        <section>
+          <h4>Wordmark or logo</h4>
+          <div class="pfa-brand">
+            <label class="pfa-field">
+              <span>Wordmark text</span>
+              <input class="setting-input" id="pfa-logo-text" value="${esc(logo.text || '')}" placeholder="e.g. AJ MAST">
+            </label>
+            <label class="pfa-field">
+              <span>Logo height (px)</span>
+              <input class="setting-input" id="pfa-logo-height" type="number" min="24" max="200" value="${Number(logo.height) || 74}">
+            </label>
+            <div class="pfa-field">
+              <span>Logo image</span>
+              <div class="pfa-logo-row">
+                ${logo.src ? `<img src="${esc(logo.src)}" alt="" class="pfa-logo-preview">` : '<span class="pfa-hint">No image — the wordmark is used</span>'}
+                <button class="ctrl" id="pfa-logo-upload">${logo.src ? 'Replace' : 'Upload'}</button>
+                ${logo.src ? '<button class="ctrl" id="pfa-logo-remove">Remove</button>' : ''}
+                <input type="file" id="pfa-logo-file" accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif" hidden>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h4>Social links</h4>
+          <div id="pfa-social-list">
+            ${social.map((item, i) => `
+              <div class="pfa-social-row" data-i="${i}">
+                <select class="setting-input" data-social-network>
+                  ${networks.map(([v, label]) => `<option value="${v}" ${item.network === v ? 'selected' : ''}>${esc(label)}</option>`).join('')}
+                </select>
+                <input class="setting-input" data-social-url value="${esc(item.url || '')}" placeholder="https://instagram.com/you">
+                <button class="ctrl" data-social-remove>Remove</button>
+              </div>`).join('')}
+          </div>
+          <button class="ctrl" id="pfa-social-add">+ Add a link</button>
+        </section>
+      </div>
+    `;
+    wireDesign();
+  }
+
+  function wireDesign() {
+    const saveTheme = (patch) => act(async () => {
+      const r = await send('/api/settings/theme', 'PUT', { ...state.theme, ...patch });
+      state.theme = r.theme;
+      state.design = true;
+    });
+    const saveHeader = (patch) => act(async () => {
+      await send('/api/settings/header', 'PUT', patch);
+      state.header = await req('/api/header');
+      state.theme = state.header.theme;
+      state.design = true;
+    });
+
+    $('pfa-centre').querySelectorAll('[data-preset]').forEach(b =>
+      b.addEventListener('click', () => saveTheme({ preset: b.dataset.preset })));
+    $('pfa-centre').querySelectorAll('[data-header-layout]').forEach(b =>
+      b.addEventListener('click', () => saveTheme({ headerLayout: b.dataset.headerLayout })));
+    $('pfa-accent').addEventListener('change', e => saveTheme({ accent: e.target.value }));
+    $('pfa-accent-hex').addEventListener('change', e => {
+      const v = e.target.value.trim();
+      if (/^#[0-9a-f]{6}$/i.test(v)) saveTheme({ accent: v });
+      else S().toast('Use a colour like #1a2b3c');
+    });
+    const contact = () => ({ show: $('pfa-contact-show').checked, text: $('pfa-contact-text').value });
+    $('pfa-contact-show').addEventListener('change', () => saveTheme({ contact: contact() }));
+    $('pfa-contact-text').addEventListener('change', () => saveTheme({ contact: contact() }));
+
+    $('pfa-logo-text').addEventListener('change', e => saveHeader({ logo: { text: e.target.value } }));
+    $('pfa-logo-height').addEventListener('change', e => saveHeader({ logo: { height: Number(e.target.value) || 74 } }));
+    const file = $('pfa-logo-file');
+    $('pfa-logo-upload').addEventListener('click', () => file.click());
+    file.addEventListener('change', () => {
+      if (!file.files.length) return;
+      const fd = new FormData();
+      fd.append('logo', file.files[0]);
+      act(async () => {
+        await req('/api/settings/header/logo', { method: 'POST', body: fd });
+        state.header = await req('/api/header');
+        state.design = true;
+      });
+    });
+    const remove = $('pfa-logo-remove');
+    if (remove) remove.addEventListener('click', () => saveHeader({ logo: { src: '' } }));
+
+    const list = $('pfa-social-list');
+    const collect = () => [...list.querySelectorAll('.pfa-social-row')].map(row => ({
+      network: row.querySelector('[data-social-network]').value,
+      url: row.querySelector('[data-social-url]').value,
+    })).filter(s => s.url.trim());
+    list.querySelectorAll('[data-social-network], [data-social-url]').forEach(inp =>
+      inp.addEventListener('change', () => saveHeader({ social: collect() })));
+    list.querySelectorAll('[data-social-remove]').forEach(btn =>
+      btn.addEventListener('click', () => {
+        btn.closest('.pfa-social-row').remove();
+        saveHeader({ social: collect() });
+      }));
+    $('pfa-social-add').addEventListener('click', () => {
+      const networks = NETWORKS;
+      const row = document.createElement('div');
+      row.className = 'pfa-social-row';
+      row.innerHTML = `
+        <select class="setting-input" data-social-network>
+          ${networks.map(([v, label]) => `<option value="${v}">${esc(label)}</option>`).join('')}
+        </select>
+        <input class="setting-input" data-social-url placeholder="https://instagram.com/you">
+        <button class="ctrl" data-social-remove>Remove</button>`;
+      list.appendChild(row);
+      row.querySelector('[data-social-url]').focus();
+      row.querySelectorAll('[data-social-network], [data-social-url]').forEach(inp =>
+        inp.addEventListener('change', () => saveHeader({ social: collect() })));
+      row.querySelector('[data-social-remove]').addEventListener('click', () => {
+        row.remove();
+        saveHeader({ social: collect() });
+      });
+    });
+
+    // The menu links editor already exists in Settings; don't build it twice.
+    $('pfa-design-links').addEventListener('click', () => {
+      S().setScreen('settings');
+      const tab = document.querySelector('[data-settings-tab="header"]');
+      if (tab) tab.click();
+    });
   }
 
   // ---------- Borrowing pictures from another gallery ----------

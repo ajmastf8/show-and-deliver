@@ -1,0 +1,667 @@
+/* ==========================================================================
+   Show & Deliver — Portfolio admin
+   The Portfolio tab. Categories and galleries are folders under
+   site-data/portfolio/, so everything here is a thin editor over what the
+   server scanned: each action writes to disk and re-renders from the reply.
+   Shared helpers (api, toast, dialogs, chunked upload, frame capture) come
+   from admin.js through window.SDAdmin.
+   ========================================================================== */
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const S = () => window.SDAdmin;
+  const esc = (s) => window.SDAdmin.escapeHtml(String(s ?? ''));
+
+  const state = {
+    tree: null,
+    categoryId: null,   // rail selection; null means every category
+    galleryId: null,    // open gallery editor
+    gallery: null,      // its payload
+    loading: false,
+    processing: { running: false, remaining: 0, needsPoster: [] },
+    uploads: new Map(), // name -> percent, while a drop is in flight
+  };
+
+  const LAYOUTS = [
+    ['justified', 'Justified rows'],
+    ['masonry', 'Masonry'],
+    ['grid', 'Grid'],
+    ['slideshow', 'Slideshow'],
+  ];
+
+  // ---------- Server ----------
+
+  async function req(url, opts = {}) {
+    const res = await S().api(url, {
+      ...opts,
+      headers: opts.body instanceof FormData ? opts.headers : { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+    });
+    let data = null;
+    try { data = await res.json(); } catch (_) {}
+    if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+    return data;
+  }
+
+  const send = (url, method, body) => req(url, { method, body: JSON.stringify(body || {}) });
+
+  async function loadTree() {
+    state.tree = await req('/api/admin/portfolio');
+    if (state.categoryId && !state.tree.categories.some(c => c.id === state.categoryId)) state.categoryId = null;
+  }
+
+  async function loadGallery(gid) {
+    const data = await req('/api/admin/portfolio/galleries/' + encodeURIComponent(gid));
+    state.gallery = data.gallery;
+    state.galleryId = gid;
+  }
+
+  // Wraps an action: run it, refresh, re-render, and surface any error.
+  async function act(fn) {
+    if (state.loading) return;
+    state.loading = true;
+    try {
+      await fn();
+      await loadTree();
+      if (state.galleryId) await loadGallery(state.galleryId).catch(() => { state.galleryId = null; state.gallery = null; });
+      render();
+      scheduleProcessing();
+    } catch (err) {
+      S().toast(err.message || 'Something went wrong');
+    } finally {
+      state.loading = false;
+    }
+  }
+
+  // ---------- Derivatives ----------
+
+  // Thumbnails and proxies are built server-side in short slices, and video
+  // posters in the browser (the host has no ffmpeg). Both run only while this
+  // tab is open, so the work follows the person who added the files.
+  function scheduleProcessing() {
+    const pending = (state.tree?.categories || []).some(c =>
+      c.galleries.some(g => g.processing > 0 || g.needsPoster > 0));
+    if (pending && !state.processing.running) processingLoop();
+  }
+
+  async function processingLoop() {
+    state.processing.running = true;
+    try {
+      for (let pass = 0; pass < 200; pass++) {
+        if ($('screen-portfolio').hidden) break;
+        const r = await send('/api/admin/portfolio/process', 'POST', { galleryId: state.galleryId || null });
+        state.processing.remaining = r.remaining || 0;
+        state.processing.needsPoster = r.needsPoster || [];
+        renderProgress();
+        if (r.busy) { await sleep(3000); continue; }
+
+        let captured = 0;
+        for (const item of state.processing.needsPoster.slice(0, 4)) {
+          if (await capturePoster(item)) captured++;
+        }
+        if (r.processed || captured) {
+          await loadTree();
+          if (state.galleryId) await loadGallery(state.galleryId).catch(() => {});
+          render();
+        }
+        if (!r.processed && !captured) break;
+        await sleep(300);
+      }
+    } catch (_) {
+      // A failed slice just means the pill stays; the next action retries.
+    } finally {
+      state.processing.running = false;
+      renderProgress();
+    }
+  }
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  // Grabs a frame from a video that has no poster file and sends it up, along
+  // with the real pixel size, which the server can't read for every format.
+  async function capturePoster(item) {
+    const v = document.createElement('video');
+    v.muted = true;
+    v.preload = 'auto';
+    v.playsInline = true;
+    v.crossOrigin = 'anonymous';
+    v.src = item.src;
+    const waitFor = (ev, ms) => new Promise((res, rej) => {
+      let done = false;
+      v.addEventListener(ev, () => { if (!done) { done = true; res(); } }, { once: true });
+      v.addEventListener('error', () => { if (!done) { done = true; rej(new Error(ev)); } }, { once: true });
+      setTimeout(() => { if (!done) { done = true; rej(new Error('timeout')); } }, ms);
+    });
+    try {
+      await waitFor('loadedmetadata', 30000);
+      const dur = v.duration || 0;
+      const upper = Math.min(10, isFinite(dur) && dur > 0 ? dur : 10);
+      const lo = Math.min(0.3, upper);
+      v.currentTime = lo + Math.random() * Math.max(0, upper - lo);
+      await waitFor('seeked', 15000);
+      const blob = await S().captureFrameAsJpegBlob(v);
+      const url = `/api/admin/portfolio/galleries/${encodeURIComponent(item.galleryId)}/items/${encodeURIComponent(item.file)}/poster`
+        + `?w=${v.videoWidth}&h=${v.videoHeight}`;
+      await S().api(url, { method: 'PUT', body: blob, headers: { 'Content-Type': 'image/jpeg' } });
+      return true;
+    } catch (_) {
+      return false;
+    } finally {
+      v.removeAttribute('src');
+      v.load();
+    }
+  }
+
+  // ---------- Render ----------
+
+  function render() {
+    renderRail();
+    if (state.galleryId && state.gallery) renderGalleryEditor();
+    else renderBrowse();
+  }
+
+  function renderProgress() {
+    const pill = $('pfa-progress');
+    if (!pill) return;
+    const busy = state.processing.running && (state.processing.remaining > 0 || state.processing.needsPoster.length > 0);
+    pill.hidden = !busy;
+    pill.textContent = state.processing.remaining > 0
+      ? `Processing ${state.processing.remaining} file${state.processing.remaining === 1 ? '' : 's'}…`
+      : 'Making video posters…';
+  }
+
+  function renderRail() {
+    const cats = state.tree?.categories || [];
+    const rail = $('pfa-rail');
+    rail.innerHTML = `
+      <div class="rail-section-label">Categories</div>
+      <div class="rail-row ${state.categoryId ? '' : 'active'}" data-cat="">
+        <span class="rail-name">All galleries</span>
+        <span class="rail-count">${cats.reduce((n, c) => n + c.galleries.length, 0)}</span>
+      </div>
+      <div id="pfa-cat-list">
+        ${cats.map(c => `
+          <div class="rail-row ${state.categoryId === c.id ? 'active' : ''} ${c.visible ? '' : 'inactive'}" data-cat="${esc(c.id)}">
+            <span class="rail-name">${esc(c.title)}</span>
+            <span class="rail-count">${c.galleries.length}</span>
+          </div>`).join('')}
+      </div>
+      <div class="rail-row new-collection" id="pfa-new-cat"><span class="rail-name">+ New category</span></div>
+    `;
+    rail.querySelectorAll('[data-cat]').forEach(row => {
+      row.addEventListener('click', () => {
+        state.categoryId = row.dataset.cat || null;
+        state.galleryId = null;
+        state.gallery = null;
+        render();
+      });
+    });
+    $('pfa-new-cat').addEventListener('click', newCategory);
+
+    // Drag to reorder categories; the order is what the public nav follows.
+    const list = $('pfa-cat-list');
+    if (list && cats.length > 1) {
+      Sortable.create(list, {
+        animation: 140,
+        onEnd: () => {
+          const ids = [...list.querySelectorAll('[data-cat]')].map(r => r.dataset.cat);
+          act(() => send('/api/admin/portfolio/order', 'PUT', { categories: ids }));
+        },
+      });
+    }
+  }
+
+  function galleriesInScope() {
+    const cats = state.tree?.categories || [];
+    const scoped = state.categoryId ? cats.filter(c => c.id === state.categoryId) : cats;
+    return scoped.flatMap(c => c.galleries.map(g => ({ ...g, category: c })));
+  }
+
+  function renderBrowse() {
+    const cats = state.tree?.categories || [];
+    const cat = cats.find(c => c.id === state.categoryId) || null;
+    const galleries = galleriesInScope();
+    const warnings = (state.tree?.warnings || []).concat(cat ? cat.warnings : cats.flatMap(c => c.warnings));
+
+    $('pfa-centre').innerHTML = `
+      <div class="centre-header">
+        <div>
+          <h1>${esc(cat ? cat.title : 'All galleries')}</h1>
+          <p class="centre-sub">
+            ${galleries.length} ${galleries.length === 1 ? 'gallery' : 'galleries'}
+            ${cat ? `· <a href="${esc(cat.url)}" target="_blank" rel="noopener">${esc(cat.url)}</a>` : ''}
+            ${cat && !cat.visible ? '· <span class="pfa-badge">Hidden</span>' : ''}
+          </p>
+        </div>
+        <div class="centre-controls">
+          <span class="pfa-pill" id="pfa-progress" hidden></span>
+          <button class="ctrl" id="pfa-rescan">Rescan folders</button>
+          ${cat ? '<button class="ctrl" id="pfa-cat-rename">Rename</button>' : ''}
+          ${cat ? `<button class="ctrl" id="pfa-cat-visible">${cat.visible ? 'Hide' : 'Show'}</button>` : ''}
+          ${cat ? '<button class="ctrl" id="pfa-cat-delete">Delete</button>' : ''}
+          <button class="btn-primary small" id="pfa-new-gallery">New gallery</button>
+        </div>
+      </div>
+      <div class="pfa-scroll">
+        ${warnings.length ? `<div class="pfa-warnings">${warnings.map(w => `<div>${esc(w)}</div>`).join('')}</div>` : ''}
+        ${galleries.length ? `<div class="pfa-cards" id="pfa-cards">${galleries.map(galleryCard).join('')}</div>`
+          : `<div class="pfa-empty">
+               <p>No galleries here yet.</p>
+               <p class="pfa-hint">Create one, or drop a folder of photos into
+                 <code>site-data/portfolio/${esc(cat ? cat.folder : '&lt;Category&gt;')}/</code> over FTP — it shows up on its own.</p>
+             </div>`}
+      </div>
+    `;
+    renderProgress();
+
+    $('pfa-rescan').addEventListener('click', () => act(async () => { S().toast('Rescanned'); }));
+    $('pfa-new-gallery').addEventListener('click', newGallery);
+    if (cat) {
+      $('pfa-cat-rename').addEventListener('click', () => renameCategory(cat));
+      $('pfa-cat-visible').addEventListener('click', () =>
+        act(() => send('/api/admin/portfolio/categories/' + encodeURIComponent(cat.id), 'PUT', { visible: !cat.visible })));
+      $('pfa-cat-delete').addEventListener('click', () => deleteCategory(cat));
+    }
+    document.querySelectorAll('#pfa-cards .pfa-card').forEach(card => {
+      card.addEventListener('click', () => openGallery(card.dataset.gid));
+    });
+
+    // Reordering galleries only makes sense inside one category.
+    const cards = $('pfa-cards');
+    if (cards && cat && galleries.length > 1) {
+      Sortable.create(cards, {
+        animation: 140,
+        onEnd: () => {
+          const ids = [...cards.querySelectorAll('.pfa-card')].map(c => c.dataset.gid);
+          act(() => send(`/api/admin/portfolio/categories/${encodeURIComponent(cat.id)}/order`, 'PUT', { galleries: ids }));
+        },
+      });
+    }
+  }
+
+  function galleryCard(g) {
+    const flags = [
+      g.visible ? '' : '<span class="pfa-badge">Hidden</span>',
+      g.processing ? `<span class="pfa-badge work">${g.processing} processing</span>` : '',
+      g.needsPoster ? `<span class="pfa-badge work">${g.needsPoster} need posters</span>` : '',
+      g.pending.length ? `<span class="pfa-badge work">${g.pending.length} arriving</span>` : '',
+      g.failed ? `<span class="pfa-badge bad">${g.failed} unreadable</span>` : '',
+      state.tree.featuredId === g.id ? '<span class="pfa-badge good">Homepage</span>' : '',
+    ].filter(Boolean).join('');
+    return `
+      <div class="pfa-card" data-gid="${esc(g.id)}">
+        <div class="pfa-card-frame">${g.cover ? `<img src="${esc(g.cover)}" alt="" loading="lazy">` : '<span class="pfa-card-empty"></span>'}</div>
+        <div class="pfa-card-body">
+          <div class="pfa-card-title">${esc(g.title)}</div>
+          <div class="pfa-card-meta">${g.publicCount} of ${g.itemCount} live${state.categoryId ? '' : ' · ' + esc(g.category.title)}</div>
+          <div class="pfa-flags">${flags}</div>
+        </div>
+      </div>`;
+  }
+
+  // ---------- Gallery editor ----------
+
+  async function openGallery(gid) {
+    try {
+      await loadGallery(gid);
+      state.categoryId = state.gallery.categoryId;
+      render();
+      scheduleProcessing();
+    } catch (err) {
+      S().toast(err.message || 'Could not open that gallery');
+    }
+  }
+
+  function renderGalleryEditor() {
+    const g = state.gallery;
+    const cats = state.tree?.categories || [];
+    const featured = state.tree.featuredId === g.id;
+
+    $('pfa-centre').innerHTML = `
+      <div class="centre-header">
+        <div>
+          <button class="back-link" id="pfa-back">&larr; ${esc(g.category.title)}</button>
+          <h1>${esc(g.title)}</h1>
+          <p class="centre-sub">
+            <a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.url)}</a>
+            · <code>${esc(g.folder)}</code>
+            ${g.visible ? '' : '· <span class="pfa-badge">Hidden</span>'}
+          </p>
+        </div>
+        <div class="centre-controls">
+          <span class="pfa-pill" id="pfa-progress" hidden></span>
+          <button class="ctrl" id="pfa-add-section">Add section</button>
+          <button class="ctrl" id="pfa-g-rename">Rename</button>
+          <button class="ctrl" id="pfa-g-delete">Delete</button>
+          <button class="btn-primary small" id="pfa-add-files">Add files</button>
+        </div>
+      </div>
+      <div class="pfa-scroll">
+        <div class="pfa-settings">
+          <label class="pfa-field">
+            <span>Layout</span>
+            <select class="setting-input" id="pfa-layout">
+              ${LAYOUTS.map(([v, l]) => `<option value="${v}" ${g.layout === v ? 'selected' : ''}>${l}</option>`).join('')}
+            </select>
+          </label>
+          <label class="pfa-field">
+            <span>Category</span>
+            <select class="setting-input" id="pfa-move">
+              ${cats.map(c => `<option value="${esc(c.id)}" ${c.id === g.categoryId ? 'selected' : ''}>${esc(c.title)}</option>`).join('')}
+            </select>
+          </label>
+          <label class="pfa-field">
+            <span>Web address</span>
+            <input class="setting-input" id="pfa-slug" value="${esc(g.slug)}">
+          </label>
+          <label class="pfa-check"><input type="checkbox" id="pfa-visible" ${g.visible ? 'checked' : ''}> Visible on the site</label>
+          <label class="pfa-check"><input type="checkbox" id="pfa-featured" ${featured ? 'checked' : ''}> Show on the homepage</label>
+          <label class="pfa-field wide">
+            <span>Description</span>
+            <textarea class="setting-input" id="pfa-desc" rows="2" maxlength="2000">${esc(g.description)}</textarea>
+          </label>
+        </div>
+
+        <div class="pfa-drop" id="pfa-drop">
+          <p>Drop photos and videos here, or <button class="linkish" id="pfa-browse">choose files</button>.</p>
+          <p class="pfa-hint">They are copied into <code>${esc(g.folder)}</code>. Files dropped into that folder over FTP appear here too.</p>
+          <input type="file" id="pfa-file-input" multiple accept="image/*,video/*" hidden>
+          <div id="pfa-upload-status"></div>
+        </div>
+
+        ${g.warnings.length || g.pending.length ? `
+          <div class="pfa-warnings">
+            ${g.pending.map(p => `<div>${esc(p)} is still uploading — it will appear once it settles.</div>`).join('')}
+            ${g.warnings.map(w => `<div>${esc(w)}</div>`).join('')}
+          </div>` : ''}
+
+        ${g.items.length ? `<div class="pfa-items" id="pfa-items">${g.items.map(itemTile).join('')}</div>`
+          : '<div class="pfa-empty"><p>This gallery is empty.</p></div>'}
+      </div>
+    `;
+    renderProgress();
+    wireGalleryEditor(g);
+  }
+
+  function itemTile(item) {
+    if (item.type === 'header') {
+      return `<div class="pfa-section" data-key="${esc(item.id)}">
+          <span class="pfa-drag" title="Drag to reorder">⠿</span>
+          <span class="pfa-section-text">${esc(item.text)}</span>
+          <span class="pfa-item-actions">
+            <button data-act="section-edit" data-id="${esc(item.id)}">Edit</button>
+            <button data-act="section-delete" data-id="${esc(item.id)}">Remove</button>
+          </span>
+        </div>`;
+    }
+    const g = state.gallery;
+    const flags = [
+      item.visible ? '' : '<span class="pfa-badge">Hidden</span>',
+      item.needsPoster ? '<span class="pfa-badge work">No poster</span>' : '',
+      item.processing ? '<span class="pfa-badge work">Processing</span>' : '',
+      item.failed ? '<span class="pfa-badge bad">Unreadable</span>' : '',
+      g.cover === item.file ? '<span class="pfa-badge good">Cover</span>' : '',
+    ].filter(Boolean).join('');
+    return `
+      <figure class="pfa-item ${item.visible ? '' : 'dim'}" data-key="${esc(item.file)}">
+        <div class="pfa-item-frame">
+          ${item.thumb ? `<img src="${esc(item.thumb)}" alt="" loading="lazy">` : '<span class="pfa-item-empty"></span>'}
+          ${item.type === 'video' ? '<span class="pfa-video-mark">▶</span>' : ''}
+        </div>
+        <figcaption>
+          <div class="pfa-item-name" title="${esc(item.file)}">${esc(item.title || item.file)}</div>
+          <div class="pfa-flags">${flags}</div>
+          <div class="pfa-item-actions">
+            <button data-act="edit" data-file="${esc(item.file)}">Edit</button>
+            <button data-act="cover" data-file="${esc(item.file)}">Cover</button>
+            <button data-act="visible" data-file="${esc(item.file)}">${item.visible ? 'Hide' : 'Show'}</button>
+            ${item.type === 'video' ? `<button data-act="captions" data-file="${esc(item.file)}">Captions${item.captions.length ? ` (${item.captions.length})` : ''}</button>` : ''}
+            <button data-act="delete" data-file="${esc(item.file)}">Delete</button>
+          </div>
+        </figcaption>
+      </figure>`;
+  }
+
+  function wireGalleryEditor(g) {
+    const gid = g.id;
+    const put = (body) => act(() => send('/api/admin/portfolio/galleries/' + encodeURIComponent(gid), 'PUT', body));
+
+    $('pfa-back').addEventListener('click', () => { state.galleryId = null; state.gallery = null; render(); });
+    $('pfa-layout').addEventListener('change', e => put({ layout: e.target.value }));
+    $('pfa-move').addEventListener('change', e => put({ categoryId: e.target.value }));
+    $('pfa-visible').addEventListener('change', e => put({ visible: e.target.checked }));
+    $('pfa-slug').addEventListener('change', e => put({ slug: e.target.value }));
+    $('pfa-desc').addEventListener('change', e => put({ description: e.target.value }));
+    $('pfa-featured').addEventListener('change', e =>
+      act(() => send('/api/settings/portfolio', 'PUT', { featuredId: e.target.checked ? gid : null })));
+    $('pfa-g-rename').addEventListener('click', () => renameGallery(g));
+    $('pfa-g-delete').addEventListener('click', () => deleteGallery(g));
+    $('pfa-add-section').addEventListener('click', async () => {
+      const text = await S().prompt({ title: 'Add section', okText: 'Add', field: { label: 'Section heading', type: 'text' } });
+      if (text && text.trim()) act(() => send(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/headers`, 'POST', { text }));
+    });
+
+    // Uploads
+    const input = $('pfa-file-input');
+    $('pfa-add-files').addEventListener('click', () => input.click());
+    $('pfa-browse').addEventListener('click', () => input.click());
+    input.addEventListener('change', () => { uploadFiles([...input.files], gid); input.value = ''; });
+    const drop = $('pfa-drop');
+    ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+    drop.addEventListener('drop', e => uploadFiles([...(e.dataTransfer?.files || [])], gid));
+
+    // Item and section actions
+    $('pfa-centre').querySelectorAll('[data-act]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        itemAction(btn.dataset.act, btn.dataset.file, btn.dataset.id, gid);
+      });
+    });
+
+    const items = $('pfa-items');
+    if (items && g.items.length > 1) {
+      Sortable.create(items, {
+        animation: 140,
+        draggable: '.pfa-item, .pfa-section',
+        onEnd: () => {
+          const order = [...items.querySelectorAll('[data-key]')].map(n => n.dataset.key);
+          act(() => send(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/order`, 'PUT', { order }));
+        },
+      });
+    }
+  }
+
+  async function itemAction(action, file, id, gid) {
+    const g = state.gallery;
+    const base = `/api/admin/portfolio/galleries/${encodeURIComponent(gid)}`;
+    const item = g.items.find(i => i.file === file);
+
+    if (action === 'cover') return act(() => send(base, 'PUT', { cover: file }));
+    if (action === 'visible') return act(() => send(`${base}/items/${encodeURIComponent(file)}`, 'PUT', { visible: !item.visible }));
+    if (action === 'delete') {
+      const ok = await S().confirm({
+        title: 'Delete this file?',
+        message: `"${file}" moves to site-data/portfolio-trash/, where you can still recover it.`,
+        okText: 'Delete', danger: true,
+      });
+      if (ok) act(() => req(`${base}/items/${encodeURIComponent(file)}`, { method: 'DELETE' }));
+      return;
+    }
+    if (action === 'edit') return editItem(item, gid);
+    if (action === 'captions') return editCaptions(item, gid);
+    if (action === 'section-edit') {
+      const header = g.items.find(i => i.id === id);
+      const text = await S().prompt({ title: 'Edit section', okText: 'Save', field: { label: 'Section heading', type: 'text', value: header?.text || '' } });
+      if (text && text.trim()) act(() => send(`${base}/headers/${encodeURIComponent(id)}`, 'PUT', { text }));
+      return;
+    }
+    if (action === 'section-delete') {
+      act(() => req(`${base}/headers/${encodeURIComponent(id)}`, { method: 'DELETE' }));
+    }
+  }
+
+  // Title, caption box and file name in one pass.
+  async function editItem(item, gid) {
+    const base = `/api/admin/portfolio/galleries/${encodeURIComponent(gid)}`;
+    const title = await S().prompt({ title: 'Title', okText: 'Next', field: { label: 'Shown under the picture (optional)', type: 'text', value: item.title || '' } });
+    if (title === null) return;
+    const description = await S().prompt({
+      title: 'Caption box', okText: 'Next',
+      field: { label: 'Shown beside the picture in the lightbox', type: 'textarea', rows: 5, maxLength: 2000, value: item.description || '' },
+    });
+    if (description === null) return;
+    const rename = await S().prompt({ title: 'File name', okText: 'Save', field: { label: 'Renames the file on disk', type: 'text', value: item.file } });
+    if (rename === null) return;
+    const body = { title, description };
+    if (rename.trim() && rename !== item.file) body.rename = rename.trim();
+    act(() => send(`${base}/items/${encodeURIComponent(item.file)}`, 'PUT', body));
+  }
+
+  async function editCaptions(item, gid) {
+    const base = `/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/items/${encodeURIComponent(item.file)}/captions`;
+    if (item.captions.length) {
+      const choice = await S().prompt({
+        title: 'Caption tracks', okText: 'Go',
+        field: {
+          label: `${item.captions.map(c => c.label).join(', ')} — what next?`,
+          type: 'select',
+          options: [{ value: 'add', label: 'Add a track' }, ...item.captions.map(c => ({ value: 'del:' + c.lang, label: 'Remove ' + c.label }))],
+        },
+      });
+      if (!choice) return;
+      if (choice.startsWith('del:')) {
+        return act(() => req(`${base}/${encodeURIComponent(choice.slice(4))}`, { method: 'DELETE' }));
+      }
+    }
+    const lang = await S().prompt({ title: 'Add captions', okText: 'Choose file', field: { label: 'Language code, e.g. en or pt-br', type: 'text', value: 'en' } });
+    if (!lang) return;
+    const picker = document.createElement('input');
+    picker.type = 'file';
+    picker.accept = '.vtt,text/vtt';
+    picker.addEventListener('change', () => {
+      if (!picker.files.length) return;
+      const fd = new FormData();
+      fd.append('file', picker.files[0]);
+      fd.append('lang', lang);
+      act(() => req(base, { method: 'POST', body: fd }));
+    });
+    picker.click();
+  }
+
+  // ---------- Uploads ----------
+
+  async function uploadFiles(files, gid) {
+    if (!files.length) return;
+    const status = $('pfa-upload-status');
+    for (const file of files) {
+      const row = document.createElement('div');
+      row.className = 'pfa-upload-row';
+      row.textContent = `${file.name} — 0%`;
+      status.appendChild(row);
+      try {
+        await S().uploadToPortfolio(file, gid, pct => { row.textContent = `${file.name} — ${pct}%`; });
+        row.textContent = `${file.name} — done`;
+        setTimeout(() => row.remove(), 2000);
+      } catch (err) {
+        row.textContent = `${file.name} — ${err.message || 'failed'}`;
+        row.classList.add('bad');
+      }
+    }
+    await act(async () => {});
+  }
+
+  // ---------- Categories and galleries ----------
+
+  async function newCategory() {
+    const name = await S().prompt({
+      title: 'New category', okText: 'Create',
+      field: { label: 'Folder name, e.g. Weddings', type: 'text', placeholder: 'Weddings' },
+    });
+    if (name && name.trim()) act(() => send('/api/admin/portfolio/categories', 'POST', { name }));
+  }
+
+  async function renameCategory(cat) {
+    const name = await S().prompt({
+      title: 'Rename category', okText: 'Save',
+      field: { label: 'Renames the folder on disk; the web address stays the same', type: 'text', value: cat.folder },
+    });
+    if (name && name.trim() && name !== cat.folder) {
+      act(() => send('/api/admin/portfolio/categories/' + encodeURIComponent(cat.id), 'PUT', { folder: name }));
+    }
+  }
+
+  async function deleteCategory(cat) {
+    const count = cat.galleries.length;
+    const ok = await S().confirm({
+      title: 'Delete this category?',
+      message: count
+        ? `"${cat.folder}" and its ${count} ${count === 1 ? 'gallery' : 'galleries'} move to site-data/portfolio-trash/, where you can still recover them.`
+        : `"${cat.folder}" moves to site-data/portfolio-trash/.`,
+      okText: 'Delete', danger: true,
+    });
+    if (!ok) return;
+    await act(() => req('/api/admin/portfolio/categories/' + encodeURIComponent(cat.id), { method: 'DELETE' }));
+    state.categoryId = null;
+    render();
+  }
+
+  async function newGallery() {
+    const cats = state.tree?.categories || [];
+    if (!cats.length) {
+      S().toast('Create a category first');
+      return;
+    }
+    const categoryId = state.categoryId || (await S().prompt({
+      title: 'New gallery', okText: 'Next',
+      field: { label: 'Category', type: 'select', options: cats.map(c => ({ value: c.id, label: c.title })) },
+    }));
+    if (!categoryId) return;
+    const name = await S().prompt({
+      title: 'New gallery', okText: 'Create',
+      field: { label: 'Folder name, e.g. Smith & Jones 2026', type: 'text' },
+    });
+    if (!name || !name.trim()) return;
+    await act(async () => {
+      const r = await send('/api/admin/portfolio/galleries', 'POST', { categoryId, name });
+      if (r.gallery) { state.galleryId = r.gallery.id; state.gallery = r.gallery; }
+    });
+  }
+
+  async function renameGallery(g) {
+    const name = await S().prompt({
+      title: 'Rename gallery', okText: 'Save',
+      field: { label: 'Renames the folder on disk; the web address stays the same', type: 'text', value: g.folder },
+    });
+    if (name && name.trim() && name !== g.folder) {
+      act(() => send('/api/admin/portfolio/galleries/' + encodeURIComponent(g.id), 'PUT', { folder: name }));
+    }
+  }
+
+  async function deleteGallery(g) {
+    const n = g.items.filter(i => i.type !== 'header').length;
+    const ok = await S().confirm({
+      title: 'Delete this gallery?',
+      message: `"${g.folder}" and its ${n} file${n === 1 ? '' : 's'} move to site-data/portfolio-trash/, where you can still recover them.`,
+      okText: 'Delete', danger: true,
+    });
+    if (!ok) return;
+    await act(() => req('/api/admin/portfolio/galleries/' + encodeURIComponent(g.id), { method: 'DELETE' }));
+    state.galleryId = null;
+    state.gallery = null;
+    render();
+  }
+
+  // ---------- Entry point ----------
+
+  window.SDPortfolio = {
+    async open() {
+      try {
+        await loadTree();
+        if (state.galleryId) await loadGallery(state.galleryId).catch(() => { state.galleryId = null; });
+        render();
+        scheduleProcessing();
+      } catch (err) {
+        $('pfa-centre').innerHTML = `<div class="pfa-empty"><p>Could not load the portfolio.</p><p class="pfa-hint">${esc(err.message || '')}</p></div>`;
+      }
+    },
+  };
+})();

@@ -176,6 +176,8 @@ document.addEventListener('DOMContentLoaded', () => {
       await Promise.all([loadData(), loadHeaderConfig()]);
       settingsLoaded.header = true;
       renderAll();
+      // Come back to whichever side of the app you were last working on.
+      if (lastTab() === 'portfolio') setScreen('portfolio');
     } else {
       hide($('auth-setup')); show($('auth-login')); hide($('app'));
     }
@@ -267,8 +269,22 @@ document.addEventListener('DOMContentLoaded', () => {
     $('screen-library').hidden = screen !== 'library';
     $('screen-upload').hidden = screen !== 'upload';
     $('screen-settings').hidden = screen !== 'settings';
+    $('screen-portfolio').hidden = screen !== 'portfolio';
+    // The Portfolio/Client delivery switch reflects which side you're on, and
+    // Settings belongs to neither.
+    $('tab-portfolio').classList.toggle('active', screen === 'portfolio');
+    $('tab-delivery').classList.toggle('active', screen === 'library' || screen === 'upload');
     if (screen === 'upload') renderUpload();
     if (screen === 'settings') openSettings();
+    if (screen === 'portfolio' && window.SDPortfolio) window.SDPortfolio.open();
+  }
+  $('tab-portfolio').addEventListener('click', () => { rememberTab('portfolio'); setScreen('portfolio'); });
+  $('tab-delivery').addEventListener('click', () => { rememberTab('delivery'); setScreen('library'); });
+  function rememberTab(which) {
+    try { localStorage.setItem('admin2:tab', which); } catch (_) {}
+  }
+  function lastTab() {
+    try { return localStorage.getItem('admin2:tab') || 'delivery'; } catch (_) { return 'delivery'; }
   }
   function renderAll() {
     updateUploadsCount();
@@ -1782,7 +1798,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const uploaded = await xhrSend({
         method: 'POST', url: `/api/admin/uploads/${item.uploadId}/finalize`, item,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ galleryId: item.galleryId, title: item.title }),
+        body: JSON.stringify(item.portfolioGalleryId
+          ? { portfolioGalleryId: item.portfolioGalleryId }
+          : { galleryId: item.galleryId, title: item.title }),
       });
       item.uploadId = null;
       item.pct = 100; item.status = 'done'; item.uploaded = uploaded;
@@ -2828,6 +2846,52 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (t) t.style.display = 'none';
   }
   window.addEventListener('resize', syncRailToggle);
+
+  // ==========================================================================
+  // Bridge for portfolio-admin.js
+  // ==========================================================================
+  // Everything in this file lives in one DOMContentLoaded closure, so the
+  // portfolio screen (a separate file) reaches the shared helpers through here.
+  window.SDAdmin = {
+    api,
+    toast,
+    prompt: promptModal,
+    confirm: confirmModal,
+    escapeHtml,
+    setScreen,
+    captureFrameAsJpegBlob,
+    // One file straight into a portfolio folder, chunked like the upload queue
+    // but without the queue's screen: the portfolio editor has its own drop
+    // zone and shows progress per file.
+    async uploadToPortfolio(file, galleryId, onProgress) {
+      const init = await xhrSend({
+        method: 'POST', url: '/api/admin/uploads',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, totalSize: file.size, contentType: file.type || '' }),
+      });
+      const chunkBytes = Math.min(init.chunkMaxBytes || PREFERRED_CHUNK_BYTES, PREFERRED_CHUNK_BYTES);
+      let sent = 0;
+      while (sent < file.size) {
+        const start = sent;
+        const end = Math.min(start + chunkBytes, file.size) - 1;
+        const ack = await xhrSend({
+          method: 'PUT', url: `/api/admin/uploads/${init.uploadId}/chunk`,
+          headers: { 'Content-Range': `bytes ${start}-${end}/${file.size}`, 'Content-Type': 'application/octet-stream' },
+          body: file.slice(start, end + 1),
+          onProgress: (e) => {
+            if (e.lengthComputable && onProgress) onProgress(Math.round((start + e.loaded) / file.size * 100));
+          },
+        });
+        sent = typeof ack.received === 'number' ? ack.received : end + 1;
+        if (onProgress) onProgress(Math.round(sent / file.size * 100));
+      }
+      return await xhrSend({
+        method: 'POST', url: `/api/admin/uploads/${init.uploadId}/finalize`,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ portfolioGalleryId: galleryId }),
+      });
+    },
+  };
 
   // ==========================================================================
   // Init

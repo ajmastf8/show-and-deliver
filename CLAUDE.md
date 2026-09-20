@@ -35,6 +35,7 @@ public/
     layouts.js         # Gallery layouts: justified, masonry, grid, slideshow
     media-stage.js     # Shared video player (controls strip, caption overlay, caption box)
     header.js          # Dynamic header rendering from /api/header config
+    portfolio-admin.js # Admin Portfolio tab (categories, galleries, items)
 tools/
   dev-router.php       # php -S router replaying .htaccess (local only; denied on the web)
 site-data/             # Runtime data (gitignored)
@@ -109,7 +110,13 @@ site-data/             # Runtime data (gitignored)
   videos in the shared `media-stage.js` player, which `public.js` uses too, so
   the caption overlay and caption box behave the same everywhere. A
   `{type:'portfolio'}` header nav entry is expanded server-side into the current
-  categories, so the menu follows the folders. Video size and duration come from the MP4 header in pure PHP
+  categories, so the menu follows the folders. The admin splits into a
+  **Portfolio** tab (`portfolio-admin.js`, folders and their contents) and a
+  **Client delivery** tab (the existing library screen); the two share helpers
+  through the `window.SDAdmin` bridge that `admin.js` exposes. Deleting anything
+  in the portfolio moves it to `site-data/portfolio-trash/` — never `unlink`,
+  since these are the owner's master files. Video posters are captured in the
+  browser while the Portfolio tab is open, the same trick delivery uploads use. Video size and duration come from the MP4 header in pure PHP
   (`mp4VideoDimensions()`, `mp4DurationSeconds()`). The portfolio folders only
   serve media and `.vtt` — `.htaccess` refuses everything else there, since
   anything can arrive over FTP. Being replaced by this: `reels` galleries.
@@ -134,6 +141,8 @@ All routes are in `index.php`. Key patterns:
 - `GET /api/proofing/{token}` — client gallery data
 - `GET /api/collections/{token}` — collection data
 - `/api/admin/*` — authenticated admin endpoints (CRUD for galleries, videos, uploads)
+- `/api/admin/portfolio/*` — portfolio folders: categories, galleries, items,
+  posters, captions, headers, ordering, and `process` (derivative slices)
 - `/api/auth/*` — login, logout, setup, check
 - `/api/settings/*` — email, deploy config
 

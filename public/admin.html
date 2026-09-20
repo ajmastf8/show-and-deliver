@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/admin.css?v=14">
+  <link rel="stylesheet" href="/css/admin.css?v=15">
 </head>
 <body>
 
@@ -43,6 +43,10 @@
       <div class="brand" id="brand-home" title="Library" style="cursor:pointer;">
         <span class="brand-mast" id="brand-mast"></span>
         <span class="brand-delivery">DELIVERY</span>
+      </div>
+      <div class="topbar-tabs" role="tablist">
+        <button class="topbar-tab" id="tab-portfolio" role="tab">Portfolio</button>
+        <button class="topbar-tab active" id="tab-delivery" role="tab">Client delivery</button>
       </div>
       <div class="topbar-search">
         <input type="search" id="global-search" placeholder="Search galleries by name…"
@@ -89,6 +93,14 @@
           <div class="bulk-bar" id="bulk-bar" hidden></div>
         </main>
         <aside class="drawer" id="drawer" hidden></aside>
+      </div>
+    </div>
+
+    <!-- ---------- Portfolio screen ---------- -->
+    <div id="screen-portfolio" class="screen" hidden>
+      <div class="pfa-layout">
+        <aside class="rail" id="pfa-rail"></aside>
+        <main class="centre" id="pfa-centre"></main>
       </div>
     </div>
 
@@ -522,7 +534,8 @@
   <!-- Toast -->
   <div id="toast" class="toast"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=121"></script>
+  <script src="/vendor/sortablejs/Sortable.min.js"></script>
+  <script src="/js/admin.js?v=122"></script>
+  <script src="/js/portfolio-admin.js?v=1"></script>
 </body>
 </html>

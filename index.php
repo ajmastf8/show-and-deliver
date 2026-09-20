@@ -726,8 +726,9 @@ function generatePhotoThumbnail($srcPath, $thumbPath) {
     $dst = imagecreatetruecolor($newW, $newH);
     imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
     imagejpeg($dst, $thumbPath, 80);
-    imagedestroy($src);
-    imagedestroy($dst);
+    // No imagedestroy(): GD images have been ordinary objects freed by the
+    // garbage collector since PHP 8.0, and the call is deprecated in 8.5 —
+    // where its notice lands in the middle of a JSON response.
     return true;
 }
 
@@ -745,8 +746,9 @@ function generatePhotoProxy($srcPath, $proxyPath) {
     $dst = imagecreatetruecolor($newW, $newH);
     imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
     imagejpeg($dst, $proxyPath, 82);
-    imagedestroy($src);
-    imagedestroy($dst);
+    // No imagedestroy(): GD images have been ordinary objects freed by the
+    // garbage collector since PHP 8.0, and the call is deprecated in 8.5 —
+    // where its notice lands in the middle of a JSON response.
     return true;
 }
 
@@ -1721,8 +1723,20 @@ if ($method === 'POST' && matchRoute('/api/admin/uploads/{uploadId}/finalize', $
 
     $input = getInput();
     $gid = trim((string)($input['galleryId'] ?? ''));
+    $pgid = trim((string)($input['portfolioGalleryId'] ?? ''));
     $title = trim((string)($input['title'] ?? 'Untitled'));
-    if ($gid === '') respondError('galleryId is required', 400);
+    if ($gid === '' && $pgid === '') respondError('galleryId is required', 400);
+
+    // Portfolio galleries are folders on disk: the file keeps its own name and
+    // is registered by scanning, not by an entry in a gallery's videos.json.
+    if ($pgid !== '') {
+        [, $pgal] = portfolioRequireGallery($pgid);
+        $partPath = UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.part';
+        if (!file_exists($partPath)) respondError('Upload payload missing on disk', 500);
+        $name = portfolioAcceptUpload($pgal, $partPath, $meta['filename']);
+        @unlink(UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.json');
+        respond(['ok' => true, 'file' => $name, 'gallery' => portfolioGalleryResponse($pgid)]);
+    }
 
     $galleries = readGalleries();
     $gallery = null;
@@ -5010,6 +5024,516 @@ if ($method === 'GET' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
     $p['pending'] = $gal['pending'];
     $p['warnings'] = $gal['warnings'];
     respond(['gallery' => $p]);
+}
+
+// --- Admin mutations ---
+//
+// Every route resolves a gallery or category by id through portfolioTree(), so
+// paths are built from what the scan found, never from request input. A file
+// name from the client is only ever used to look up an existing item key, and a
+// new name is put through portfolioSafeName() first.
+
+// Strips what a folder or file name must not contain: path separators, the
+// characters Windows and URLs choke on, control characters and leading dots
+// (which would hide it from the scanner).
+function portfolioSafeName($s) {
+    $s = preg_replace('~[/\\\\:*?"<>|#%]+~u', ' ', (string)$s);
+    $s = preg_replace('/[\x00-\x1F\x7F]+/u', '', $s);
+    $s = preg_replace('/\s+/u', ' ', $s);
+    $s = trim(ltrim(trim($s), '.'));
+    if (class_exists('Normalizer')) $s = Normalizer::normalize($s, Normalizer::FORM_C);
+    return mb_substr($s, 0, 100);
+}
+
+// Keeps the extension intact while cleaning the stem.
+function portfolioSafeFileName($name) {
+    $ext = strtolower(pathinfo($name, PATHINFO_EXTENSION));
+    $stem = portfolioSafeName(pathinfo($name, PATHINFO_FILENAME));
+    if ($stem === '') $stem = 'file';
+    return $ext === '' ? $stem : "$stem.$ext";
+}
+
+// "name (2)" until nothing is in the way — the same shape Finder uses.
+function portfolioUniqueChildName($dir, $name) {
+    if (!file_exists("$dir/$name")) return $name;
+    $ext = pathinfo($name, PATHINFO_EXTENSION);
+    $stem = pathinfo($name, PATHINFO_FILENAME);
+    $suffix = $ext === '' ? '' : ".$ext";
+    for ($n = 2; ; $n++) {
+        $try = "$stem ($n)$suffix";
+        if (!file_exists("$dir/$try")) return $try;
+    }
+}
+
+// Nothing the admin deletes is unlinked: these are the only copies of the
+// owner's pictures, so they move to site-data/portfolio-trash/ instead.
+function portfolioTrash($path, $label = '') {
+    if (!file_exists($path)) return true;
+    if (!is_dir(PORTFOLIO_TRASH_DIR)) @mkdir(PORTFOLIO_TRASH_DIR, 0755, true);
+    denyWebAccess(PORTFOLIO_TRASH_DIR);
+    $name = date('Ymd-His') . '-' . portfolioSafeName($label !== '' ? $label : basename($path));
+    return @rename($path, PORTFOLIO_TRASH_DIR . '/' . portfolioUniqueChildName(PORTFOLIO_TRASH_DIR, $name));
+}
+
+function portfolioDropDerivatives($id) {
+    @unlink(THUMBS_DIR . "/$id.jpg");
+    @unlink(PROXY_DIR . "/{$id}_proxy.jpg");
+}
+
+// Resolves {gid} for a route, or answers 404.
+function portfolioRequireGallery($gid) {
+    $found = portfolioFindGallery($gid);
+    if (!$found) respondError('Gallery not found', 404);
+    return $found;
+}
+
+function portfolioRequireCategory($cid) {
+    foreach (portfolioTree()['categories'] as $cat) {
+        if ($cat['id'] === $cid) return $cat;
+    }
+    respondError('Category not found', 404);
+}
+
+// Resolves {file} for a route: it must name an item the scan already knows, so
+// nothing built from input ever reaches the filesystem.
+function portfolioRequireItem($gal, $file) {
+    $name = rawurldecode((string)$file);
+    $it = $gal['sidecar']['items'][$name] ?? null;
+    if (!$it) respondError('Item not found', 404);
+    return [$name, $it];
+}
+
+// Re-reads one gallery after a write and returns its admin payload, so the UI
+// always renders what is now on disk rather than what it hoped for.
+function portfolioGalleryResponse($gid) {
+    [$cat, $gal] = portfolioRequireGallery($gid);
+    $p = portfolioGalleryPayload($cat, $gal);
+    $p['items'] = portfolioGalleryItems($cat, $gal, true);
+    $p['folder'] = $gal['folder'];
+    $p['categoryId'] = $cat['id'];
+    $p['visible'] = ($gal['sidecar']['visible'] ?? true) !== false;
+    $p['cover'] = $gal['sidecar']['cover'];
+    $p['pending'] = $gal['pending'];
+    $p['warnings'] = $gal['warnings'];
+    return $p;
+}
+
+// Applies sidecar changes and re-reads the tree so the response is current.
+function portfolioSidecarPatch($dir, $file, callable $mutator) {
+    portfolioSidecarUpdate("$dir/$file", $mutator);
+    portfolioTree(true);
+}
+
+// Renames an item's file along with its poster and caption tracks, keeping the
+// sidecar key, the order and the cover pointing at it.
+function portfolioRenameItem($gal, $old, $new) {
+    $dir = $gal['dir'];
+    $it = $gal['sidecar']['items'][$old];
+    $oldExt = strtolower(pathinfo($old, PATHINFO_EXTENSION));
+    $new = portfolioSafeFileName($new);
+    if (strtolower(pathinfo($new, PATHINFO_EXTENSION)) !== $oldExt) {
+        $new = pathinfo($new, PATHINFO_FILENAME) . '.' . $oldExt;
+    }
+    if ($new === $old) return $old;
+    $new = portfolioUniqueChildName($dir, $new);
+    if (!@rename("$dir/$old", "$dir/$new")) respondError('Could not rename the file', 500);
+
+    $stem = pathinfo($new, PATHINFO_FILENAME);
+    $renames = [];
+    if (!empty($it['posterFile'])) {
+        $pExt = pathinfo($it['posterFile'], PATHINFO_EXTENSION);
+        $renames[$it['posterFile']] = "$stem.poster.$pExt";
+    }
+    foreach (($it['captions'] ?? []) as $lang => $vtt) {
+        $renames[$vtt] = "$stem.$lang.vtt";
+    }
+    foreach ($renames as $from => $to) {
+        if (file_exists("$dir/$from")) @rename("$dir/$from", "$dir/" . portfolioUniqueChildName($dir, $to));
+    }
+
+    portfolioSidecarPatch($dir, '.gallery.json', function ($g) use ($old, $new) {
+        if (!isset($g['items'][$old])) return $g;
+        // Rebuild the map in place so the item keeps its position in `items`.
+        $items = [];
+        foreach ($g['items'] as $k => $v) $items[$k === $old ? $new : $k] = $v;
+        $g['items'] = $items;
+        $g['order'] = array_map(fn($o) => $o === $old ? $new : $o, $g['order']);
+        if (($g['cover'] ?? null) === $old) $g['cover'] = $new;
+        return $g;
+    });
+    return $new;
+}
+
+// Takes an assembled upload into a gallery folder and processes it right away,
+// so a file uploaded through the admin has its thumbnail before the response
+// returns — the same contract as registerGalleryItem() for delivery galleries.
+function portfolioAcceptUpload($gal, $sourcePath, $originalName) {
+    $ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+    if (!in_array($ext, MEDIA_EXTS, true)) respondError('Unsupported file type: .' . $ext, 400);
+    $name = portfolioUniqueChildName($gal['dir'], portfolioSafeFileName($originalName));
+    if (!@rename($sourcePath, $gal['dir'] . '/' . $name)) respondError('Could not move the file into the gallery folder', 500);
+    @chmod($gal['dir'] . '/' . $name, 0644);
+
+    // The file is seconds old, so name it as trusted or the scan would hold it
+    // back as "still arriving".
+    portfolioReconcileGallery($gal['dir'], $gal['folder'], [], [$name]);
+    portfolioTree(true);
+    [, $fresh] = portfolioRequireGallery($gal['id']);
+    $it = $fresh['sidecar']['items'][$name] ?? null;
+    if ($it) {
+        $patch = portfolioProcessItem($fresh['dir'], $name, $it);
+        portfolioPatchItem($fresh['dir'], $name, $patch);
+        portfolioTree(true);
+    }
+    return $name;
+}
+
+// Categories
+
+if ($method === 'POST' && $uri === '/api/admin/portfolio/categories') {
+    requireAuth();
+    $name = portfolioSafeName(getInput()['name'] ?? '');
+    if ($name === '') respondError('Name is required', 400);
+    $name = portfolioUniqueChildName(PORTFOLIO_DIR, $name);
+    if (!@mkdir(PORTFOLIO_DIR . '/' . $name, 0755)) respondError('Could not create the folder', 500);
+    portfolioTree(true);
+    respond(['ok' => true, 'folder' => $name]);
+}
+
+if ($method === 'PUT' && matchRoute('/api/admin/portfolio/categories/{cid}', $uri, $params)) {
+    requireAuth();
+    $cat = portfolioRequireCategory($params['cid']);
+    $input = getInput();
+    $dir = $cat['dir'];
+
+    if (isset($input['folder'])) {
+        $folder = portfolioSafeName($input['folder']);
+        if ($folder === '') respondError('Name is required', 400);
+        if ($folder !== $cat['folder']) {
+            $folder = portfolioUniqueChildName(PORTFOLIO_DIR, $folder);
+            if (!@rename($dir, PORTFOLIO_DIR . '/' . $folder)) respondError('Could not rename the folder', 500);
+            $dir = PORTFOLIO_DIR . '/' . $folder;
+        }
+    }
+    $taken = [];
+    foreach (portfolioTree()['categories'] as $c) {
+        if ($c['id'] !== $cat['id']) $taken[] = $c['slug'];
+    }
+    portfolioSidecarPatch($dir, '.category.json', function ($c) use ($input, $taken) {
+        foreach (['title', 'description'] as $k) {
+            if (array_key_exists($k, $input)) $c[$k] = $input[$k] === null ? null : (string)$input[$k];
+        }
+        if (array_key_exists('visible', $input)) $c['visible'] = (bool)$input['visible'];
+        if (!empty($input['slug'])) {
+            $c['slug'] = portfolioUniqueSlug(portfolioSlugify($input['slug']), $taken, 'c-' . substr($c['id'], 3, 6));
+        }
+        return $c;
+    });
+    respond(['ok' => true]);
+}
+
+if ($method === 'DELETE' && matchRoute('/api/admin/portfolio/categories/{cid}', $uri, $params)) {
+    requireAuth();
+    $cat = portfolioRequireCategory($params['cid']);
+    if (!portfolioTrash($cat['dir'], $cat['folder'])) respondError('Could not move the folder to the trash', 500);
+    portfolioTree(true);
+    respond(['ok' => true]);
+}
+
+// Category order, and gallery order within a category.
+if ($method === 'PUT' && $uri === '/api/admin/portfolio/order') {
+    requireAuth();
+    $ids = (array)(getInput()['categories'] ?? []);
+    portfolioSidecarPatch(PORTFOLIO_DIR, '.portfolio.json', function ($p) use ($ids) {
+        $p['order'] = array_values(array_unique(array_map('strval', $ids)));
+        return $p;
+    });
+    respond(['ok' => true]);
+}
+
+if ($method === 'PUT' && matchRoute('/api/admin/portfolio/categories/{cid}/order', $uri, $params)) {
+    requireAuth();
+    $cat = portfolioRequireCategory($params['cid']);
+    $ids = (array)(getInput()['galleries'] ?? []);
+    portfolioSidecarPatch($cat['dir'], '.category.json', function ($c) use ($ids) {
+        $c['order'] = array_values(array_unique(array_map('strval', $ids)));
+        return $c;
+    });
+    respond(['ok' => true]);
+}
+
+// Galleries
+
+if ($method === 'POST' && $uri === '/api/admin/portfolio/galleries') {
+    requireAuth();
+    $input = getInput();
+    $cat = portfolioRequireCategory((string)($input['categoryId'] ?? ''));
+    $name = portfolioSafeName($input['name'] ?? '');
+    if ($name === '') respondError('Name is required', 400);
+    $name = portfolioUniqueChildName($cat['dir'], $name);
+    if (!@mkdir($cat['dir'] . '/' . $name, 0755)) respondError('Could not create the folder', 500);
+    portfolioTree(true);
+    foreach (portfolioFindCategoryBySlug($cat['slug'])['galleries'] as $g) {
+        if ($g['folder'] === $name) respond(['ok' => true, 'gallery' => portfolioGalleryResponse($g['id'])]);
+    }
+    respond(['ok' => true]);
+}
+
+if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri, $params)) {
+    requireAuth();
+    [$cat, $gal] = portfolioRequireGallery($params['gid']);
+    $input = getInput();
+    $dir = $gal['dir'];
+
+    // Moving to another category is a folder move; the slug only has to be
+    // unique among its new siblings.
+    if (!empty($input['categoryId']) && $input['categoryId'] !== $cat['id']) {
+        $target = portfolioRequireCategory((string)$input['categoryId']);
+        $folder = portfolioUniqueChildName($target['dir'], $gal['folder']);
+        if (!@rename($dir, $target['dir'] . '/' . $folder)) respondError('Could not move the gallery', 500);
+        $dir = $target['dir'] . '/' . $folder;
+        $cat = $target;
+    }
+    if (isset($input['folder'])) {
+        $folder = portfolioSafeName($input['folder']);
+        if ($folder === '') respondError('Name is required', 400);
+        if ($folder !== basename($dir)) {
+            $folder = portfolioUniqueChildName($cat['dir'], $folder);
+            if (!@rename($dir, $cat['dir'] . '/' . $folder)) respondError('Could not rename the folder', 500);
+            $dir = $cat['dir'] . '/' . $folder;
+        }
+    }
+    $taken = [];
+    foreach ($cat['galleries'] as $g) {
+        if ($g['id'] !== $gal['id']) $taken[] = $g['slug'];
+    }
+    $items = $gal['sidecar']['items'];
+    portfolioSidecarPatch($dir, '.gallery.json', function ($g) use ($input, $taken, $items) {
+        foreach (['title', 'description'] as $k) {
+            if (array_key_exists($k, $input)) $g[$k] = $input[$k] === null ? null : (string)$input[$k];
+        }
+        if (array_key_exists('visible', $input)) $g['visible'] = (bool)$input['visible'];
+        if (!empty($input['layout']) && in_array($input['layout'], PORTFOLIO_LAYOUTS, true)) $g['layout'] = $input['layout'];
+        if (array_key_exists('cover', $input)) {
+            $cover = $input['cover'] === null ? null : (string)$input['cover'];
+            $g['cover'] = ($cover !== null && isset($items[$cover])) ? $cover : null;
+        }
+        if (!empty($input['slug'])) {
+            $g['slug'] = portfolioUniqueSlug(portfolioSlugify($input['slug']), $taken, 'g-' . substr($g['id'], 3, 6));
+        }
+        if (!empty($input['description']) && mb_strlen($g['description']) > DESCRIPTION_MAX_LEN) {
+            $g['description'] = mb_substr($g['description'], 0, DESCRIPTION_MAX_LEN);
+        }
+        return $g;
+    });
+    respond(['ok' => true, 'gallery' => portfolioGalleryResponse($params['gid'])]);
+}
+
+if ($method === 'DELETE' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri, $params)) {
+    requireAuth();
+    [$cat, $gal] = portfolioRequireGallery($params['gid']);
+    if (!portfolioTrash($gal['dir'], $cat['folder'] . ' - ' . $gal['folder'])) {
+        respondError('Could not move the folder to the trash', 500);
+    }
+    foreach ($gal['sidecar']['items'] as $it) {
+        if (!empty($it['id'])) portfolioDropDerivatives($it['id']);
+    }
+    portfolioTree(true);
+    respond(['ok' => true]);
+}
+
+// Item order within a gallery, including section headers.
+if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/order', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    $order = array_map('strval', (array)(getInput()['order'] ?? []));
+    portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($order) {
+        $kept = [];
+        foreach ($order as $key) {
+            if (!isset($kept[$key]) && (isset($g['items'][$key]) || isset($g['headers'][$key]))) $kept[$key] = true;
+        }
+        // Anything the client didn't mention keeps its place at the end, so a
+        // stale list can never make items disappear.
+        foreach ($g['order'] as $key) {
+            if (!isset($kept[$key])) $kept[$key] = true;
+        }
+        $g['order'] = array_keys($kept);
+        return $g;
+    });
+    respond(['ok' => true]);
+}
+
+// Items
+
+if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/items/{file}', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    [$name] = portfolioRequireItem($gal, $params['file']);
+    $input = getInput();
+
+    if (!empty($input['rename'])) {
+        $name = portfolioRenameItem($gal, $name, (string)$input['rename']);
+        [, $gal] = portfolioRequireGallery($params['gid']);
+    }
+    portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($name, $input) {
+        if (!isset($g['items'][$name])) return $g;
+        $it = &$g['items'][$name];
+        if (array_key_exists('title', $input)) $it['title'] = mb_substr((string)$input['title'], 0, 200);
+        if (array_key_exists('description', $input)) $it['description'] = mb_substr((string)$input['description'], 0, DESCRIPTION_MAX_LEN);
+        if (array_key_exists('visible', $input)) $it['visible'] = (bool)$input['visible'];
+        unset($it);
+        return $g;
+    });
+    respond(['ok' => true, 'file' => $name, 'gallery' => portfolioGalleryResponse($params['gid'])]);
+}
+
+if ($method === 'DELETE' && matchRoute('/api/admin/portfolio/galleries/{gid}/items/{file}', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    [$name, $it] = portfolioRequireItem($gal, $params['file']);
+    $dir = $gal['dir'];
+    portfolioTrash("$dir/$name", $gal['folder'] . ' - ' . $name);
+    if (!empty($it['posterFile'])) portfolioTrash("$dir/{$it['posterFile']}", $it['posterFile']);
+    foreach (($it['captions'] ?? []) as $vtt) portfolioTrash("$dir/$vtt", $vtt);
+    if (!empty($it['id'])) portfolioDropDerivatives($it['id']);
+    // The scan drops the entry now that the file is gone.
+    portfolioReconcileGallery($dir, $gal['folder'], []);
+    portfolioTree(true);
+    respond(['ok' => true, 'gallery' => portfolioGalleryResponse($params['gid'])]);
+}
+
+// A poster frame captured in the browser, since prod has no ffmpeg. The body is
+// the raw JPEG; ?w= and ?h= carry the video's real size, which nothing else on
+// the server can tell us for formats the MP4 reader doesn't cover.
+if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/items/{file}/poster', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    [$name, $it] = portfolioRequireItem($gal, $params['file']);
+    if (($it['type'] ?? '') !== 'video') respondError('Only videos take a poster', 400);
+
+    $raw = file_get_contents('php://input');
+    if (strlen($raw) < 100) respondError('Empty image', 400);
+    $tmp = UPLOAD_TMP_DIR . '/poster-' . bin2hex(random_bytes(8)) . '.jpg';
+    file_put_contents($tmp, $raw);
+    $info = @getimagesize($tmp);
+    if (!$info || !in_array($info[2], [IMAGETYPE_JPEG, IMAGETYPE_PNG, IMAGETYPE_WEBP], true)) {
+        @unlink($tmp);
+        respondError('Not a readable image', 400);
+    }
+    $id = $it['id'];
+    $ok = generatePhotoThumbnail($tmp, THUMBS_DIR . "/$id.jpg") && generatePhotoProxy($tmp, PROXY_DIR . "/{$id}_proxy.jpg");
+    @unlink($tmp);
+    if (!$ok) respondError('Could not save the poster', 500);
+
+    $w = (int)($_GET['w'] ?? 0);
+    $h = (int)($_GET['h'] ?? 0);
+    portfolioPatchItem($gal['dir'], $name, array_filter([
+        'thumb' => time(),
+        'thumbSource' => 'capture',
+        'thumbOf' => (int)($it['mtime'] ?? 0),
+        'width' => $w > 0 ? $w : ($it['width'] ?? 0),
+        'height' => $h > 0 ? $h : ($it['height'] ?? 0),
+        'error' => null,
+    ], fn($v) => $v !== null));
+    portfolioTree(true);
+    respond(['ok' => true]);
+}
+
+// Caption tracks are stored beside the video as <name>.<lang>.vtt, the same
+// convention an FTP upload uses.
+if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/items/{file}/captions', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    [$name, $it] = portfolioRequireItem($gal, $params['file']);
+    if (($it['type'] ?? '') !== 'video') respondError('Only videos take captions', 400);
+    if (empty($_FILES['file'])) respondError('No file uploaded', 400);
+
+    $lang = normalizeCaptionLang($_POST['lang'] ?? '');
+    if ($lang === '') respondError('Pick a language for the caption track', 400);
+    $content = file_get_contents($_FILES['file']['tmp_name']);
+    if (strpos(ltrim($content, "\xEF\xBB\xBF"), 'WEBVTT') !== 0) respondError('That file is not WebVTT (it must start with WEBVTT)', 400);
+    $content = vttAutoShift($content, (float)($it['duration'] ?? 0));
+
+    $dir = $gal['dir'];
+    $target = pathinfo($name, PATHINFO_FILENAME) . ".$lang.vtt";
+    if (file_put_contents("$dir/$target", $content) === false) respondError('Could not save the caption file', 500);
+    $label = trim((string)($_POST['label'] ?? ''));
+    portfolioSidecarPatch($dir, '.gallery.json', function ($g) use ($name, $lang, $label) {
+        if (!isset($g['items'][$name])) return $g;
+        if ($label !== '') $g['items'][$name]['captionLabels'][$lang] = $label;
+        return $g;
+    });
+    portfolioReconcileGallery($dir, $gal['folder'], []);
+    portfolioTree(true);
+    respond(['ok' => true, 'gallery' => portfolioGalleryResponse($params['gid'])]);
+}
+
+if ($method === 'DELETE' && matchRoute('/api/admin/portfolio/galleries/{gid}/items/{file}/captions/{lang}', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    [$name, $it] = portfolioRequireItem($gal, $params['file']);
+    $lang = normalizeCaptionLang($params['lang']);
+    $vtt = $it['captions'][$lang] ?? null;
+    if (!$vtt) respondError('No caption track in that language', 404);
+    portfolioTrash($gal['dir'] . "/$vtt", $vtt);
+    portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($name, $lang) {
+        unset($g['items'][$name]['captionLabels'][$lang]);
+        return $g;
+    });
+    portfolioReconcileGallery($gal['dir'], $gal['folder'], []);
+    portfolioTree(true);
+    respond(['ok' => true, 'gallery' => portfolioGalleryResponse($params['gid'])]);
+}
+
+// Section headers live only in the sidecar: they have no file on disk.
+if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/headers', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    $text = mb_substr(trim((string)(getInput()['text'] ?? '')), 0, 200);
+    if ($text === '') respondError('Section text is required', 400);
+    $hid = generateId('h_');
+    portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($hid, $text) {
+        $g['headers'][$hid] = ['text' => $text];
+        array_unshift($g['order'], $hid);
+        return $g;
+    });
+    respond(['ok' => true, 'id' => $hid, 'gallery' => portfolioGalleryResponse($params['gid'])]);
+}
+
+if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/headers/{hid}', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    if (!isset($gal['sidecar']['headers'][$params['hid']])) respondError('Section not found', 404);
+    $text = mb_substr(trim((string)(getInput()['text'] ?? '')), 0, 200);
+    if ($text === '') respondError('Section text is required', 400);
+    portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($params, $text) {
+        $g['headers'][$params['hid']]['text'] = $text;
+        return $g;
+    });
+    respond(['ok' => true]);
+}
+
+if ($method === 'DELETE' && matchRoute('/api/admin/portfolio/galleries/{gid}/headers/{hid}', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($params) {
+        unset($g['headers'][$params['hid']]);
+        $g['order'] = array_values(array_filter($g['order'], fn($o) => $o !== $params['hid']));
+        return $g;
+    });
+    respond(['ok' => true, 'gallery' => portfolioGalleryResponse($params['gid'])]);
+}
+
+// Small uploads in one request; larger ones go through /api/admin/uploads and
+// finalize with portfolioGalleryId.
+if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/files', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    if (empty($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) respondError('No file uploaded', 400);
+    $tmp = UPLOAD_TMP_DIR . '/' . bin2hex(random_bytes(8)) . '.part';
+    if (!move_uploaded_file($_FILES['file']['tmp_name'], $tmp)) respondError('Could not read the upload', 500);
+    $name = portfolioAcceptUpload($gal, $tmp, $_FILES['file']['name']);
+    respond(['ok' => true, 'file' => $name, 'gallery' => portfolioGalleryResponse($params['gid'])]);
 }
 
 // The gallery shown on the homepage.

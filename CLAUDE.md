@@ -116,7 +116,20 @@ site-data/             # Runtime data (gitignored)
   through the `window.SDAdmin` bridge that `admin.js` exposes. Deleting anything
   in the portfolio moves it to `site-data/portfolio-trash/` — never `unlink`,
   since these are the owner's master files. Video posters are captured in the
-  browser while the Portfolio tab is open, the same trick delivery uploads use. Video size and duration come from the MP4 header in pure PHP
+  browser while the Portfolio tab is open, the same trick delivery uploads use.
+- **The home page** is its own gallery in the reserved folder
+  `site-data/portfolio/_home/`: it picks a layout like any gallery but has no
+  category, no URL of its own and never appears in listings or the menu. `/`
+  renders it, falling back to the reels grid (`renderReelsGrid()` in
+  `public.js`) while it is empty, so an install that hasn't migrated keeps its
+  old homepage.
+- **Picks** let one file appear in several galleries: a gallery's sidecar
+  `refs` map points at `{gallery, file}` elsewhere, and `portfolioResolveKey()`
+  resolves each order entry to a header, a file of its own, or a pick. There is
+  one file on disk and one thumbnail, so edits to the original show everywhere,
+  while each pick keeps its own position, visibility and optional title and
+  caption. A pick whose file is gone is flagged in the admin and skipped
+  publicly. Video size and duration come from the MP4 header in pure PHP
   (`mp4VideoDimensions()`, `mp4DurationSeconds()`). The portfolio folders only
   serve media and `.vtt` — `.htaccess` refuses everything else there, since
   anything can arrive over FTP. Being replaced by this: `reels` galleries.
@@ -142,7 +155,8 @@ All routes are in `index.php`. Key patterns:
 - `GET /api/collections/{token}` — collection data
 - `/api/admin/*` — authenticated admin endpoints (CRUD for galleries, videos, uploads)
 - `/api/admin/portfolio/*` — portfolio folders: categories, galleries, items,
-  posters, captions, headers, ordering, and `process` (derivative slices)
+  posters, captions, headers, picks (`refs`), the home gallery, ordering, and
+  `process` (derivative slices)
 - `/api/auth/*` — login, logout, setup, check
 - `/api/settings/*` — email, deploy config
 

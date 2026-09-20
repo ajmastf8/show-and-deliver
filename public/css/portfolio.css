@@ -261,3 +261,8 @@
 .pf-slideshow .lightbox-content video {
   max-height: none;
 }
+
+/* The home page is a gallery without the page furniture: no breadcrumb, no
+   title, and it runs to the full width of the container. */
+.pf-home .pf-head { margin-bottom: 18px; }
+.pf-home .pf-section:first-child { margin-top: 0; }

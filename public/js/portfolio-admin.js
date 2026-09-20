@@ -21,12 +21,22 @@
     uploads: new Map(), // name -> percent, while a drop is in flight
   };
 
+  // Each layout is shown as the shape it makes, which reads faster than four
+  // names in a dropdown.
   const LAYOUTS = [
-    ['justified', 'Justified rows'],
-    ['masonry', 'Masonry'],
-    ['grid', 'Grid'],
-    ['slideshow', 'Slideshow'],
+    ['justified', 'Justified rows', '<rect x="1" y="2" width="16" height="10"/><rect x="19" y="2" width="24" height="10"/><rect x="1" y="14" width="26" height="10"/><rect x="29" y="14" width="14" height="10"/>'],
+    ['masonry', 'Masonry', '<rect x="1" y="2" width="12" height="14"/><rect x="15" y="2" width="12" height="9"/><rect x="29" y="2" width="12" height="18"/><rect x="1" y="18" width="12" height="6"/><rect x="15" y="13" width="12" height="11"/><rect x="29" y="22" width="12" height="2"/>'],
+    ['grid', 'Grid', '<rect x="1" y="2" width="12" height="10"/><rect x="15" y="2" width="12" height="10"/><rect x="29" y="2" width="12" height="10"/><rect x="1" y="14" width="12" height="10"/><rect x="15" y="14" width="12" height="10"/><rect x="29" y="14" width="12" height="10"/>'],
+    ['slideshow', 'Slideshow', '<rect x="7" y="2" width="30" height="22"/><rect x="1" y="10" width="4" height="6"/><rect x="39" y="10" width="4" height="6"/>'],
   ];
+
+  function layoutPicker(current) {
+    return `<div class="pfa-layouts">${LAYOUTS.map(([v, label, shape]) => `
+      <button type="button" class="pfa-layout-opt ${current === v ? 'active' : ''}" data-layout="${v}" title="${label}">
+        <svg viewBox="0 0 44 26" aria-hidden="true">${shape}</svg>
+        <span>${label}</span>
+      </button>`).join('')}</div>`;
+  }
 
   // ---------- Server ----------
 
@@ -171,7 +181,13 @@
   function renderRail() {
     const cats = state.tree?.categories || [];
     const rail = $('pfa-rail');
+    const home = state.tree?.home;
     rail.innerHTML = `
+      <div class="rail-section-label">Site</div>
+      <div class="rail-row ${state.galleryId && home && state.galleryId === home.id ? 'active' : ''}" id="pfa-home-row">
+        <span class="rail-name">${home ? 'Home page' : '+ Set up home page'}</span>
+        ${home ? `<span class="rail-count">${home.publicCount}</span>` : ''}
+      </div>
       <div class="rail-section-label">Categories</div>
       <div class="rail-row ${state.categoryId ? '' : 'active'}" data-cat="">
         <span class="rail-name">All galleries</span>
@@ -195,6 +211,7 @@
       });
     });
     $('pfa-new-cat').addEventListener('click', newCategory);
+    $('pfa-home-row').addEventListener('click', openHome);
 
     // Drag to reorder categories; the order is what the public nav follows.
     const list = $('pfa-cat-list');
@@ -208,6 +225,13 @@
       });
     }
   }
+
+  galleriesInScope.all = function () {
+    const cats = state.tree?.categories || [];
+    const home = state.tree?.home;
+    const all = cats.flatMap(c => c.galleries.map(g => ({ ...g, category: c })));
+    return home ? [...all, { id: home.id, title: 'Home page', category: null }] : all;
+  };
 
   function galleriesInScope() {
     const cats = state.tree?.categories || [];
@@ -284,7 +308,6 @@
       g.needsPoster ? `<span class="pfa-badge work">${g.needsPoster} need posters</span>` : '',
       g.pending.length ? `<span class="pfa-badge work">${g.pending.length} arriving</span>` : '',
       g.failed ? `<span class="pfa-badge bad">${g.failed} unreadable</span>` : '',
-      state.tree.featuredId === g.id ? '<span class="pfa-badge good">Homepage</span>' : '',
     ].filter(Boolean).join('');
     return `
       <div class="pfa-card" data-gid="${esc(g.id)}">
@@ -313,49 +336,50 @@
   function renderGalleryEditor() {
     const g = state.gallery;
     const cats = state.tree?.categories || [];
-    const featured = state.tree.featuredId === g.id;
+    // The home page is a gallery in a reserved folder: same contents and
+    // layout, but it has no category, no name and no address to change.
+    const isHome = !!(state.tree?.home && state.tree.home.id === g.id);
 
     $('pfa-centre').innerHTML = `
       <div class="centre-header">
         <div>
-          <button class="back-link" id="pfa-back">&larr; ${esc(g.category.title)}</button>
-          <h1>${esc(g.title)}</h1>
+          <button class="back-link" id="pfa-back">&larr; ${esc(isHome ? 'All galleries' : g.category.title)}</button>
+          <h1>${esc(isHome ? 'Home page' : g.title)}</h1>
           <p class="centre-sub">
             <a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.url)}</a>
-            · <code>${esc(g.folder)}</code>
-            ${g.visible ? '' : '· <span class="pfa-badge">Hidden</span>'}
+            ${isHome ? '· what visitors see first' : `· <code>${esc(g.folder)}</code>`}
+            ${isHome || g.visible ? '' : '· <span class="pfa-badge">Hidden</span>'}
           </p>
         </div>
         <div class="centre-controls">
           <span class="pfa-pill" id="pfa-progress" hidden></span>
           <button class="ctrl" id="pfa-add-section">Add section</button>
-          <button class="ctrl" id="pfa-g-rename">Rename</button>
-          <button class="ctrl" id="pfa-g-delete">Delete</button>
+          <button class="ctrl" id="pfa-add-picks">Add from a gallery</button>
+          ${isHome ? '' : '<button class="ctrl" id="pfa-g-rename">Rename</button>'}
+          ${isHome ? '' : '<button class="ctrl" id="pfa-g-delete">Delete</button>'}
           <button class="btn-primary small" id="pfa-add-files">Add files</button>
         </div>
       </div>
       <div class="pfa-scroll">
         <div class="pfa-settings">
-          <label class="pfa-field">
+          <div class="pfa-field">
             <span>Layout</span>
-            <select class="setting-input" id="pfa-layout">
-              ${LAYOUTS.map(([v, l]) => `<option value="${v}" ${g.layout === v ? 'selected' : ''}>${l}</option>`).join('')}
-            </select>
-          </label>
-          <label class="pfa-field">
-            <span>Category</span>
-            <select class="setting-input" id="pfa-move">
-              ${cats.map(c => `<option value="${esc(c.id)}" ${c.id === g.categoryId ? 'selected' : ''}>${esc(c.title)}</option>`).join('')}
-            </select>
-          </label>
-          <label class="pfa-field">
-            <span>Web address</span>
-            <input class="setting-input" id="pfa-slug" value="${esc(g.slug)}">
-          </label>
-          <label class="pfa-check"><input type="checkbox" id="pfa-visible" ${g.visible ? 'checked' : ''}> Visible on the site</label>
-          <label class="pfa-check"><input type="checkbox" id="pfa-featured" ${featured ? 'checked' : ''}> Show on the homepage</label>
+            ${layoutPicker(g.layout)}
+          </div>
+          ${isHome ? '' : `
+            <label class="pfa-field">
+              <span>Category</span>
+              <select class="setting-input" id="pfa-move">
+                ${cats.map(c => `<option value="${esc(c.id)}" ${c.id === g.categoryId ? 'selected' : ''}>${esc(c.title)}</option>`).join('')}
+              </select>
+            </label>
+            <label class="pfa-field">
+              <span>Web address</span>
+              <input class="setting-input" id="pfa-slug" value="${esc(g.slug)}">
+            </label>
+            <label class="pfa-check"><input type="checkbox" id="pfa-visible" ${g.visible ? 'checked' : ''}> Visible on the site</label>`}
           <label class="pfa-field wide">
-            <span>Description</span>
+            <span>${isHome ? 'Intro text' : 'Description'}</span>
             <textarea class="setting-input" id="pfa-desc" rows="2" maxlength="2000">${esc(g.description)}</textarea>
           </label>
         </div>
@@ -392,8 +416,19 @@
           </span>
         </div>`;
     }
+    if (item.type === 'broken') {
+      return `<figure class="pfa-item dim" data-key="${esc(item.id)}">
+          <div class="pfa-item-frame"><span class="pfa-item-empty"></span></div>
+          <figcaption>
+            <div class="pfa-item-name">${esc(item.source?.file || 'Missing file')}</div>
+            <div class="pfa-flags"><span class="pfa-badge bad">Gone</span></div>
+            <div class="pfa-item-actions"><button data-act="ref-remove" data-file="${esc(item.id)}">Remove</button></div>
+          </figcaption>
+        </figure>`;
+    }
     const g = state.gallery;
     const flags = [
+      item.ref ? `<span class="pfa-badge">from ${esc(item.source?.gallery || 'another gallery')}</span>` : '',
       item.visible ? '' : '<span class="pfa-badge">Hidden</span>',
       item.needsPoster ? '<span class="pfa-badge work">No poster</span>' : '',
       item.processing ? '<span class="pfa-badge work">Processing</span>' : '',
@@ -407,14 +442,14 @@
           ${item.type === 'video' ? '<span class="pfa-video-mark">▶</span>' : ''}
         </div>
         <figcaption>
-          <div class="pfa-item-name" title="${esc(item.file)}">${esc(item.title || item.file)}</div>
+          <div class="pfa-item-name" title="${esc(item.source ? item.source.file : item.file)}">${esc(item.title || (item.source ? item.source.file : item.file))}</div>
           <div class="pfa-flags">${flags}</div>
           <div class="pfa-item-actions">
-            <button data-act="edit" data-file="${esc(item.file)}">Edit</button>
+            <button data-act="${item.ref ? 'ref-edit' : 'edit'}" data-file="${esc(item.file)}">Edit</button>
             <button data-act="cover" data-file="${esc(item.file)}">Cover</button>
-            <button data-act="visible" data-file="${esc(item.file)}">${item.visible ? 'Hide' : 'Show'}</button>
-            ${item.type === 'video' ? `<button data-act="captions" data-file="${esc(item.file)}">Captions${item.captions.length ? ` (${item.captions.length})` : ''}</button>` : ''}
-            <button data-act="delete" data-file="${esc(item.file)}">Delete</button>
+            <button data-act="${item.ref ? 'ref-visible' : 'visible'}" data-file="${esc(item.file)}">${item.visible ? 'Hide' : 'Show'}</button>
+            ${item.type === 'video' && !item.ref ? `<button data-act="captions" data-file="${esc(item.file)}">Captions${item.captions.length ? ` (${item.captions.length})` : ''}</button>` : ''}
+            <button data-act="${item.ref ? 'ref-remove' : 'delete'}" data-file="${esc(item.file)}">${item.ref ? 'Remove' : 'Delete'}</button>
           </div>
         </figcaption>
       </figure>`;
@@ -424,16 +459,20 @@
     const gid = g.id;
     const put = (body) => act(() => send('/api/admin/portfolio/galleries/' + encodeURIComponent(gid), 'PUT', body));
 
+    const isHome = !!(state.tree?.home && state.tree.home.id === gid);
     $('pfa-back').addEventListener('click', () => { state.galleryId = null; state.gallery = null; render(); });
-    $('pfa-layout').addEventListener('change', e => put({ layout: e.target.value }));
-    $('pfa-move').addEventListener('change', e => put({ categoryId: e.target.value }));
-    $('pfa-visible').addEventListener('change', e => put({ visible: e.target.checked }));
-    $('pfa-slug').addEventListener('change', e => put({ slug: e.target.value }));
+    $('pfa-centre').querySelectorAll('[data-layout]').forEach(btn => {
+      btn.addEventListener('click', () => put({ layout: btn.dataset.layout }));
+    });
     $('pfa-desc').addEventListener('change', e => put({ description: e.target.value }));
-    $('pfa-featured').addEventListener('change', e =>
-      act(() => send('/api/settings/portfolio', 'PUT', { featuredId: e.target.checked ? gid : null })));
-    $('pfa-g-rename').addEventListener('click', () => renameGallery(g));
-    $('pfa-g-delete').addEventListener('click', () => deleteGallery(g));
+    $('pfa-add-picks').addEventListener('click', () => openPicker(gid));
+    if (!isHome) {
+      $('pfa-move').addEventListener('change', e => put({ categoryId: e.target.value }));
+      $('pfa-visible').addEventListener('change', e => put({ visible: e.target.checked }));
+      $('pfa-slug').addEventListener('change', e => put({ slug: e.target.value }));
+      $('pfa-g-rename').addEventListener('click', () => renameGallery(g));
+      $('pfa-g-delete').addEventListener('click', () => deleteGallery(g));
+    }
     $('pfa-add-section').addEventListener('click', async () => {
       const text = await S().prompt({ title: 'Add section', okText: 'Add', field: { label: 'Section heading', type: 'text' } });
       if (text && text.trim()) act(() => send(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/headers`, 'POST', { text }));
@@ -476,6 +515,20 @@
     const item = g.items.find(i => i.file === file);
 
     if (action === 'cover') return act(() => send(base, 'PUT', { cover: file }));
+    if (action === 'ref-remove') return act(() => req(`${base}/refs/${encodeURIComponent(file)}`, { method: 'DELETE' }));
+    if (action === 'ref-visible') return act(() => send(`${base}/refs/${encodeURIComponent(file)}`, 'PUT', { visible: !item.visible }));
+    if (action === 'ref-edit') {
+      // A pick can carry its own title and caption without touching the
+      // original, which other galleries keep showing unchanged.
+      const title = await S().prompt({ title: 'Title here', okText: 'Next', field: { label: 'Shown in this gallery only', type: 'text', value: item.title || '' } });
+      if (title === null) return;
+      const description = await S().prompt({
+        title: 'Caption box here', okText: 'Save',
+        field: { label: 'Shown in this gallery only', type: 'textarea', rows: 5, maxLength: 2000, value: item.description || '' },
+      });
+      if (description === null) return;
+      return act(() => send(`${base}/refs/${encodeURIComponent(file)}`, 'PUT', { title, description }));
+    }
     if (action === 'visible') return act(() => send(`${base}/items/${encodeURIComponent(file)}`, 'PUT', { visible: !item.visible }));
     if (action === 'delete') {
       const ok = await S().confirm({
@@ -545,6 +598,81 @@
       act(() => req(base, { method: 'POST', body: fd }));
     });
     picker.click();
+  }
+
+  // ---------- Borrowing pictures from another gallery ----------
+
+  // Adds picks: the file stays where it is and is shown here too, so a shot
+  // can lead the home page while living in the gallery it belongs to.
+  async function openPicker(gid) {
+    const galleries = galleriesInScope.all().filter(g => g.id !== gid);
+    if (!galleries.length) {
+      S().toast('There is nothing to borrow from yet');
+      return;
+    }
+    const chosen = new Set();
+    const wrap = document.createElement('div');
+    wrap.className = 'pfa-modal';
+    wrap.innerHTML = `
+      <div class="pfa-modal-backdrop"></div>
+      <div class="pfa-modal-card">
+        <h3>Add from a gallery</h3>
+        <p class="pfa-hint">The file stays where it is. Edits to the original show up everywhere it appears.</p>
+        <select class="setting-input" id="pfa-pick-gallery">
+          ${galleries.map(g => `<option value="${esc(g.id)}">${esc(g.category ? g.category.title + ' — ' : '')}${esc(g.title)}</option>`).join('')}
+        </select>
+        <div class="pfa-picker" id="pfa-picker"></div>
+        <div class="pfa-modal-actions">
+          <button class="ctrl" id="pfa-pick-cancel">Cancel</button>
+          <button class="btn-primary small" id="pfa-pick-add">Add <span id="pfa-pick-count">0</span></button>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    const close = () => wrap.remove();
+    wrap.querySelector('.pfa-modal-backdrop').addEventListener('click', close);
+    $('pfa-pick-cancel').addEventListener('click', close);
+
+    async function showGallery(sourceId) {
+      const grid = $('pfa-picker');
+      grid.innerHTML = '<p class="pfa-hint">Loading…</p>';
+      const { gallery } = await req('/api/admin/portfolio/galleries/' + encodeURIComponent(sourceId));
+      const files = gallery.items.filter(i => i.type !== 'header' && i.type !== 'broken' && !i.ref);
+      grid.innerHTML = files.length
+        ? files.map(i => `
+            <button type="button" class="pfa-pick" data-gallery="${esc(sourceId)}" data-file="${esc(i.file)}">
+              ${i.thumb ? `<img src="${esc(i.thumb)}" alt="" loading="lazy">` : '<span class="pfa-item-empty"></span>'}
+            </button>`).join('')
+        : '<p class="pfa-hint">That gallery has no files of its own.</p>';
+      grid.querySelectorAll('.pfa-pick').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const key = btn.dataset.gallery + '\u0000' + btn.dataset.file;
+          if (chosen.has(key)) chosen.delete(key); else chosen.add(key);
+          btn.classList.toggle('chosen', chosen.has(key));
+          $('pfa-pick-count').textContent = String(chosen.size);
+        });
+      });
+    }
+
+    $('pfa-pick-gallery').addEventListener('change', e => showGallery(e.target.value));
+    await showGallery(galleries[0].id);
+
+    $('pfa-pick-add').addEventListener('click', () => {
+      if (!chosen.size) return close();
+      const items = [...chosen].map(k => {
+        const [galleryId, file] = k.split('\u0000');
+        return { galleryId, file };
+      });
+      close();
+      act(() => send(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/refs`, 'POST', { items }));
+    });
+  }
+
+  async function openHome() {
+    if (state.tree?.home) return openGallery(state.tree.home.id);
+    await act(async () => {
+      const r = await send('/api/admin/portfolio/home', 'POST', {});
+      if (r.gallery) { state.galleryId = r.gallery.id; state.gallery = r.gallery; }
+    });
   }
 
   // ---------- Uploads ----------

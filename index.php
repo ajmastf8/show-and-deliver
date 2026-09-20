@@ -33,6 +33,9 @@ define('PORTFOLIO_PROCESS_SLICE_SECONDS', 8);
 // pending and left alone, so no thumbnail is ever cut from a truncated upload.
 define('PORTFOLIO_SETTLE_SECONDS', 60);
 define('PORTFOLIO_LAYOUTS', ['justified', 'masonry', 'grid', 'slideshow']);
+// The home page is its own gallery in a reserved folder: it has no category,
+// no public URL of its own, and never appears in listings or the menu.
+define('PORTFOLIO_HOME_FOLDER', '_home');
 
 // Cap for a portfolio item's caption box. Long enough for a paragraph of
 // credits, short enough that the field can never bloat a gallery's videos.json.
@@ -4416,10 +4419,14 @@ function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trus
         $g += [
             'title' => null, 'description' => '', 'layout' => 'justified', 'cover' => null,
             'visible' => true, 'createdAt' => date('c'), 'order' => [], 'headers' => [], 'items' => [],
+            // Picks borrowed from other galleries: one file on disk, shown in
+            // as many galleries as you like. See portfolioResolveKey().
+            'refs' => [],
         ];
         if (!in_array($g['layout'], PORTFOLIO_LAYOUTS, true)) $g['layout'] = 'justified';
         $items = is_array($g['items']) ? $g['items'] : [];
         $headers = is_array($g['headers']) ? $g['headers'] : [];
+        $refs = is_array($g['refs']) ? $g['refs'] : [];
         $order = is_array($g['order']) ? $g['order'] : [];
 
         $present = $scan['media'];
@@ -4468,15 +4475,16 @@ function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trus
 
         $kept = [];
         foreach ($order as $o) {
-            if (is_string($o) && !isset($kept[$o]) && (isset($items[$o]) || isset($headers[$o]))) $kept[$o] = true;
+            if (is_string($o) && !isset($kept[$o]) && (isset($items[$o]) || isset($headers[$o]) || isset($refs[$o]))) $kept[$o] = true;
         }
         foreach ($items as $name => $_) {
             if (!isset($kept[$name])) $kept[$name] = true;
         }
         $g['order'] = array_map('strval', array_keys($kept));
         $g['headers'] = array_intersect_key($headers, $kept);
+        $g['refs'] = array_intersect_key($refs, $kept);
         $g['items'] = $items;
-        if ($g['cover'] !== null && !isset($items[$g['cover']])) $g['cover'] = null;
+        if ($g['cover'] !== null && !isset($items[$g['cover']]) && !isset($refs[$g['cover']])) $g['cover'] = null;
         return $g;
     });
     foreach ($removedIds as $id) {
@@ -4516,6 +4524,7 @@ function portfolioReconcileCategory($dir, $folder, array $takenSlugs) {
             'id' => $r['sidecar']['id'],
             'slug' => $r['sidecar']['slug'],
             'folder' => $n,
+            'rel' => "$folder/$n",
             'dir' => "$dir/$n",
             'sidecar' => $r['sidecar'],
             'warnings' => $r['warnings'],
@@ -4542,6 +4551,7 @@ function portfolioTree($refresh = false) {
     static $tree = null;
     if ($tree !== null && !$refresh) return $tree;
     [$names, $warnings] = portfolioListDirs(PORTFOLIO_DIR, 'the portfolio folder');
+    $names = array_values(array_filter($names, fn($n) => $n !== PORTFOLIO_HOME_FOLDER));
     $root = jsonRead(PORTFOLIO_DIR . '/.portfolio.json');
     $savedOrder = is_array($root['order'] ?? null) ? $root['order'] : [];
     $byId = [];
@@ -4572,6 +4582,7 @@ function portfolioTree($refresh = false) {
             'id' => $r['sidecar']['id'],
             'slug' => $r['sidecar']['slug'],
             'folder' => $n,
+            'rel' => $n,
             'dir' => PORTFOLIO_DIR . "/$n",
             'sidecar' => $r['sidecar'],
             'galleries' => $r['galleries'],
@@ -4584,11 +4595,41 @@ function portfolioTree($refresh = false) {
         $p['order'] = $ids;
         return $p;
     });
-    $tree = ['categories' => $categories, 'warnings' => $warnings];
+    $tree = ['categories' => $categories, 'home' => portfolioScanHome(), 'warnings' => $warnings];
     return $tree;
 }
 
+// The home gallery node, or null when the folder hasn't been created yet.
+function portfolioScanHome() {
+    $dir = PORTFOLIO_DIR . '/' . PORTFOLIO_HOME_FOLDER;
+    if (!is_dir($dir)) return null;
+    $r = portfolioReconcileGallery($dir, 'Home page', []);
+    return [
+        'id' => $r['sidecar']['id'],
+        'slug' => 'home',
+        'folder' => PORTFOLIO_HOME_FOLDER,
+        'rel' => PORTFOLIO_HOME_FOLDER,
+        'dir' => $dir,
+        'home' => true,
+        'sidecar' => $r['sidecar'],
+        'warnings' => $r['warnings'],
+        'pending' => $r['pending'],
+    ];
+}
+
+// Stands in for a category where the payload builders expect one. The home
+// gallery has no category, so this carries the title its editor shows.
+function portfolioHomeCategory() {
+    return [
+        'id' => null, 'slug' => null, 'folder' => 'Home page', 'rel' => '',
+        'sidecar' => ['title' => 'Home page', 'description' => '', 'visible' => true],
+        'galleries' => [], 'warnings' => [],
+    ];
+}
+
 function portfolioFindGallery($id) {
+    $home = portfolioTree()['home'];
+    if ($home && $home['id'] === $id) return [portfolioHomeCategory(), $home];
     foreach (portfolioTree()['categories'] as $cat) {
         foreach ($cat['galleries'] as $gal) {
             if ($gal['id'] === $id) return [$cat, $gal];
@@ -4709,7 +4750,6 @@ function portfolioProcess($galleryId, $sliceSeconds) {
     $galleries = [];
     foreach (portfolioTree(true)['categories'] as $cat) {
         foreach ($cat['galleries'] as $gal) {
-            $gal['catFolder'] = $cat['folder'];
             if ($gal['id'] === $galleryId) array_unshift($galleries, $gal);
             else $galleries[] = $gal;
         }
@@ -4738,7 +4778,7 @@ function portfolioProcess($galleryId, $sliceSeconds) {
                 $needsPoster[] = [
                     'galleryId' => $gal['id'],
                     'file' => $name,
-                    'src' => portfolioMediaUrl($gal['catFolder'], $gal['folder'], $name),
+                    'src' => portfolioMediaUrl($gal['rel'], $name),
                 ];
             }
         }
@@ -4750,12 +4790,19 @@ function portfolioProcess($galleryId, $sliceSeconds) {
 
 // --- Payloads ---
 
-function portfolioMediaUrl($catFolder, $galFolder, $file) {
-    return '/media/' . rawurlencode($catFolder) . '/' . rawurlencode($galFolder) . '/' . rawurlencode($file);
+// $rel is a gallery's path under site-data/portfolio/ ("Weddings/Smith & Jones"
+// or "_home"), so this covers galleries in a category, the home gallery, and
+// items a gallery borrows from another one.
+function portfolioMediaUrl($rel, $file) {
+    $parts = array_map('rawurlencode', explode('/', $rel));
+    return '/media/' . implode('/', $parts) . '/' . rawurlencode($file);
 }
 
 function portfolioCategoryUrl($cat) { return '/portfolio/' . $cat['slug']; }
-function portfolioGalleryUrl($cat, $gal) { return '/portfolio/' . $cat['slug'] . '/' . $gal['slug']; }
+function portfolioGalleryUrl($cat, $gal) {
+    if (!empty($gal['home'])) return '/';
+    return '/portfolio/' . $cat['slug'] . '/' . $gal['slug'];
+}
 function portfolioTitle($node) {
     $t = trim((string)($node['sidecar']['title'] ?? ''));
     return $t !== '' ? $t : $node['folder'];
@@ -4765,12 +4812,48 @@ function portfolioTitle($node) {
 // for its thumbnail. Videos show without a poster (the page draws a placeholder)
 // so a folder of fresh videos isn't invisible until someone opens the admin.
 function portfolioItemIsPublic(array $it) {
-    if (($it['visible'] ?? true) === false) return false;
-    if (($it['type'] ?? '') === 'photo') return !empty($it['thumb']) && is_file(THUMBS_DIR . "/{$it['id']}.jpg");
-    return true;
+    return ($it['visible'] ?? true) !== false && portfolioItemReady($it);
 }
 
-function portfolioItemPayload($cat, $gal, $name, array $it) {
+// Whether a visitor can be shown this file at all: a photo waits for its
+// thumbnail, a video shows regardless (the page draws a placeholder), so a
+// folder of fresh videos isn't invisible until someone opens the admin.
+function portfolioItemReady(array $it) {
+    if (($it['type'] ?? '') !== 'photo') return true;
+    return !empty($it['thumb']) && is_file(THUMBS_DIR . "/{$it['id']}.jpg");
+}
+
+// Follows a pick to the file it points at, in whichever gallery holds it.
+// Returns null when that gallery or file is gone, which the admin flags and
+// public payloads skip.
+function portfolioResolveRef($ref) {
+    if (empty($ref['gallery']) || empty($ref['file'])) return null;
+    $found = portfolioFindGallery($ref['gallery']);
+    if (!$found) return null;
+    [, $srcGal] = $found;
+    $it = $srcGal['sidecar']['items'][$ref['file']] ?? null;
+    return $it ? [$srcGal, (string)$ref['file'], $it] : null;
+}
+
+// One entry of a gallery's order: a section header, a file of its own, or a
+// pick borrowed from elsewhere.
+function portfolioResolveKey($gal, $key) {
+    $g = $gal['sidecar'];
+    if (isset($g['headers'][$key])) {
+        return ['kind' => 'header', 'text' => (string)($g['headers'][$key]['text'] ?? '')];
+    }
+    if (isset($g['items'][$key])) {
+        return ['kind' => 'item', 'gal' => $gal, 'file' => $key, 'item' => $g['items'][$key]];
+    }
+    $ref = $g['refs'][$key] ?? null;
+    if (!$ref) return null;
+    $r = portfolioResolveRef($ref);
+    if (!$r) return ['kind' => 'broken', 'ref' => $ref];
+    [$srcGal, $file, $item] = $r;
+    return ['kind' => 'ref', 'gal' => $srcGal, 'file' => $file, 'item' => $item, 'ref' => $ref];
+}
+
+function portfolioItemPayload($gal, $name, array $it) {
     $id = $it['id'];
     $thumb = !empty($it['thumb']) && is_file(THUMBS_DIR . "/$id.jpg") ? "/thumbnails/$id.jpg?v={$it['thumb']}" : null;
     $proxy = null;
@@ -4781,7 +4864,7 @@ function portfolioItemPayload($cat, $gal, $name, array $it) {
         'type' => $it['type'],
         'title' => $it['title'] ?? '',
         'description' => $it['description'] ?? '',
-        'src' => portfolioMediaUrl($cat['folder'], $gal['folder'], $name),
+        'src' => portfolioMediaUrl($gal['rel'], $name),
         'thumb' => $thumb,
         'width' => (int)($it['width'] ?? 0),
         'height' => (int)($it['height'] ?? 0),
@@ -4797,7 +4880,7 @@ function portfolioItemPayload($cat, $gal, $name, array $it) {
             $p['captions'][] = [
                 'lang' => $lang,
                 'label' => $labels[$lang] ?? captionLangLabel($lang),
-                'src' => portfolioMediaUrl($cat['folder'], $gal['folder'], $file),
+                'src' => portfolioMediaUrl($gal['rel'], $file),
             ];
         }
     }
@@ -4811,18 +4894,35 @@ function portfolioGalleryItems($cat, $gal, $admin = false) {
     $out = [];
     foreach ($g['order'] as $key) {
         $key = (string)$key;
-        if (isset($g['headers'][$key])) {
-            $out[] = ['type' => 'header', 'id' => $key, 'text' => (string)($g['headers'][$key]['text'] ?? '')];
+        $r = portfolioResolveKey($gal, $key);
+        if (!$r) continue;
+        if ($r['kind'] === 'header') {
+            $out[] = ['type' => 'header', 'id' => $key, 'text' => $r['text']];
             continue;
         }
-        $it = $g['items'][$key] ?? null;
-        if (!$it) continue;
-        if (!$admin && !portfolioItemIsPublic($it)) continue;
-        $p = portfolioItemPayload($cat, $gal, $key, $it);
+        if ($r['kind'] === 'broken') {
+            // The file a pick pointed at was deleted or moved away.
+            if ($admin) $out[] = ['type' => 'broken', 'id' => $key, 'file' => $key, 'source' => $r['ref']];
+            continue;
+        }
+        $it = $r['item'];
+        $isRef = $r['kind'] === 'ref';
+        // A pick carries its own visibility: a shot can be hidden in the
+        // gallery it lives in and still lead the home page.
+        $visible = $isRef ? (($r['ref']['visible'] ?? true) !== false) : (($it['visible'] ?? true) !== false);
+        if (!$admin && (!$visible || !portfolioItemReady($it))) continue;
+        $p = portfolioItemPayload($r['gal'], $r['file'], $it);
+        if ($isRef) {
+            foreach (['title', 'description'] as $k) {
+                if (isset($r['ref'][$k]) && $r['ref'][$k] !== null && $r['ref'][$k] !== '') $p[$k] = (string)$r['ref'][$k];
+            }
+            $p['ref'] = true;
+            if ($admin) $p['source'] = ['galleryId' => $r['gal']['id'], 'gallery' => portfolioTitle($r['gal']), 'file' => $r['file']];
+        }
         if ($admin) {
-            $t = portfolioItemTasks($gal['dir'], $key, $it);
+            $t = portfolioItemTasks($r['gal']['dir'], $r['file'], $it);
             $p['file'] = $key;
-            $p['visible'] = ($it['visible'] ?? true) !== false;
+            $p['visible'] = $visible;
             $p['processing'] = $t['work'];
             $p['needsPoster'] = $t['capture'];
             $p['failed'] = !empty($it['error']);
@@ -4843,8 +4943,10 @@ function portfolioGalleryCover($cat, $gal) {
     $g = $gal['sidecar'];
     $candidates = $g['cover'] !== null ? array_merge([$g['cover']], $g['order']) : $g['order'];
     foreach ($candidates as $key) {
-        $it = $g['items'][(string)$key] ?? null;
-        if ($it && portfolioItemIsPublic($it) && !empty($it['thumb']) && is_file(THUMBS_DIR . "/{$it['id']}.jpg")) {
+        $r = portfolioResolveKey($gal, (string)$key);
+        if (!$r || !in_array($r['kind'], ['item', 'ref'], true)) continue;
+        $it = $r['item'];
+        if (portfolioItemReady($it) && !empty($it['thumb']) && is_file(THUMBS_DIR . "/{$it['id']}.jpg")) {
             return "/thumbnails/{$it['id']}.jpg?v={$it['thumb']}";
         }
     }
@@ -4853,14 +4955,17 @@ function portfolioGalleryCover($cat, $gal) {
 
 function portfolioPublicItemCount($gal) {
     $n = 0;
-    foreach ($gal['sidecar']['items'] as $it) {
-        if (portfolioItemIsPublic($it)) $n++;
+    foreach ($gal['sidecar']['order'] as $key) {
+        $r = portfolioResolveKey($gal, (string)$key);
+        if (!$r || !in_array($r['kind'], ['item', 'ref'], true)) continue;
+        $visible = $r['kind'] === 'ref'
+            ? (($r['ref']['visible'] ?? true) !== false)
+            : (($r['item']['visible'] ?? true) !== false);
+        if ($visible && portfolioItemReady($r['item'])) $n++;
     }
     return $n;
 }
 
-// A gallery is listed publicly when it and its category are visible and it
-// has at least one item a visitor can see.
 function portfolioGalleryIsPublic($cat, $gal) {
     return ($cat['sidecar']['visible'] ?? true) !== false
         && ($gal['sidecar']['visible'] ?? true) !== false
@@ -4918,17 +5023,11 @@ function portfolioPublicCategories() {
     return $out;
 }
 
-// The homepage gallery: the one chosen in settings if it's public, otherwise
-// the first public gallery, so a fresh install shows something.
-function portfolioFeatured() {
-    $id = readSettings()['portfolioFeaturedId'] ?? null;
-    if ($id && ($found = portfolioFindGallery($id)) && portfolioGalleryIsPublic(...$found)) return $found;
-    foreach (portfolioTree()['categories'] as $cat) {
-        foreach ($cat['galleries'] as $gal) {
-            if (portfolioGalleryIsPublic($cat, $gal)) return [$cat, $gal];
-        }
-    }
-    return null;
+// The home page's own gallery, if it has anything to show.
+function portfolioHome() {
+    $home = portfolioTree()['home'];
+    if (!$home || portfolioPublicItemCount($home) === 0) return null;
+    return [portfolioHomeCategory(), $home];
 }
 
 // --- Public routes ---
@@ -4937,8 +5036,10 @@ if ($method === 'GET' && $uri === '/api/portfolio') {
     respond(['categories' => portfolioPublicCategories()]);
 }
 
-if ($method === 'GET' && $uri === '/api/portfolio/featured') {
-    $found = portfolioFeatured();
+// The home page. Null means nothing has been put there yet, and the page falls
+// back to what it showed before the portfolio existed.
+if ($method === 'GET' && $uri === '/api/portfolio/home') {
+    $found = portfolioHome();
     respond(['gallery' => $found ? portfolioGalleryPayload(...$found) : null]);
 }
 
@@ -5004,10 +5105,18 @@ if ($method === 'GET' && $uri === '/api/admin/portfolio') {
             'warnings' => $cat['warnings'],
         ];
     }
+    $home = $tree['home'];
     respond([
         'categories' => $categories,
+        'home' => $home ? [
+            'id' => $home['id'],
+            'title' => 'Home page',
+            'layout' => $home['sidecar']['layout'],
+            'itemCount' => count($home['sidecar']['order']),
+            'publicCount' => portfolioPublicItemCount($home),
+            'cover' => portfolioGalleryCover(portfolioHomeCategory(), $home),
+        ] : null,
         'warnings' => $tree['warnings'],
-        'featuredId' => readSettings()['portfolioFeaturedId'] ?? null,
     ]);
 }
 
@@ -5190,6 +5299,15 @@ function portfolioAcceptUpload($gal, $sourcePath, $originalName) {
 
 // Categories
 
+if ($method === 'POST' && $uri === '/api/admin/portfolio/home') {
+    requireAuth();
+    $dir = PORTFOLIO_DIR . '/' . PORTFOLIO_HOME_FOLDER;
+    if (!is_dir($dir) && !@mkdir($dir, 0755)) respondError('Could not create the home folder', 500);
+    portfolioTree(true);
+    $home = portfolioTree()['home'];
+    respond(['ok' => true, 'gallery' => $home ? portfolioGalleryResponse($home['id']) : null]);
+}
+
 if ($method === 'POST' && $uri === '/api/admin/portfolio/categories') {
     requireAuth();
     $name = portfolioSafeName(getInput()['name'] ?? '');
@@ -5284,6 +5402,11 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
     [$cat, $gal] = portfolioRequireGallery($params['gid']);
     $input = getInput();
     $dir = $gal['dir'];
+    // The home page lives in a reserved folder, so only its contents and
+    // layout are editable.
+    if (!empty($gal['home'])) {
+        unset($input['categoryId'], $input['folder'], $input['slug'], $input['visible']);
+    }
 
     // Moving to another category is a folder move; the slug only has to be
     // unique among its new siblings.
@@ -5307,8 +5430,8 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
     foreach ($cat['galleries'] as $g) {
         if ($g['id'] !== $gal['id']) $taken[] = $g['slug'];
     }
-    $items = $gal['sidecar']['items'];
-    portfolioSidecarPatch($dir, '.gallery.json', function ($g) use ($input, $taken, $items) {
+    $keys = array_merge(array_keys($gal['sidecar']['items']), array_keys($gal['sidecar']['refs'] ?? []));
+    portfolioSidecarPatch($dir, '.gallery.json', function ($g) use ($input, $taken, $keys) {
         foreach (['title', 'description'] as $k) {
             if (array_key_exists($k, $input)) $g[$k] = $input[$k] === null ? null : (string)$input[$k];
         }
@@ -5316,7 +5439,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
         if (!empty($input['layout']) && in_array($input['layout'], PORTFOLIO_LAYOUTS, true)) $g['layout'] = $input['layout'];
         if (array_key_exists('cover', $input)) {
             $cover = $input['cover'] === null ? null : (string)$input['cover'];
-            $g['cover'] = ($cover !== null && isset($items[$cover])) ? $cover : null;
+            $g['cover'] = ($cover !== null && in_array($cover, $keys, true)) ? $cover : null;
         }
         if (!empty($input['slug'])) {
             $g['slug'] = portfolioUniqueSlug(portfolioSlugify($input['slug']), $taken, 'g-' . substr($g['id'], 3, 6));
@@ -5332,6 +5455,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
 if ($method === 'DELETE' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri, $params)) {
     requireAuth();
     [$cat, $gal] = portfolioRequireGallery($params['gid']);
+    if (!empty($gal['home'])) respondError('The home page can be emptied, but not deleted', 400);
     if (!portfolioTrash($gal['dir'], $cat['folder'] . ' - ' . $gal['folder'])) {
         respondError('Could not move the folder to the trash', 500);
     }
@@ -5350,7 +5474,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/order'
     portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($order) {
         $kept = [];
         foreach ($order as $key) {
-            if (!isset($kept[$key]) && (isset($g['items'][$key]) || isset($g['headers'][$key]))) $kept[$key] = true;
+            if (!isset($kept[$key]) && (isset($g['items'][$key]) || isset($g['headers'][$key]) || isset($g['refs'][$key]))) $kept[$key] = true;
         }
         // Anything the client didn't mention keeps its place at the end, so a
         // stale list can never make items disappear.
@@ -5524,6 +5648,63 @@ if ($method === 'DELETE' && matchRoute('/api/admin/portfolio/galleries/{gid}/hea
     respond(['ok' => true, 'gallery' => portfolioGalleryResponse($params['gid'])]);
 }
 
+// Add picks: files that live in another gallery and are shown here too. Only a
+// real file can be picked, so a pick never points at another pick.
+if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/refs', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    $picks = (array)(getInput()['items'] ?? []);
+    if (!$picks) respondError('Nothing to add', 400);
+    $add = [];
+    foreach ($picks as $p) {
+        $sourceId = (string)($p['galleryId'] ?? '');
+        $file = (string)($p['file'] ?? '');
+        $found = portfolioFindGallery($sourceId);
+        if (!$found) respondError('That gallery is gone', 404);
+        [, $src] = $found;
+        if (!isset($src['sidecar']['items'][$file])) respondError('That file is gone: ' . $file, 404);
+        if ($src['id'] === $gal['id']) respondError('That file is already in this gallery', 400);
+        $add[generateId('r_')] = ['gallery' => $src['id'], 'file' => $file, 'visible' => true];
+    }
+    portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($add) {
+        foreach ($add as $key => $ref) {
+            $g['refs'][$key] = $ref;
+            $g['order'][] = $key;
+        }
+        return $g;
+    });
+    respond(['ok' => true, 'added' => count($add), 'gallery' => portfolioGalleryResponse($params['gid'])]);
+}
+
+// A pick's own title, caption box and visibility, which override the source's.
+if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/refs/{key}', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    if (!isset($gal['sidecar']['refs'][$params['key']])) respondError('Pick not found', 404);
+    $input = getInput();
+    portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($params, $input) {
+        $ref = &$g['refs'][$params['key']];
+        if (array_key_exists('title', $input)) $ref['title'] = mb_substr((string)$input['title'], 0, 200);
+        if (array_key_exists('description', $input)) $ref['description'] = mb_substr((string)$input['description'], 0, DESCRIPTION_MAX_LEN);
+        if (array_key_exists('visible', $input)) $ref['visible'] = (bool)$input['visible'];
+        unset($ref);
+        return $g;
+    });
+    respond(['ok' => true, 'gallery' => portfolioGalleryResponse($params['gid'])]);
+}
+
+// Removing a pick leaves the file itself alone, wherever it lives.
+if ($method === 'DELETE' && matchRoute('/api/admin/portfolio/galleries/{gid}/refs/{key}', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($params) {
+        unset($g['refs'][$params['key']]);
+        $g['order'] = array_values(array_filter($g['order'], fn($o) => $o !== $params['key']));
+        return $g;
+    });
+    respond(['ok' => true, 'gallery' => portfolioGalleryResponse($params['gid'])]);
+}
+
 // Small uploads in one request; larger ones go through /api/admin/uploads and
 // finalize with portfolioGalleryId.
 if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/files', $uri, $params)) {
@@ -5534,18 +5715,6 @@ if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/files
     if (!move_uploaded_file($_FILES['file']['tmp_name'], $tmp)) respondError('Could not read the upload', 500);
     $name = portfolioAcceptUpload($gal, $tmp, $_FILES['file']['name']);
     respond(['ok' => true, 'file' => $name, 'gallery' => portfolioGalleryResponse($params['gid'])]);
-}
-
-// The gallery shown on the homepage.
-if ($method === 'PUT' && $uri === '/api/settings/portfolio') {
-    requireAuth();
-    $input = getInput();
-    $id = $input['featuredId'] ?? null;
-    if ($id !== null && $id !== '' && !portfolioFindGallery($id)) respondError('Gallery not found', 404);
-    $settings = readSettings();
-    $settings['portfolioFeaturedId'] = ($id === '' ? null : $id);
-    writeSettings($settings);
-    respond(['ok' => true, 'featuredId' => $settings['portfolioFeaturedId']]);
 }
 
 // One slice of derivative work; the admin calls it again while `remaining` > 0.

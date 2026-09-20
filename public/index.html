@@ -8,6 +8,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/style.css?v=13">
+  <link rel="stylesheet" href="/css/portfolio.css?v=3">
+  <link rel="stylesheet" href="/vendor/photoswipe/photoswipe.css">
 </head>
 <body>
   <header class="site-header">
@@ -18,12 +20,15 @@
   </div>
 
   <main class="container">
-    <div id="video-grid" class="video-grid"></div>
+    <div id="portfolio"></div>
+    <!-- Fallback for installs whose reels haven't been moved into folders yet -->
+    <div id="video-grid" class="video-grid" hidden></div>
   </main>
 
   <script src="/js/header.js?v=1"></script>
   <script src="/js/caption-box.js?v=1"></script>
   <script src="/js/media-stage.js?v=1"></script>
-  <script src="/js/public.js?v=9"></script>
+  <script src="/js/public.js?v=10"></script>
+  <script type="module" src="/js/portfolio.js?v=4"></script>
 </body>
 </html>

@@ -68,16 +68,24 @@ function sections(items) {
   return out.filter(s => s.items.length);
 }
 
-function renderGallery(gallery) {
-  document.title = gallery.title;
-  const head = el('header', 'pf-head');
-  const crumbs = el('nav', 'pf-crumbs');
-  const catLink = el('a', null, gallery.category.title);
-  catLink.href = gallery.category.url;
-  crumbs.appendChild(catLink);
-  head.append(crumbs, el('h1', 'pf-title', gallery.title));
-  if (gallery.description) head.appendChild(el('p', 'pf-description', gallery.description));
-  root.appendChild(head);
+function renderGallery(gallery, opts = {}) {
+  // The home page is a gallery too, but it reads as a landing page: no
+  // breadcrumb, no title above the pictures.
+  if (!opts.home) {
+    document.title = gallery.title;
+    const head = el('header', 'pf-head');
+    const crumbs = el('nav', 'pf-crumbs');
+    const catLink = el('a', null, gallery.category.title);
+    catLink.href = gallery.category.url;
+    crumbs.appendChild(catLink);
+    head.append(crumbs, el('h1', 'pf-title', gallery.title));
+    if (gallery.description) head.appendChild(el('p', 'pf-description', gallery.description));
+    root.appendChild(head);
+  } else if (gallery.description) {
+    const head = el('header', 'pf-head');
+    head.appendChild(el('p', 'pf-description', gallery.description));
+    root.appendChild(head);
+  }
 
   const layoutName = LAYOUTS[gallery.layout] ? gallery.layout : 'justified';
   const media = gallery.items.filter(i => i.type !== 'header');
@@ -205,6 +213,25 @@ function createLightbox(media) {
 // --- Routing ---
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // The homepage shell and the portfolio pages share this script.
+  if (!location.pathname.startsWith('/portfolio')) {
+    try {
+      const { gallery } = await load('/api/portfolio/home');
+      if (gallery) {
+        root.classList.add('pf-home');
+        renderGallery(gallery, { home: true });
+        return;
+      }
+    } catch (_) {}
+    // Nothing on the home page yet: show what this install showed before.
+    const grid = document.getElementById('video-grid');
+    if (grid && window.renderReelsGrid) {
+      grid.hidden = false;
+      window.renderReelsGrid(grid);
+    }
+    return;
+  }
+
   const parts = location.pathname.replace(/^\/portfolio\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   try {
     if (parts.length >= 2) {

@@ -1527,3 +1527,79 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
   .pfa-layout { grid-template-columns: 1fr; }
   .pfa-layout .rail { display: none; }
 }
+
+/* Layout picker: each option draws the shape it makes. */
+.pfa-layouts { display: flex; gap: 8px; }
+
+.pfa-layout-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 9px 5px;
+  border: 1px solid var(--border-input);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-5);
+  font-family: var(--font);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.pfa-layout-opt svg { width: 44px; height: 26px; fill: var(--text-6); }
+.pfa-layout-opt:hover { border-color: var(--border-menu); color: var(--text-3); }
+.pfa-layout-opt:hover svg { fill: var(--text-4); }
+.pfa-layout-opt.active { border-color: var(--accent); color: var(--text); }
+.pfa-layout-opt.active svg { fill: var(--accent); }
+
+/* Picker for borrowing pictures from another gallery */
+.pfa-modal { position: fixed; inset: 0; z-index: 900; display: flex; align-items: center; justify-content: center; }
+.pfa-modal-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.6); }
+
+.pfa-modal-card {
+  position: relative;
+  width: min(760px, 92vw);
+  max-height: 84vh;
+  overflow-y: auto;
+  padding: 22px 24px;
+  border: 1px solid var(--border-menu);
+  border-radius: 8px;
+  background: var(--menu);
+  box-shadow: var(--shadow-pop);
+}
+
+.pfa-modal-card h3 { margin: 0 0 4px; color: var(--text); font-size: 16px; }
+.pfa-modal-card .setting-input { margin-top: 12px; width: 100%; }
+.pfa-modal-actions { display: flex; justify-content: flex-end; align-items: center; gap: 16px; margin-top: 16px; }
+
+.pfa-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.pfa-pick {
+  position: relative;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--panel);
+  cursor: pointer;
+}
+
+.pfa-pick img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pfa-pick.chosen { border-color: var(--accent); }
+.pfa-pick.chosen::after {
+  content: '✓';
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  color: var(--accent);
+  font-size: 15px;
+  text-shadow: 0 1px 3px #000;
+}
+
+/* The home page's own layout on the public site: full-bleed, no page padding. */

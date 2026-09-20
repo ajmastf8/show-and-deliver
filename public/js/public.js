@@ -1,7 +1,9 @@
-document.addEventListener('DOMContentLoaded', async () => {
-  const grid = document.getElementById('video-grid');
-
-  try {
+// The pre-portfolio homepage: the reels gallery in a fixed grid. The homepage
+// shell calls this only when nothing has been put on the portfolio home page
+// yet, so an install that hasn't migrated still shows its reels.
+window.renderReelsGrid = async function renderReelsGrid(grid) {
+  {
+    try {
     const res = await fetch('/api/videos');
     const videos = await res.json();
 
@@ -68,10 +70,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     });
 
-  } catch (err) {
-    grid.innerHTML = '<div class="empty-state">Failed to load videos.</div>';
+    } catch (err) {
+      grid.innerHTML = '<div class="empty-state">Failed to load videos.</div>';
+    }
   }
-});
+};
 
 // --- Lightbox ---
 

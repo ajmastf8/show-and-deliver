@@ -32,7 +32,18 @@ define('PORTFOLIO_PROCESS_SLICE_SECONDS', 8);
 // A file younger than this may still be arriving over FTP. It is listed as
 // pending and left alone, so no thumbnail is ever cut from a truncated upload.
 define('PORTFOLIO_SETTLE_SECONDS', 60);
-define('PORTFOLIO_LAYOUTS', ['justified', 'masonry', 'grid', 'slideshow']);
+define('PORTFOLIO_LAYOUTS', ['justified', 'masonry', 'grid', 'slideshow', 'horizontal', 'fullscreen', 'featured']);
+// Per-gallery presentation, kept as words rather than pixels so the same
+// setting reads sensibly on a phone and on a 5K display.
+define('PORTFOLIO_OPTION_VALUES', [
+    'gap' => ['tight', 'normal', 'wide'],
+    'density' => ['compact', 'normal', 'roomy'],
+    'titles' => ['none', 'hover', 'under'],
+    'crop' => ['fit', 'fill'],
+]);
+// How much room a single picture takes in the "featured tiles" layout. Called
+// `tile`, not `size`: an item's `size` is already its file size in bytes.
+define('PORTFOLIO_TILE_SIZES', ['normal', 'wide', 'tall', 'big']);
 // The home page is its own gallery in a reserved folder: it has no category,
 // no public URL of its own, and never appears in listings or the menu.
 define('PORTFOLIO_HOME_FOLDER', '_home');
@@ -4279,6 +4290,21 @@ function portfolioIgnoredName($name) {
 // URL slug from a folder name. Accents fold to ASCII ("Été" → "ete"); a name
 // with nothing foldable (e.g. "東京") comes back empty and the caller falls back
 // to an id-based slug.
+// Fills in whatever a gallery's options don't say, and drops anything invalid,
+// so every reader downstream can assume a complete set.
+function portfolioNormalizeOptions($o) {
+    $o = is_array($o) ? $o : [];
+    $out = [];
+    foreach (PORTFOLIO_OPTION_VALUES as $key => $allowed) {
+        $out[$key] = in_array($o[$key] ?? '', $allowed, true) ? $o[$key] : $allowed[1 % count($allowed)];
+    }
+    $out['gap'] = in_array($o['gap'] ?? '', ['tight', 'normal', 'wide'], true) ? $o['gap'] : 'normal';
+    $out['crop'] = in_array($o['crop'] ?? '', ['fit', 'fill'], true) ? $o['crop'] : 'fit';
+    $out['autoplay'] = !empty($o['autoplay']);
+    $out['interval'] = min(30, max(2, (int)($o['interval'] ?? 5)));
+    return $out;
+}
+
 function portfolioSlugify($s) {
     if (class_exists('Normalizer')) $s = Normalizer::normalize($s, Normalizer::FORM_D);
     $s = preg_replace('/\p{Mn}+/u', '', $s);
@@ -4419,11 +4445,13 @@ function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trus
         $g += [
             'title' => null, 'description' => '', 'layout' => 'justified', 'cover' => null,
             'visible' => true, 'createdAt' => date('c'), 'order' => [], 'headers' => [], 'items' => [],
+            'options' => [],
             // Picks borrowed from other galleries: one file on disk, shown in
             // as many galleries as you like. See portfolioResolveKey().
             'refs' => [],
         ];
         if (!in_array($g['layout'], PORTFOLIO_LAYOUTS, true)) $g['layout'] = 'justified';
+        $g['options'] = portfolioNormalizeOptions($g['options']);
         $items = is_array($g['items']) ? $g['items'] : [];
         $headers = is_array($g['headers']) ? $g['headers'] : [];
         $refs = is_array($g['refs']) ? $g['refs'] : [];
@@ -4868,6 +4896,7 @@ function portfolioItemPayload($gal, $name, array $it) {
         'thumb' => $thumb,
         'width' => (int)($it['width'] ?? 0),
         'height' => (int)($it['height'] ?? 0),
+        'tile' => in_array($it['tile'] ?? '', PORTFOLIO_TILE_SIZES, true) ? $it['tile'] : 'normal',
     ];
     if ($it['type'] === 'photo') {
         $p['proxy'] = $proxy;
@@ -4917,6 +4946,7 @@ function portfolioGalleryItems($cat, $gal, $admin = false) {
                 if (isset($r['ref'][$k]) && $r['ref'][$k] !== null && $r['ref'][$k] !== '') $p[$k] = (string)$r['ref'][$k];
             }
             $p['ref'] = true;
+            if (in_array($r['ref']['tile'] ?? '', PORTFOLIO_TILE_SIZES, true)) $p['tile'] = $r['ref']['tile'];
             if ($admin) $p['source'] = ['galleryId' => $r['gal']['id'], 'gallery' => portfolioTitle($r['gal']), 'file' => $r['file']];
         }
         if ($admin) {
@@ -5006,6 +5036,7 @@ function portfolioGalleryPayload($cat, $gal) {
         'title' => portfolioTitle($gal),
         'description' => (string)($g['description'] ?? ''),
         'layout' => $g['layout'],
+        'options' => portfolioNormalizeOptions($g['options'] ?? []),
         'url' => portfolioGalleryUrl($cat, $gal),
         'category' => ['slug' => $cat['slug'], 'title' => portfolioTitle($cat), 'url' => portfolioCategoryUrl($cat)],
         'items' => portfolioGalleryItems($cat, $gal),
@@ -5437,6 +5468,9 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
         }
         if (array_key_exists('visible', $input)) $g['visible'] = (bool)$input['visible'];
         if (!empty($input['layout']) && in_array($input['layout'], PORTFOLIO_LAYOUTS, true)) $g['layout'] = $input['layout'];
+        if (isset($input['options']) && is_array($input['options'])) {
+            $g['options'] = portfolioNormalizeOptions(array_merge($g['options'] ?? [], $input['options']));
+        }
         if (array_key_exists('cover', $input)) {
             $cover = $input['cover'] === null ? null : (string)$input['cover'];
             $g['cover'] = ($cover !== null && in_array($cover, $keys, true)) ? $cover : null;
@@ -5505,6 +5539,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/items/
         if (array_key_exists('title', $input)) $it['title'] = mb_substr((string)$input['title'], 0, 200);
         if (array_key_exists('description', $input)) $it['description'] = mb_substr((string)$input['description'], 0, DESCRIPTION_MAX_LEN);
         if (array_key_exists('visible', $input)) $it['visible'] = (bool)$input['visible'];
+        if (in_array($input['tile'] ?? '', PORTFOLIO_TILE_SIZES, true)) $it['tile'] = $input['tile'];
         unset($it);
         return $g;
     });
@@ -5687,6 +5722,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/refs/{
         if (array_key_exists('title', $input)) $ref['title'] = mb_substr((string)$input['title'], 0, 200);
         if (array_key_exists('description', $input)) $ref['description'] = mb_substr((string)$input['description'], 0, DESCRIPTION_MAX_LEN);
         if (array_key_exists('visible', $input)) $ref['visible'] = (bool)$input['visible'];
+        if (in_array($input['tile'] ?? '', PORTFOLIO_TILE_SIZES, true)) $ref['tile'] = $input['tile'];
         unset($ref);
         return $g;
     });

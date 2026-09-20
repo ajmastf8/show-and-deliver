@@ -155,10 +155,59 @@
 
 .pf-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(var(--pf-col, 240px), 1fr));
 }
 
-.pf-grid .pf-tile { aspect-ratio: 1; }
+/* "Fill" crops every tile square; "fit" gets each picture's own shape as an
+   inline aspect-ratio from layouts.js. */
+.pf-grid.pf-crop-fill .pf-tile { aspect-ratio: 1; }
+
+/* Featured tiles: a picture can claim two columns, two rows, or both. */
+.pf-featured {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--pf-col, 330px), 1fr));
+  grid-auto-rows: var(--pf-row, 205px);
+  grid-auto-flow: dense;
+}
+
+.pf-featured .pf-tile { height: 100%; }
+.pf-size-wide { grid-column: span 2; }
+.pf-size-tall { grid-row: span 2; }
+.pf-size-big { grid-column: span 2; grid-row: span 2; }
+
+/* Horizontal scroll: one tall row, moved with the wheel, a drag or a swipe. */
+.pf-strip {
+  display: flex;
+  height: var(--pf-strip-h, 66vh);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+  padding-bottom: 10px;
+}
+
+.pf-strip .pf-tile {
+  flex: 0 0 auto;
+  scroll-snap-align: center;
+}
+
+/* Fullscreen: one picture per screen, whole frame visible. */
+.pf-fullscreen { display: flex; flex-direction: column; scroll-snap-type: y proximity; }
+
+.pf-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 88vh;
+  scroll-snap-align: center;
+}
+
+.pf-screen .pf-tile { max-width: 100%; height: 100%; background: none; }
+.pf-screen .pf-tile img { width: auto; max-width: 100%; height: 100%; object-fit: contain; }
+
+/* Titles: always, on hover, or not at all. */
+.pf-titles-under .pf-tile-title { opacity: 1; }
+.pf-titles-none .pf-tile-title { display: none; }
 
 .pf-slideshow {
   position: relative;

@@ -88,6 +88,7 @@ function renderGallery(gallery, opts = {}) {
   }
 
   const layoutName = LAYOUTS[gallery.layout] ? gallery.layout : 'justified';
+  const options = gallery.options || {};
   const media = gallery.items.filter(i => i.type !== 'header');
   const lightbox = layoutName === 'slideshow' ? null : createLightbox(media);
   const tiles = new Map();
@@ -108,7 +109,7 @@ function renderGallery(gallery, opts = {}) {
       node.appendChild(el('div', 'pf-tile-placeholder'));
     }
     if (item.type === 'video') node.appendChild(el('span', 'pf-badge', formatDuration(item.duration) || '▶'));
-    if (item.title) node.appendChild(el('span', 'pf-tile-title', item.title));
+    if (item.title && options.titles !== 'none') node.appendChild(el('span', 'pf-tile-title', item.title));
     if (lightbox) node.addEventListener('click', () => lightbox.loadAndOpen(index));
     tiles.set(index, node);
     return node;
@@ -116,9 +117,9 @@ function renderGallery(gallery, opts = {}) {
 
   sections(gallery.items).forEach(section => {
     if (section.title) root.appendChild(el('h2', 'pf-section', section.title));
-    const container = el('div', 'pf-layout pf-' + layoutName);
+    const container = el('div', `pf-layout pf-${layoutName} pf-titles-${options.titles || 'hover'} pf-crop-${options.crop || 'fit'}`);
     root.appendChild(container);
-    instances.push(LAYOUTS[layoutName](container, section.items, tile));
+    instances.push(LAYOUTS[layoutName](container, section.items, tile, options));
   });
 
   // Opening and closing animates from the thumbnail the viewer clicked.

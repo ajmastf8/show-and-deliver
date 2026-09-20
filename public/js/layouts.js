@@ -5,6 +5,15 @@
 // yet (no poster, no readable header) reports 0 and is treated as 16:9, which is
 // what the page shows until the admin captures a poster frame.
 
+// A gallery's options arrive as words; these turn them into numbers. Keeping
+// the stored value abstract means one setting reads sensibly on a phone and on
+// a 5K display, and we can retune the numbers without touching saved galleries.
+export const GAPS = { tight: 3, normal: 10, wide: 26 };
+export const ROW_HEIGHTS = { compact: 210, normal: 290, roomy: 400 };
+export const COLUMN_WIDTHS = { compact: 240, normal: 330, roomy: 460 };
+
+const gapOf = o => GAPS[o?.gap] ?? GAPS.normal;
+
 const ratio = item => {
   const w = item.width > 0 ? item.width : 16;
   const h = item.height > 0 ? item.height : 9;
@@ -15,8 +24,8 @@ const ratio = item => {
 // width — the usual photographer's grid. The last row is left unstretched so a
 // single leftover frame isn't blown up across the page.
 export function justified(root, items, tile, opts = {}) {
-  const gap = opts.gap ?? 8;
-  const target = opts.rowHeight ?? 280;
+  const gap = gapOf(opts);
+  const target = ROW_HEIGHTS[opts.density] ?? ROW_HEIGHTS.normal;
   const tiles = items.map(tile);
 
   const relayout = () => {
@@ -59,8 +68,8 @@ export function justified(root, items, tile, opts = {}) {
 // reading down a column follows the gallery order closely; CSS columns would
 // reorder them.
 export function masonry(root, items, tile, opts = {}) {
-  const gap = opts.gap ?? 8;
-  const min = opts.columnWidth ?? 320;
+  const gap = gapOf(opts);
+  const min = COLUMN_WIDTHS[opts.density] ?? COLUMN_WIDTHS.normal;
   const tiles = items.map(tile);
 
   const relayout = () => {
@@ -94,9 +103,82 @@ export function masonry(root, items, tile, opts = {}) {
 
 // Even squares. The CSS does the work; nothing to recompute on resize.
 export function grid(root, items, tile, opts = {}) {
-  const gap = opts.gap ?? 8;
+  root.style.gap = gapOf(opts) + 'px';
+  root.style.setProperty('--pf-col', (COLUMN_WIDTHS[opts.density] ?? COLUMN_WIDTHS.normal) + 'px');
+  // "Fit" keeps each frame whole, so a tile takes the picture's own shape
+  // rather than a square crop.
+  const tiles = items.map((item, i) => {
+    const node = tile(item);
+    if (opts.crop !== 'fill') node.style.aspectRatio = ratio(items[i]);
+    return node;
+  });
+  root.append(...tiles);
+  return { relayout() {}, destroy() { root.replaceChildren(); } };
+}
+
+// Masonry where a picture can claim two columns, two rows, or both. CSS grid
+// with dense packing fills the gaps that leaves behind.
+export function featured(root, items, tile, opts = {}) {
+  const gap = gapOf(opts);
+  const col = COLUMN_WIDTHS[opts.density] ?? COLUMN_WIDTHS.normal;
   root.style.gap = gap + 'px';
-  root.append(...items.map(tile));
+  root.style.setProperty('--pf-col', col + 'px');
+  root.style.setProperty('--pf-row', Math.round(col * 0.62) + 'px');
+  root.append(...items.map((item, i) => {
+    const node = tile(item);
+    node.classList.add('pf-size-' + (item.tile || 'normal'));
+    return node;
+  }));
+  return { relayout() {}, destroy() { root.replaceChildren(); } };
+}
+
+// One tall row you scroll sideways: pictures keep their shape at a fixed
+// height, and the wheel scrolls the strip rather than the page.
+export function horizontal(root, items, tile, opts = {}) {
+  const gap = gapOf(opts);
+  const strip = document.createElement('div');
+  strip.className = 'pf-strip';
+  strip.style.gap = gap + 'px';
+  const height = { compact: 52, normal: 66, roomy: 80 }[opts.density] ?? 66;
+  strip.style.setProperty('--pf-strip-h', height + 'vh');
+  items.forEach((item, i) => {
+    const node = tile(item);
+    node.style.height = '100%';
+    node.style.width = Math.round((window.innerHeight * height / 100) * ratio(item)) + 'px';
+    strip.appendChild(node);
+  });
+  root.replaceChildren(strip);
+
+  const onWheel = e => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    strip.scrollLeft += e.deltaY;
+    // Let the page scroll again once the strip has run out.
+    const atEnd = strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 1;
+    if (!(e.deltaY > 0 ? atEnd : strip.scrollLeft <= 0)) e.preventDefault();
+  };
+  strip.addEventListener('wheel', onWheel, { passive: false });
+
+  const relayout = () => {
+    const h = strip.clientHeight;
+    [...strip.children].forEach((node, i) => { node.style.width = Math.round(h * ratio(items[i])) + 'px'; });
+  };
+  relayout();
+  return {
+    relayout,
+    destroy() { strip.removeEventListener('wheel', onWheel); root.replaceChildren(); },
+  };
+}
+
+// One picture per screen, scrolled through. Scroll-snap does the work, so it
+// keeps the browser's own momentum and keyboard scrolling.
+export function fullscreen(root, items, tile, opts = {}) {
+  root.style.gap = gapOf(opts) + 'px';
+  root.append(...items.map(item => {
+    const frame = document.createElement('div');
+    frame.className = 'pf-screen';
+    frame.appendChild(tile(item));
+    return frame;
+  }));
   return { relayout() {}, destroy() { root.replaceChildren(); } };
 }
 
@@ -105,6 +187,7 @@ export function grid(root, items, tile, opts = {}) {
 export function slideshow(root, items, tile, opts = {}) {
   let index = 0;
   let stage = null;
+  let timer = null;
 
   const frame = document.createElement('div');
   frame.className = 'pf-slide-frame';
@@ -124,6 +207,11 @@ export function slideshow(root, items, tile, opts = {}) {
 
   const show = i => {
     index = (i + items.length) % items.length;
+    // Autoplay pauses on a video, which has its own running time.
+    clearInterval(timer);
+    if (opts.autoplay && items.length > 1 && items[index].type !== 'video') {
+      timer = setInterval(() => show(index + 1), Math.max(2, opts.interval || 5) * 1000);
+    }
     const item = items[index];
     if (stage) { stage.destroy(); stage = null; }
     if (item.type === 'video') {
@@ -170,6 +258,7 @@ export function slideshow(root, items, tile, opts = {}) {
   return {
     relayout() { if (stage) stage.layout(); },
     destroy() {
+      clearInterval(timer);
       if (stage) stage.destroy();
       document.removeEventListener('keydown', onKey);
       root.removeEventListener('touchstart', onTouchStart);
@@ -179,4 +268,4 @@ export function slideshow(root, items, tile, opts = {}) {
   };
 }
 
-export const LAYOUTS = { justified, masonry, grid, slideshow };
+export const LAYOUTS = { justified, masonry, grid, slideshow, horizontal, fullscreen, featured };

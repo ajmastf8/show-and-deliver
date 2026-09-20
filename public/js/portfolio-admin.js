@@ -31,7 +31,30 @@
     ['masonry', 'Masonry', '<rect x="1" y="2" width="12" height="14"/><rect x="15" y="2" width="12" height="9"/><rect x="29" y="2" width="12" height="18"/><rect x="1" y="18" width="12" height="6"/><rect x="15" y="13" width="12" height="11"/><rect x="29" y="22" width="12" height="2"/>'],
     ['grid', 'Grid', '<rect x="1" y="2" width="12" height="10"/><rect x="15" y="2" width="12" height="10"/><rect x="29" y="2" width="12" height="10"/><rect x="1" y="14" width="12" height="10"/><rect x="15" y="14" width="12" height="10"/><rect x="29" y="14" width="12" height="10"/>'],
     ['slideshow', 'Slideshow', '<rect x="7" y="2" width="30" height="22"/><rect x="1" y="10" width="4" height="6"/><rect x="39" y="10" width="4" height="6"/>'],
+    ['horizontal', 'Horizontal', '<rect x="1" y="4" width="14" height="18"/><rect x="17" y="4" width="20" height="18"/><rect x="39" y="4" width="10" height="18"/>'],
+    ['fullscreen', 'Fullscreen', '<rect x="4" y="2" width="36" height="22"/>'],
+    ['featured', 'Featured tiles', '<rect x="1" y="2" width="20" height="14"/><rect x="23" y="2" width="9" height="6"/><rect x="34" y="2" width="9" height="6"/><rect x="23" y="10" width="20" height="6"/><rect x="1" y="18" width="9" height="6"/><rect x="12" y="18" width="9" height="6"/>'],
   ];
+
+  // Presentation options, in the words the admin shows.
+  const OPTION_SETS = [
+    ['gap', 'Spacing', [['tight', 'Tight'], ['normal', 'Normal'], ['wide', 'Wide']]],
+    ['density', 'Image size', [['compact', 'Smaller'], ['normal', 'Normal'], ['roomy', 'Larger']]],
+    ['titles', 'Titles', [['none', 'Hidden'], ['hover', 'On hover'], ['under', 'Always']]],
+    ['crop', 'Thumbnails', [['fit', 'Whole frame'], ['fill', 'Cropped']]],
+  ];
+
+  const TILE_SIZES = [['normal', 'Normal'], ['wide', 'Wide'], ['tall', 'Tall'], ['big', 'Big']];
+
+  function optionControls(o) {
+    return OPTION_SETS.map(([key, label, choices]) => `
+      <div class="pfa-field">
+        <span>${label}</span>
+        <div class="pfa-seg">
+          ${choices.map(([v, l]) => `<button type="button" class="${(o[key] || '') === v ? 'active' : ''}" data-opt="${key}" data-val="${v}">${l}</button>`).join('')}
+        </div>
+      </div>`).join('');
+  }
 
   function layoutPicker(current) {
     return `<div class="pfa-layouts">${LAYOUTS.map(([v, label, shape]) => `
@@ -388,6 +411,13 @@
               <input class="setting-input" id="pfa-slug" value="${esc(g.slug)}">
             </label>
             <label class="pfa-check"><input type="checkbox" id="pfa-visible" ${g.visible ? 'checked' : ''}> Visible on the site</label>`}
+          ${optionControls(g.options || {})}
+          ${['slideshow', 'fullscreen'].includes(g.layout) ? `
+            <label class="pfa-check"><input type="checkbox" id="pfa-autoplay" ${(g.options || {}).autoplay ? 'checked' : ''}> Play automatically</label>
+            <label class="pfa-field">
+              <span>Seconds per slide</span>
+              <input class="setting-input" id="pfa-interval" type="number" min="2" max="30" value="${Number((g.options || {}).interval) || 5}">
+            </label>` : ''}
           <label class="pfa-field wide">
             <span>${isHome ? 'Intro text' : 'Description'}</span>
             <textarea class="setting-input" id="pfa-desc" rows="2" maxlength="2000">${esc(g.description)}</textarea>
@@ -457,6 +487,7 @@
           <div class="pfa-item-actions">
             <button data-act="${item.ref ? 'ref-edit' : 'edit'}" data-file="${esc(item.file)}">Edit</button>
             <button data-act="cover" data-file="${esc(item.file)}">Cover</button>
+            ${g.layout === 'featured' ? `<button data-act="tile" data-file="${esc(item.file)}">Size: ${esc(TILE_SIZES.find(s => s[0] === (item.tile || 'normal'))[1])}</button>` : ''}
             <button data-act="${item.ref ? 'ref-visible' : 'visible'}" data-file="${esc(item.file)}">${item.visible ? 'Hide' : 'Show'}</button>
             ${item.type === 'video' && !item.ref ? `<button data-act="captions" data-file="${esc(item.file)}">Captions${item.captions.length ? ` (${item.captions.length})` : ''}</button>` : ''}
             <button data-act="${item.ref ? 'ref-remove' : 'delete'}" data-file="${esc(item.file)}">${item.ref ? 'Remove' : 'Delete'}</button>
@@ -476,6 +507,13 @@
     });
     $('pfa-desc').addEventListener('change', e => put({ description: e.target.value }));
     $('pfa-add-picks').addEventListener('click', () => openPicker(gid));
+    $('pfa-centre').querySelectorAll('[data-opt]').forEach(btn => {
+      btn.addEventListener('click', () => put({ options: { [btn.dataset.opt]: btn.dataset.val } }));
+    });
+    const autoplay = $('pfa-autoplay');
+    if (autoplay) autoplay.addEventListener('change', e => put({ options: { autoplay: e.target.checked } }));
+    const interval = $('pfa-interval');
+    if (interval) interval.addEventListener('change', e => put({ options: { interval: Number(e.target.value) || 5 } }));
     if (!isHome) {
       $('pfa-move').addEventListener('change', e => put({ categoryId: e.target.value }));
       $('pfa-visible').addEventListener('change', e => put({ visible: e.target.checked }));
@@ -548,6 +586,14 @@
       });
       if (ok) act(() => req(`${base}/items/${encodeURIComponent(file)}`, { method: 'DELETE' }));
       return;
+    }
+    if (action === 'tile') {
+      // Cycles through the sizes rather than opening a dialog: it is a
+      // four-way toggle you want to try against the grid.
+      const order = TILE_SIZES.map(s => s[0]);
+      const next = order[(order.indexOf(item.tile || 'normal') + 1) % order.length];
+      const target = item.ref ? `${base}/refs/${encodeURIComponent(file)}` : `${base}/items/${encodeURIComponent(file)}`;
+      return act(() => send(target, 'PUT', { tile: next }));
     }
     if (action === 'edit') return editItem(item, gid);
     if (action === 'captions') return editCaptions(item, gid);

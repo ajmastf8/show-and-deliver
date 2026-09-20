@@ -106,7 +106,11 @@ site-data/             # Runtime data (gitignored)
   Files younger than `PORTFOLIO_SETTLE_SECONDS` are treated as still uploading.
   `<video>.poster.jpg` and `<video>.<lang>.vtt` beside a video are its poster
   and captions. Each gallery picks one of four layouts (`justified`, `masonry`,
-  `grid`, `slideshow`) rendered by `layouts.js`; photos open in PhotoSwipe and
+  `grid`, `slideshow`, `horizontal`, `fullscreen`, `featured`) rendered by
+  `layouts.js`, plus per-gallery options (spacing, image size, titles, crop,
+  autoplay and interval) stored as words rather than pixels so one setting
+  reads sensibly on any screen; `featured` also takes a per-item `tile` size
+  (`normal|wide|tall|big` — named `tile` because an item's `size` is its bytes); photos open in PhotoSwipe and
   videos in the shared `media-stage.js` player, which `public.js` uses too, so
   the caption overlay and caption box behave the same everywhere. A
   `{type:'portfolio'}` header nav entry is expanded server-side into the current

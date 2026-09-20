@@ -140,6 +140,14 @@ site-data/             # Runtime data (gitignored)
   honeypot field and a per-IP rate limit. Page pictures live in the reserved
   portfolio folder `_pages/`, so `/media/` serves them with no new rewrite rules
   — like `_home/`, it is skipped by the category scan.
+- **Gallery access** is one of `public` (listed and open), `unlisted` (off the
+  menus, the link works), `password` (the link works once the visitor types it,
+  hashed with `password_hash`, unlocked per session — and the signed-in admin
+  always passes) or `hidden` (not served at all). Galleries from before this
+  carry only `visible`, which reconcile maps to `public`/`hidden`. Items and
+  picks have their own `visible` flag. **The password gates the page, not the
+  files**: `/media/` serves anything in the portfolio folders by direct URL,
+  exactly as `/uploads/` does for client galleries.
 - **The home cover** is the home gallery's `hero`: one of its own entries shown
   full-bleed (a video plays muted and looping) with a title and subtitle over
   it, and the gallery below the fold. Video size and duration come from the MP4 header in pure PHP

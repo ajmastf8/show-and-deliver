@@ -488,3 +488,10 @@
 @media (max-width: 760px) {
   .pf-page-with-image { grid-template-columns: 1fr; gap: 26px; }
 }
+
+/* Password-protected gallery */
+.pf-locked { max-width: 420px; margin: 8vh auto; text-align: center; }
+.pf-locked .pf-description { margin: 10px 0 22px; }
+.pf-locked .pf-contact-form { align-items: center; }
+.pf-locked .pf-contact-form label { width: 100%; text-align: left; }
+.pf-locked .pf-contact-form button { align-self: center; }

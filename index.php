@@ -58,6 +58,12 @@ define('PORTFOLIO_TILE_SIZES', ['normal', 'wide', 'tall', 'big']);
 // The home page is its own gallery in a reserved folder: it has no category,
 // no public URL of its own, and never appears in listings or the menu.
 define('PORTFOLIO_HOME_FOLDER', '_home');
+// Who can reach a gallery:
+//   public   listed everywhere, open to anyone
+//   unlisted off the menus and listings, but the link works
+//   password the link works once the visitor types the password
+//   hidden   not served at all — a draft
+define('PORTFOLIO_ACCESS', ['public', 'unlisted', 'password', 'hidden']);
 
 // Cap for a portfolio item's caption box. Long enough for a paragraph of
 // credits, short enough that the field can never bloat a gallery's videos.json.
@@ -4455,13 +4461,18 @@ function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trus
         }
         $g += [
             'title' => null, 'description' => '', 'layout' => 'justified', 'cover' => null,
-            'visible' => true, 'createdAt' => date('c'), 'order' => [], 'headers' => [], 'items' => [],
+            'visible' => true, 'access' => null, 'createdAt' => date('c'), 'order' => [], 'headers' => [], 'items' => [],
             'options' => [],
             // Picks borrowed from other galleries: one file on disk, shown in
             // as many galleries as you like. See portfolioResolveKey().
             'refs' => [],
         ];
         if (!in_array($g['layout'], PORTFOLIO_LAYOUTS, true)) $g['layout'] = 'justified';
+        // Galleries made before access levels existed carry only `visible`.
+        if (!in_array($g['access'], PORTFOLIO_ACCESS, true)) {
+            $g['access'] = ($g['visible'] ?? true) === false ? 'hidden' : 'public';
+        }
+        $g['visible'] = $g['access'] !== 'hidden';
         $g['options'] = portfolioNormalizeOptions($g['options']);
         $items = is_array($g['items']) ? $g['items'] : [];
         $headers = is_array($g['headers']) ? $g['headers'] : [];
@@ -5008,10 +5019,28 @@ function portfolioPublicItemCount($gal) {
     return $n;
 }
 
+function portfolioAccess($gal) {
+    $a = $gal['sidecar']['access'] ?? 'public';
+    return in_array($a, PORTFOLIO_ACCESS, true) ? $a : 'public';
+}
+
+// Whether a visitor who types the address can see the gallery at all. Only
+// `hidden` is refused outright; `password` is answered with a prompt.
+function portfolioGalleryIsReachable($cat, $gal) {
+    return portfolioAccess($gal) !== 'hidden' && portfolioPublicItemCount($gal) > 0;
+}
+
+// Whether it belongs in listings and menus.
 function portfolioGalleryIsPublic($cat, $gal) {
     return ($cat['sidecar']['visible'] ?? true) !== false
-        && ($gal['sidecar']['visible'] ?? true) !== false
+        && portfolioAccess($gal) === 'public'
         && portfolioPublicItemCount($gal) > 0;
+}
+
+// The admin sees every gallery, so a locked one can be checked without
+// typing its password.
+function portfolioIsUnlocked($galleryId) {
+    return !empty($_SESSION['pfUnlocked'][$galleryId]) || !empty($_SESSION['authenticated']);
 }
 
 function portfolioGallerySummary($cat, $gal) {
@@ -5120,8 +5149,27 @@ if ($method === 'GET' && matchRoute('/api/portfolio/c/{cat}', $uri, $params)) {
 
 if ($method === 'GET' && matchRoute('/api/portfolio/g/{cat}/{gal}', $uri, $params)) {
     $found = portfolioFindBySlug($params['cat'], $params['gal']);
-    if (!$found || !portfolioGalleryIsPublic(...$found)) respondError('Not found', 404);
-    respond(['gallery' => portfolioGalleryPayload(...$found)]);
+    if (!$found || !portfolioGalleryIsReachable(...$found)) respondError('Not found', 404);
+    [$cat, $gal] = $found;
+    if (portfolioAccess($gal) === 'password' && !portfolioIsUnlocked($gal['id'])) {
+        respond(['locked' => true, 'title' => portfolioTitle($gal)]);
+    }
+    respond(['gallery' => portfolioGalleryPayload($cat, $gal)]);
+}
+
+// Unlocking a password-protected gallery, remembered for the session.
+if ($method === 'POST' && matchRoute('/api/portfolio/g/{cat}/{gal}/unlock', $uri, $params)) {
+    rateLimitCheck('pfunlock:' . ($_SERVER['REMOTE_ADDR'] ?? ''), 12, 300);
+    $found = portfolioFindBySlug($params['cat'], $params['gal']);
+    if (!$found || !portfolioGalleryIsReachable(...$found)) respondError('Not found', 404);
+    [$cat, $gal] = $found;
+    $hash = $gal['sidecar']['passwordHash'] ?? '';
+    if (portfolioAccess($gal) !== 'password' || $hash === '') respond(['ok' => true]);
+    if (!password_verify((string)(getInput()['password'] ?? ''), $hash)) {
+        respondError('That password does not match', 401);
+    }
+    $_SESSION['pfUnlocked'][$gal['id']] = true;
+    respond(['ok' => true, 'gallery' => portfolioGalleryPayload($cat, $gal)]);
 }
 
 // --- Admin routes ---
@@ -5151,6 +5199,7 @@ if ($method === 'GET' && $uri === '/api/admin/portfolio') {
                 'folder' => $gal['folder'],
                 'title' => portfolioTitle($gal),
                 'visible' => ($g['visible'] ?? true) !== false,
+                'access' => portfolioAccess($gal),
                 'layout' => $g['layout'],
                 'url' => portfolioGalleryUrl($cat, $gal),
                 'cover' => portfolioGalleryCover($cat, $gal),
@@ -5198,6 +5247,8 @@ if ($method === 'GET' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
     $p['items'] = portfolioGalleryItems($cat, $gal, true);
     $p['folder'] = $gal['folder'];
     $p['visible'] = ($gal['sidecar']['visible'] ?? true) !== false;
+    $p['access'] = portfolioAccess($gal);
+    $p['hasPassword'] = !empty($gal['sidecar']['passwordHash']);
     $p['cover'] = $gal['sidecar']['cover'];
     $p['pending'] = $gal['pending'];
     $p['warnings'] = $gal['warnings'];
@@ -5290,6 +5341,8 @@ function portfolioGalleryResponse($gid) {
     $p['folder'] = $gal['folder'];
     $p['categoryId'] = $cat['id'];
     $p['visible'] = ($gal['sidecar']['visible'] ?? true) !== false;
+    $p['access'] = portfolioAccess($gal);
+    $p['hasPassword'] = !empty($gal['sidecar']['passwordHash']);
     $p['cover'] = $gal['sidecar']['cover'];
     $p['pending'] = $gal['pending'];
     $p['warnings'] = $gal['warnings'];
@@ -5474,7 +5527,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
     // The home page lives in a reserved folder, so only its contents and
     // layout are editable.
     if (!empty($gal['home'])) {
-        unset($input['categoryId'], $input['folder'], $input['slug'], $input['visible']);
+        unset($input['categoryId'], $input['folder'], $input['slug'], $input['visible'], $input['access']);
     }
 
     // Moving to another category is a folder move; the slug only has to be
@@ -5504,7 +5557,21 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
         foreach (['title', 'description'] as $k) {
             if (array_key_exists($k, $input)) $g[$k] = $input[$k] === null ? null : (string)$input[$k];
         }
-        if (array_key_exists('visible', $input)) $g['visible'] = (bool)$input['visible'];
+        if (array_key_exists('visible', $input)) {
+            $g['visible'] = (bool)$input['visible'];
+            $g['access'] = $g['visible'] ? ($g['access'] === 'hidden' ? 'public' : $g['access']) : 'hidden';
+        }
+        if (in_array($input['access'] ?? '', PORTFOLIO_ACCESS, true)) {
+            $g['access'] = $input['access'];
+            $g['visible'] = $g['access'] !== 'hidden';
+        }
+        // An empty string clears the password; anything else replaces it.
+        if (array_key_exists('password', $input)) {
+            $pw = (string)$input['password'];
+            $g['passwordHash'] = $pw === '' ? '' : password_hash($pw, PASSWORD_BCRYPT);
+        }
+        // Password protection with no password would just be unlisted.
+        if ($g['access'] === 'password' && empty($g['passwordHash'])) $g['access'] = 'unlisted';
         if (!empty($input['layout']) && in_array($input['layout'], PORTFOLIO_LAYOUTS, true)) $g['layout'] = $input['layout'];
         if (array_key_exists('hero', $input)) {
             $h = is_array($input['hero']) ? $input['hero'] : [];

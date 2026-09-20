@@ -344,7 +344,8 @@
 
   function galleryCard(g) {
     const flags = [
-      g.visible ? '' : '<span class="pfa-badge">Hidden</span>',
+      { public: '', unlisted: '<span class="pfa-badge">Unlisted</span>',
+        password: '<span class="pfa-badge">Password</span>', hidden: '<span class="pfa-badge">Hidden</span>' }[g.access] ?? '',
       g.processing ? `<span class="pfa-badge work">${g.processing} processing</span>` : '',
       g.needsPoster ? `<span class="pfa-badge work">${g.needsPoster} need posters</span>` : '',
       g.pending.length ? `<span class="pfa-badge work">${g.pending.length} arriving</span>` : '',
@@ -420,7 +421,24 @@
               <span>Web address</span>
               <input class="setting-input" id="pfa-slug" value="${esc(g.slug)}">
             </label>
-            <label class="pfa-check"><input type="checkbox" id="pfa-visible" ${g.visible ? 'checked' : ''}> Visible on the site</label>`}
+            <div class="pfa-field">
+              <span>Who can see it</span>
+              <div class="pfa-seg">
+                ${[['public', 'Public'], ['unlisted', 'Unlisted'], ['password', 'Password'], ['hidden', 'Hidden']].map(([v, l]) =>
+                  `<button type="button" class="${g.access === v ? 'active' : ''}" data-access="${v}">${l}</button>`).join('')}
+              </div>
+              <span class="pfa-hint">${{
+                public: 'Listed in the menu and on the index.',
+                unlisted: 'Off the menus — only people with the link.',
+                password: 'The link works once the visitor types the password.',
+                hidden: 'Not served at all, like a draft.',
+              }[g.access] || ''}</span>
+            </div>
+            ${g.access === 'password' || g.hasPassword ? `
+              <label class="pfa-field">
+                <span>Password${g.hasPassword ? ' (set)' : ''}</span>
+                <input class="setting-input" id="pfa-password" type="text" placeholder="${g.hasPassword ? 'Type to replace' : 'Choose a password'}">
+              </label>` : ''}`}
           ${isHome ? `
             <div class="pfa-field wide">
               <span>Opening cover</span>
@@ -555,7 +573,10 @@
     if (interval) interval.addEventListener('change', e => put({ options: { interval: Number(e.target.value) || 5 } }));
     if (!isHome) {
       $('pfa-move').addEventListener('change', e => put({ categoryId: e.target.value }));
-      $('pfa-visible').addEventListener('change', e => put({ visible: e.target.checked }));
+      $('pfa-centre').querySelectorAll('[data-access]').forEach(b =>
+        b.addEventListener('click', () => put({ access: b.dataset.access })));
+      const pw = $('pfa-password');
+      if (pw) pw.addEventListener('change', e => put({ password: e.target.value, access: 'password' }));
       $('pfa-slug').addEventListener('change', e => put({ slug: e.target.value }));
       $('pfa-g-rename').addEventListener('click', () => renameGallery(g));
       $('pfa-g-delete').addEventListener('click', () => deleteGallery(g));

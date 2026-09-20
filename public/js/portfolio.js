@@ -295,6 +295,42 @@ function withSidebar(categories, activeSlug, index) {
   return body;
 }
 
+// A password-protected gallery: the link works, the pictures wait.
+function renderLocked(catSlug, galSlug, title) {
+  document.title = title || 'Private gallery';
+  const box = el('div', 'pf-locked');
+  box.appendChild(el('h1', 'pf-title', title || 'Private gallery'));
+  box.appendChild(el('p', 'pf-description', 'This gallery is private. Enter the password to view it.'));
+
+  const form = el('form', 'pf-contact-form');
+  form.innerHTML = `
+    <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+    <button type="submit">View gallery</button>
+    <p class="pf-form-status" role="status"></p>`;
+  box.appendChild(form);
+  root.appendChild(box);
+  form.querySelector('input').focus();
+
+  const status = form.querySelector('.pf-form-status');
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    status.textContent = '';
+    try {
+      const res = await fetch(`/api/portfolio/g/${encodeURIComponent(catSlug)}/${encodeURIComponent(galSlug)}/unlock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: form.password.value }),
+      });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error || 'That password does not match');
+      root.replaceChildren();
+      renderGallery(out.gallery);
+    } catch (err) {
+      status.textContent = err.message;
+    }
+  });
+}
+
 // --- Routing ---
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -320,8 +356,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   const parts = location.pathname.replace(/^\/portfolio\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
   try {
     if (parts.length >= 2) {
-      const { gallery } = await load(`/api/portfolio/g/${encodeURIComponent(parts[0])}/${encodeURIComponent(parts[1])}`);
-      renderGallery(gallery);
+      const data = await load(`/api/portfolio/g/${encodeURIComponent(parts[0])}/${encodeURIComponent(parts[1])}`);
+      if (data.locked) return renderLocked(parts[0], parts[1], data.title);
+      renderGallery(data.gallery);
     } else if (parts.length === 1) {
       const { category, index, categories } = await load(`/api/portfolio/c/${encodeURIComponent(parts[0])}`);
       document.title = category.title;

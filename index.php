@@ -1395,9 +1395,13 @@ if ($method === 'DELETE' && matchRoute('/api/galleries/{id}', $uri, $params)) {
     }
     if ($idx === null) respondError('Not found', 404);
 
-    if ($gallery['type'] === 'reels' && count(array_filter($galleries, fn($g) => $g['type'] === 'reels')) <= 1) {
-        respondError('Cannot delete the only reels gallery', 400);
-    }
+    // No "must keep one reels gallery" rule. It claimed to protect the public
+    // portfolio page, but /api/videos already responds [] when findReelsGallery()
+    // comes back empty, and the state was reachable anyway by switching the only
+    // reels gallery inactive (the old guard counted inactive ones, findReelsGallery
+    // skips them). Deleting a portfolio gallery you created by accident is
+    // legitimate, and recoverable — New > Portfolio makes another. The admin warns
+    // about the empty portfolio page before it happens instead.
 
     $dir = galleryDir($gallery['id']);
     if (is_dir($dir)) {

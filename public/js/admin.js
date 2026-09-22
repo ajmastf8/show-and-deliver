@@ -1263,9 +1263,22 @@ document.addEventListener('DOMContentLoaded', () => {
         toast('Saved');
       } else toast('Save failed');
     } else if (act === 'delete') {
-      if (!await confirmModal({ title: 'Delete gallery', message: `Delete "${g.name}"? This cannot be undone.`, okText: 'Delete', danger: true })) return;
+      // Losing your last portfolio gallery empties the public portfolio page, so
+      // say so up front rather than refusing the delete — it is recoverable with
+      // New > Portfolio, and a gallery created by accident has to be removable.
+      const lastPortfolio = g.type === 'reels' && state.galleries.filter(x => x.type === 'reels').length <= 1;
+      const message = lastPortfolio
+        ? `Delete "${g.name}"? This cannot be undone. It is your only portfolio gallery, so your public portfolio page will have nothing to show until you create another.`
+        : `Delete "${g.name}"? This cannot be undone.`;
+      if (!await confirmModal({ title: 'Delete gallery', message, okText: 'Delete', danger: true })) return;
       const res = await fetch(`/api/galleries/${g.id}`, { method: 'DELETE' });
-      if (res.ok) { closeDrawerForce(); state.centreGalleryId = null; contentGid = null; await loadData(); renderAll(); toast('Gallery deleted'); }
+      if (!res.ok) {
+        // Silence here is how a refused delete used to look like a dead button.
+        const data = await res.json().catch(() => ({}));
+        toast(data.error || 'Delete failed');
+        return;
+      }
+      closeDrawerForce(); state.centreGalleryId = null; contentGid = null; await loadData(); renderAll(); toast('Gallery deleted');
     } else if (act === 'duplicate') {
       toast('Creating copy…');
       const res = await fetch('/api/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: g.name + ' (copy)', type: g.type }) });

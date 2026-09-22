@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.6.6 — 2026-09-22
+- **Galleries can be renamed.** Settings for a gallery now has a Name field, so a gallery created as "Client Gallery" during an upload doesn't have to keep that name forever. Renaming changes nothing else — the share link, the files and the client's view all stay exactly as they were. Works on portfolio galleries as well as client ones.
+
 ## 1.6.5 — 2026-09-15
 - **Security fix: private site data could be downloaded directly.** On Apache and LiteSpeed any file that exists on disk is served as-is, and only delivery packages were blocked. Anyone who knew the paths could fetch `site-data/data/` — the admin password hash, login sessions, the session secret, the API token, and the gallery and collection files with their share links and password hashes — along with FTP imports in `site-data/imports/`, your `.env`, and `.git/` on git installs. On hosts with directory listings turned on, `/uploads/` also listed every client's files. All of these now return 403. **Update now, then rotate the API token in Settings and change the password on any gallery or collection where it matters** — there's no way to tell from the app whether these files were ever downloaded. Where a share link itself is sensitive, regenerate it too.
 - `site-data/` is now an allowlist: only uploads, thumbnails, proxies, captions and the logo are public, and directory listings are refused anywhere under it. Dotfiles and root-level docs are denied too. As a second line of defence for hosts that ignore the root `.htaccess`, `data/` and `imports/` get their own deny-all guard file automatically, the way `packages/` already did.

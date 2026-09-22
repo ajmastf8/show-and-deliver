@@ -1124,6 +1124,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const baseUrl = window.location.origin;
     let html = '';
 
+    // Value is assigned in wireDrawerSettings, not inlined: escapeHtml() leaves
+    // double quotes alone, which would break out of the attribute.
+    html += `<div class="drawer-block">
+      <div class="editable-row"><span class="er-key">Name</span><span class="er-ctl"><input type="text" class="d-input" data-field="name" maxlength="120"></span></div>
+    </div>`;
+
     if (isProofing && g.token) {
       html += `<div class="drawer-block">
         <div class="d-label">Link</div>
@@ -1187,6 +1193,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function wireDrawerSettings(g, col) {
     const body = $('drawer-body');
     const d = state.drawer.draft;
+    const nameInput = body.querySelector('[data-field="name"]');
+    if (nameInput) nameInput.value = d.name || '';
     body.querySelectorAll('[data-switch]').forEach(sw => sw.addEventListener('click', () => {
       const key = sw.getAttribute('data-switch');
       if (key === 'useCollection') { d.override = !d.override; state.drawer.dirty = true; renderDrawer(); return; }
@@ -1217,7 +1225,9 @@ document.addEventListener('DOMContentLoaded', () => {
   async function drawerAction(g, col, act) {
     const d = state.drawer.draft;
     if (act === 'save') {
-      const body = { name: d.name, active: d.active };
+      const name = (d.name || '').trim();
+      if (!name) { toast('Name cannot be empty'); return; }
+      const body = { name, active: d.active };
       if (g.type === 'proofing') {
         if (col) {
           body.overrideCollectionSettings = d.override;

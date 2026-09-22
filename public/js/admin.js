@@ -1138,6 +1138,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <button class="link-btn accent" data-link="copy">Copy</button>
           <button class="link-btn accent" data-link="open">Open</button>
           <button class="link-btn accent" data-link="email">Email</button>
+          <button class="link-btn muted" data-link="edit">Edit</button>
           <button class="link-btn muted" data-link="regen">Regenerate</button>
         </div>
       </div>`;
@@ -1211,12 +1212,23 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function linkAction(g, act) {
-    const url = window.location.origin + '/gallery/' + g.token;
+    const baseUrl = window.location.origin;
+    const url = baseUrl + '/gallery/' + g.token;
     if (act === 'copy') { copyText(url); }
     else if (act === 'open') { window.open(url, '_blank'); }
     else if (act === 'email') { openMailto(buildGalleryMailto(g)); }
+    else if (act === 'edit') {
+      const saved = await linkModal({
+        title: 'Edit gallery link',
+        warning: 'Anyone holding the current link will get "not found" the moment you save. Change this only to put back a link you have already sent out.',
+        prefix: baseUrl + '/gallery/',
+        value: g.token,
+        onSubmit: (token) => saveShareToken('galleries', g.id, token),
+      });
+      if (saved) { await loadData(); renderAll(); toast('Link updated'); }
+    }
     else if (act === 'regen') {
-      if (!await confirmModal({ title: 'Regenerate link', message: 'The old link will stop working.' })) return;
+      if (!await confirmModal({ title: 'Regenerate link', message: 'This replaces the link with a new one, and anyone you have already sent the current link to will get "not found". Write the current link down first — Edit can put it back.', okText: 'Regenerate', danger: true })) return;
       const res = await fetch(`/api/galleries/${g.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regenerateToken: true }) });
       if (res.ok) { await loadData(); renderAll(); toast('Link regenerated'); }
     }
@@ -2310,9 +2322,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const col = state.collections.find(c => c.id === ncEditingId);
     if (col) openMailto(buildCollectionMailto(col));
   });
+  $('nc-edit').addEventListener('click', async () => {
+    if (!ncEditingId) return;
+    const col = state.collections.find(c => c.id === ncEditingId);
+    if (!col) return;
+    const saved = await linkModal({
+      title: 'Edit collection link',
+      warning: 'Anyone holding the current link will get "not found" the moment you save. Change this only to put back a link you have already sent out.',
+      prefix: window.location.origin + '/collection/',
+      value: col.token,
+      onSubmit: (token) => saveShareToken('collections', ncEditingId, token),
+    });
+    if (!saved) return;
+    await loadData();
+    const updated = state.collections.find(c => c.id === ncEditingId);
+    if (updated) $('nc-link').value = window.location.origin + '/collection/' + updated.token;
+    renderAll();
+    toast('Link updated');
+  });
   $('nc-regen').addEventListener('click', async () => {
     if (!ncEditingId) return;
-    if (!await confirmModal({ title: 'Regenerate link', message: 'The old link will stop working.' })) return;
+    if (!await confirmModal({ title: 'Regenerate link', message: 'This replaces the link with a new one, and anyone you have already sent the current link to will get "not found". Write the current link down first — Edit can put it back.', okText: 'Regenerate', danger: true })) return;
     const res = await fetch(`/api/collections/${ncEditingId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regenerateToken: true }) });
     if (!res.ok) { toast('Regenerate failed'); return; }
     await loadData();
@@ -2582,6 +2612,72 @@ document.addEventListener('DOMContentLoaded', () => {
       okBtn.addEventListener('click', ok); $('confirm-cancel').addEventListener('click', cancel);
       modal.querySelector('.modal-backdrop').addEventListener('click', cancel); document.addEventListener('keydown', key);
     });
+  }
+
+  // A share link is only as private as its token, but it is also the thing the
+  // client has already pasted into their calendar — so it has to be editable by
+  // hand, not just regenerable. The modal stays open when the server rejects a
+  // token (bad characters, too short, already taken) so the typo can be fixed in
+  // place. cfg.onSubmit resolves to null on success, or a message to display.
+  function linkModal(cfg) {
+    const modal = $('link-modal');
+    const input = $('link-modal-input');
+    const err = $('link-modal-error');
+    const okBtn = $('link-modal-ok');
+    $('link-modal-title').textContent = cfg.title || 'Edit link';
+    $('link-modal-warning').textContent = cfg.warning || '';
+    $('link-modal-prefix').textContent = cfg.prefix || '';
+    input.value = cfg.value || '';
+    err.textContent = '';
+    okBtn.disabled = false;
+    modal.hidden = false;
+    input.focus(); input.select();
+    return new Promise((resolve) => {
+      function cleanup() {
+        modal.hidden = true;
+        okBtn.disabled = false;
+        okBtn.removeEventListener('click', ok);
+        $('link-modal-cancel').removeEventListener('click', cancel);
+        modal.querySelector('.modal-backdrop').removeEventListener('click', cancel);
+        document.removeEventListener('keydown', key);
+      }
+      async function ok() {
+        const value = input.value.trim();
+        if (!value) { err.textContent = 'Enter a link.'; input.focus(); return; }
+        if (value === cfg.value) { cleanup(); resolve(false); return; }
+        okBtn.disabled = true;
+        err.textContent = '';
+        const message = await cfg.onSubmit(value);
+        if (message) { err.textContent = message; okBtn.disabled = false; input.focus(); return; }
+        cleanup(); resolve(true);
+      }
+      function cancel() { cleanup(); resolve(false); }
+      function key(e) {
+        if (e.key === 'Escape') cancel();
+        if (e.key === 'Enter' && !okBtn.disabled) ok();
+      }
+      okBtn.addEventListener('click', ok);
+      $('link-modal-cancel').addEventListener('click', cancel);
+      modal.querySelector('.modal-backdrop').addEventListener('click', cancel);
+      document.addEventListener('keydown', key);
+    });
+  }
+
+  // Returns null when saved, or the server's complaint to show in the modal.
+  async function saveShareToken(kind, id, token) {
+    let res;
+    try {
+      res = await fetch(`/api/${kind}/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+    } catch (e) {
+      return 'Could not reach the server.';
+    }
+    if (res.ok) return null;
+    const data = await res.json().catch(() => ({}));
+    return data.error || 'Could not save that link.';
   }
 
   // ==========================================================================

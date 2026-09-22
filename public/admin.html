@@ -277,6 +277,7 @@
           <button id="nc-copy" class="btn-ghost">Copy</button>
           <button id="nc-open" class="btn-ghost">Open</button>
           <button id="nc-email" class="btn-ghost">Email</button>
+          <button id="nc-edit" class="btn-ghost">Edit</button>
           <button id="nc-regen" class="btn-ghost">Regenerate</button>
         </div>
         <p class="setting-hint" id="nc-link-hint">The link is created when you save the collection.</p>
@@ -407,6 +408,28 @@
     </div>
   </div>
 
+  <!-- Edit share link (galleries and collections) -->
+  <div id="link-modal" class="modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-inner" style="max-width:540px;">
+      <h3 id="link-modal-title">Edit link</h3>
+      <p class="sub" id="link-modal-warning"></p>
+      <div class="setting-group">
+        <label>Link</label>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <span id="link-modal-prefix" class="setting-hint" style="margin:0;white-space:nowrap;"></span>
+          <input type="text" id="link-modal-input" class="setting-input" maxlength="64" spellcheck="false" autocomplete="off" autocapitalize="off">
+        </div>
+        <p class="setting-hint">6-64 characters: letters, numbers, dashes and underscores. Anyone with the old link will get "not found".</p>
+        <p class="error-text" id="link-modal-error"></p>
+      </div>
+      <div class="modal-actions"><div></div><div class="right">
+        <button id="link-modal-cancel" class="btn-ghost">Cancel</button>
+        <button id="link-modal-ok" class="btn-primary">Save link</button>
+      </div></div>
+    </div>
+  </div>
+
   <!-- Import from server modal -->
   <div id="import-modal" class="modal" hidden>
     <div class="modal-backdrop"></div>
@@ -523,6 +546,6 @@
   <div id="toast" class="toast"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=122"></script>
+  <script src="/js/admin.js?v=123"></script>
 </body>
 </html>

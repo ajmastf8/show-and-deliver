@@ -1842,3 +1842,14 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
   text-decoration: none; font-size: 13px; line-height: 1; opacity: 0; transition: opacity .15s;
 }
 .pfa-card:hover .pfa-open { opacity: 1; }
+
+/* Item page: preview + metadata. */
+.pfa-item-view { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, 1fr); gap: 28px; align-items: start; }
+.pfa-item-preview { background: var(--panel); border-radius: 8px; overflow: hidden; }
+.pfa-item-preview img { width: 100%; height: auto; display: block; }
+.pfa-item-meta { min-width: 0; }
+.pfa-metalist { display: flex; flex-direction: column; }
+.pfa-metarow { display: flex; gap: 14px; padding: 7px 4px; border-bottom: 1px solid var(--border-row); font-size: 13px; }
+.pfa-metarow span:first-child { flex: 0 0 130px; color: var(--text-5); }
+.pfa-metarow span:last-child { color: var(--text); word-break: break-word; }
+@media (max-width: 900px) { .pfa-item-view { grid-template-columns: 1fr; } }

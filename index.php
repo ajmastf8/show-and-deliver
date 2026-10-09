@@ -760,6 +760,88 @@ function probeImage($filePath) {
     return ['width' => $w, 'height' => $h];
 }
 
+// --- Item metadata (the admin's item page) ---
+
+// Curated EXIF. exif_read_data covers JPEG/TIFF; other formats return little.
+function portfolioItemExif($path) {
+    if (!function_exists('exif_read_data')) return [];
+    $e = @exif_read_data($path, null, true);
+    if (!$e) return [];
+    $flat = [];
+    foreach ($e as $section => $values) {
+        if (in_array($section, ['FILE', 'COMPUTED', 'THUMBNAIL'], true) || !is_array($values)) continue;
+        foreach ($values as $k => $v) {
+            if (!is_array($v) && $v !== '') $flat[$k] = (string)$v;
+        }
+    }
+    $want = ['Make', 'Model', 'LensModel', 'Lens', 'FNumber', 'ExposureTime', 'ExposureProgram',
+        'ISOSpeedRatings', 'FocalLength', 'FocalLengthIn35mmFilm', 'DateTimeOriginal', 'CreateDate',
+        'Orientation', 'Software', 'Artist', 'Copyright', 'ImageDescription'];
+    $out = [];
+    foreach ($want as $k) if (isset($flat[$k])) $out[$k] = $flat[$k];
+    return $out;
+}
+
+// The common XMP fields, pulled from the file's XML packet. Narrow on purpose:
+// a miss just means the field isn't shown.
+function portfolioItemXmp($path) {
+    $fh = @fopen($path, 'rb');
+    if (!$fh) return [];
+    $head = (string)fread($fh, 262144);
+    fclose($fh);
+    if (strpos($head, 'xmpmeta') === false) return [];
+    $out = [];
+    foreach (['creator' => 'Creator', 'rights' => 'Rights', 'title' => 'Title', 'description' => 'Description'] as $tag => $label) {
+        if (preg_match('#<dc:' . $tag . '>.*?<rdf:li[^>]*>(.*?)</rdf:li>#is', $head, $m)) {
+            $v = trim(html_entity_decode($m[1], ENT_QUOTES, 'UTF-8'));
+            if ($v !== '') $out[$label] = $v;
+        }
+    }
+    if (preg_match('#<dc:subject>.*?</dc:subject>#is', $head, $m) && strpos($m[0], '<rdf:li') !== false) {
+        preg_match_all('#<rdf:li[^>]*>(.*?)</rdf:li>#is', $m[0], $mm);
+        $out['Keywords'] = array_map(fn($s) => trim(html_entity_decode($s, ENT_QUOTES, 'UTF-8')), $mm[1]);
+    }
+    if (preg_match('#xmp:Rating="(-?\d+)"#i', $head, $m)) $out['Rating'] = (int)$m[1];
+    if (preg_match('#photoshop:Credit[>="]+([^<"]+)#i', $head, $m)) $out['Credit'] = trim($m[1]);
+    return $out;
+}
+
+// Everything the admin item page shows for one file.
+function portfolioItemMeta($gal, $file, array $it) {
+    $path = $gal['dir'] . '/' . $file;
+    $w = (int)($it['width'] ?? 0);
+    $h = (int)($it['height'] ?? 0);
+    if (($it['type'] ?? '') === 'photo') {
+        $p = probeImage($path);
+        if ($p) { $w = $p['width']; $h = $p['height']; }
+    }
+    $facts = [
+        'file' => $file,
+        'type' => $it['type'] ?? 'photo',
+        'bytes' => (int)@filesize($path),
+        'width' => $w,
+        'height' => $h,
+        'addedAt' => $it['addedAt'] ?? null,
+        'mtime' => (int)@filemtime($path),
+        'visible' => ($it['visible'] ?? true) !== false,
+        'cover' => (($gal['sidecar']['cover'] ?? null) === $file),
+    ];
+    if (($it['type'] ?? '') === 'video' && function_exists('mp4DurationSeconds')) {
+        $facts['duration'] = mp4DurationSeconds($path);
+    }
+    $meta = [
+        'facts' => $facts,
+        'exif' => portfolioItemExif($path),
+        'xmp' => portfolioItemXmp($path),
+        'gallery' => ['id' => $gal['id'], 'title' => portfolioTitle($gal)],
+    ];
+    if (!empty($it['id'])) {
+        $meta['thumb'] = '/thumbnails/' . $it['id'] . '.jpg';
+        $meta['proxy'] = '/proxies/' . $it['id'] . '_proxy.jpg';
+    }
+    return $meta;
+}
+
 function generatePhotoThumbnail($srcPath, $thumbPath) {
     $src = loadOrientedImage($srcPath);
     if (!$src) return false;
@@ -6122,6 +6204,14 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/order'
 }
 
 // Items
+
+if ($method === 'GET' && matchRoute('/api/admin/portfolio/galleries/{gid}/items/{file}', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    $file = $params['file'];
+    if (!isset($gal['sidecar']['items'][$file])) respondError('File not found', 404);
+    respond(portfolioItemMeta($gal, $file, $gal['sidecar']['items'][$file]));
+}
 
 if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/items/{file}', $uri, $params)) {
     requireAuth();

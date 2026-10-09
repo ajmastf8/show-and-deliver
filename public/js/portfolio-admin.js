@@ -22,6 +22,7 @@
     readiness: null,    // its payload
     duplicatesView: false, // the Duplicates panel
     duplicates: null,   // its payload
+    item: null,         // the open item's metadata view
     pages: [],
     pageId: null,
     migration: null,    // reels galleries still waiting to move into folders
@@ -204,6 +205,7 @@
     renderRail();
     if (state.pagesView) renderPages();
     else if (state.design) renderDesign();
+    else if (state.item) renderItem();
     else if (state.readinessView) renderReadiness();
     else if (state.duplicatesView) renderDuplicates();
     else if (state.galleryId && state.gallery) renderGalleryEditor();
@@ -518,6 +520,7 @@
       state.pagesView = false;
       state.readinessView = false;
       state.duplicatesView = false;
+      state.item = null;
       await loadGallery(gid);
       state.categoryId = state.gallery.categoryId;
       render();
@@ -731,6 +734,7 @@
           <div class="pfa-flags">${flags}</div>
           <div class="pfa-item-actions">
             <button data-act="${item.ref ? 'ref-edit' : 'edit'}" data-file="${esc(item.file)}">Edit</button>
+            ${item.ref ? '' : `<button data-act="details" data-file="${esc(item.file)}">Details</button>`}
             <button data-act="cover" data-file="${esc(item.file)}">Cover</button>
             ${g.layout === 'featured' ? `<button data-act="tile" data-file="${esc(item.file)}">Size: ${esc(TILE_SIZES.find(s => s[0] === (item.tile || 'normal'))[1])}</button>` : ''}
             <button data-act="${item.ref ? 'ref-visible' : 'visible'}" data-file="${esc(item.file)}">${item.visible ? 'Hide' : 'Show'}</button>
@@ -840,6 +844,7 @@
     const base = `/api/admin/portfolio/galleries/${encodeURIComponent(gid)}`;
     const item = g.items.find(i => i.file === file);
 
+    if (action === 'details') return openItem(gid, file);
     if (action === 'cover') return act(() => send(base, 'PUT', { cover: file }));
     if (action === 'ref-remove') return act(() => req(`${base}/refs/${encodeURIComponent(file)}`, { method: 'DELETE' }));
     if (action === 'ref-visible') return act(() => send(`${base}/refs/${encodeURIComponent(file)}`, 'PUT', { visible: !item.visible }));
@@ -1329,6 +1334,79 @@
       S().toast(`Linked ${r.linked} file${r.linked === 1 ? '' : 's'}`);
     });
     await openDuplicates();
+  }
+
+  // ---------- Item ----------
+
+  async function openItem(gid, file) {
+    try {
+      const meta = await req(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/items/${encodeURIComponent(file)}`);
+      state.item = { gid, file, meta };
+      render();
+    } catch (err) {
+      S().toast(err.message || 'Could not open that item');
+    }
+  }
+
+  function metaRows(obj) {
+    const rows = Object.entries(obj).map(([k, v]) => {
+      const val = Array.isArray(v) ? v.join(', ') : String(v ?? '');
+      if (val.trim() === '') return '';
+      return `<div class="pfa-metarow"><span>${esc(k)}</span><span>${esc(val)}</span></div>`;
+    }).filter(Boolean).join('');
+    return `<div class="pfa-metalist">${rows}</div>`;
+  }
+
+  function renderItem() {
+    const { gid, file, meta } = state.item;
+    const f = meta.facts || {};
+    const bytes = n => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1024).toFixed(0) + ' KB';
+    const isoDay = s => s ? String(s).slice(0, 10) : '';
+    const unixDay = ts => ts ? new Date(ts * 1000).toISOString().slice(0, 10) : '';
+    $('pfa-centre').innerHTML = `
+      <div class="centre-header">
+        <div>
+          <button class="back-link" id="pfa-item-back">&larr; ${esc(meta.gallery ? meta.gallery.title : 'Gallery')}</button>
+          <h1>${esc(f.file || file)}</h1>
+          <p class="centre-sub">
+            ${esc(f.type || '')} · ${f.width}×${f.height}${f.duration ? ` · ${Math.round(f.duration)}s` : ''} · ${bytes(f.bytes || 0)}
+            ${f.cover ? ' · <span class="pfa-badge good">Cover</span>' : ''}${f.visible ? '' : ' · <span class="pfa-badge">Hidden</span>'}
+          </p>
+        </div>
+        <div class="centre-controls">
+          <button class="ctrl" id="pfa-item-visible">${f.visible ? 'Hide' : 'Show'}</button>
+          <button class="ctrl" id="pfa-item-cover">Set as cover</button>
+          <button class="ctrl" id="pfa-item-rename">Rename</button>
+          <button class="ctrl danger" id="pfa-item-delete">Delete</button>
+        </div>
+      </div>
+      <div class="pfa-scroll pfa-item-view">
+        <div class="pfa-item-preview">${meta.proxy || meta.thumb ? `<img src="${esc(meta.proxy || meta.thumb)}" alt="">` : ''}</div>
+        <div class="pfa-item-meta">
+          <div class="pfa-section"><div class="pfa-section-text">File</div></div>
+          ${metaRows({ File: f.file, Type: f.type, Size: bytes(f.bytes || 0), Dimensions: `${f.width}×${f.height}`, Added: isoDay(f.addedAt), Modified: unixDay(f.mtime) })}
+          ${Object.keys(meta.exif || {}).length ? `<div class="pfa-section"><div class="pfa-section-text">EXIF</div></div>${metaRows(meta.exif)}` : ''}
+          ${Object.keys(meta.xmp || {}).length ? `<div class="pfa-section"><div class="pfa-section-text">XMP</div></div>${metaRows(meta.xmp)}` : ''}
+        </div>
+      </div>`;
+    const base = `/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/items/${encodeURIComponent(file)}`;
+    $('pfa-item-back').addEventListener('click', () => { state.item = null; render(); });
+    $('pfa-item-visible').addEventListener('click', () => send(base, 'PUT', { visible: !f.visible }).then(() => openItem(gid, file)));
+    $('pfa-item-cover').addEventListener('click', () => send(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}`, 'PUT', { cover: file }).then(() => openItem(gid, file)));
+    $('pfa-item-rename').addEventListener('click', async () => {
+      const name = await S().prompt({ title: 'Rename file', okText: 'Rename', field: { label: 'New file name (extension kept)', type: 'text', value: file } });
+      if (!name || !name.trim() || name === file) return;
+      await send(base, 'PUT', { rename: name });
+      state.item = null;
+      await openGallery(gid);
+    });
+    $('pfa-item-delete').addEventListener('click', async () => {
+      const ok = await S().confirm({ title: 'Delete this file?', message: `"${file}" moves to site-data/portfolio-trash/.`, okText: 'Delete', danger: true });
+      if (!ok) return;
+      await req(base, { method: 'DELETE' });
+      state.item = null;
+      await openGallery(gid);
+    });
   }
 
   function renderPages() {

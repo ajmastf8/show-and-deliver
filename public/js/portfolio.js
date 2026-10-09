@@ -512,7 +512,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (data.locked) return renderLocked(cat, rest, data.title);
       renderGallery(data.gallery);
     } else if (parts.length === 1) {
-      const { category, index, categories } = await load(`/api/portfolio/c/${encodeURIComponent(parts[0])}`);
+      const data = await load(`/api/portfolio/c/${encodeURIComponent(parts[0])}`);
+      if (data.locked) return renderLocked(parts[0], [parts[0]], data.title);
+      // A top-level gallery serves its own media here, not a list of galleries.
+      if (data.gallery) { renderGallery(data.gallery); return; }
+      const { category, index, categories } = data;
       document.title = category.title;
       const body = withSidebar(categories || [], category.slug, index || {});
       const head = el('header', 'pf-head');

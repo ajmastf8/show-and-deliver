@@ -4735,7 +4735,33 @@ function portfolioReconcileChildren($dir, array $names, $parentId, array $parent
 // Walks the category folder's galleries in their saved order (new ones after,
 // by name), reconciling each so gallery slugs stay unique within the category.
 function portfolioReconcileCategory($dir, $folder, array $takenSlugs) {
-    [$names, $warnings] = portfolioListDirs($dir, "category \"$folder\"");
+    $scan = portfolioScanGallery($dir);
+    // A top-level folder with media and no subfolders is a gallery, not a
+    // collection. This is what lets the Image Library mix collections and
+    // galleries at its top level. An existing sidecar settles the question: a
+    // `.category.json` means a collection, a `.gallery.json` means a gallery.
+    $hasCatSidecar = is_file("$dir/.category.json");
+    $hasGalSidecar = is_file("$dir/.gallery.json");
+    $isGallery = !$hasCatSidecar && ($hasGalSidecar || (empty($scan['children']) && !empty($scan['media'])));
+    if ($isGallery) {
+        $r = portfolioReconcileGallery($dir, $folder, $takenSlugs);
+        $r['sidecar']['kind'] = 'gallery';
+        return [
+            'kind' => 'gallery',
+            'sidecar' => $r['sidecar'],
+            'galleries' => [],
+            'items' => $r['sidecar']['items'],
+            'children' => $r['children'],
+            'warnings' => array_merge($scan['warnings'], $r['warnings']),
+            'pending' => $r['pending'],
+        ];
+    }
+
+    $names = $scan['children'];
+    $warnings = $scan['warnings'];
+    if (!empty($scan['media'])) {
+        $warnings[] = "A collection holds galleries, not media — move the loose files in \"$folder\" into a gallery.";
+    }
     $existing = jsonRead("$dir/.category.json");
     $savedOrder = is_array($existing['order'] ?? null) ? $existing['order'] : [];
     $byId = [];
@@ -4781,10 +4807,11 @@ function portfolioReconcileCategory($dir, $folder, array $takenSlugs) {
             $c['slug'] = portfolioUniqueSlug(portfolioSlugify($folder), $takenSlugs, 'c-' . substr($c['id'], 3, 6));
         }
         $c += ['title' => null, 'description' => '', 'visible' => true, 'createdAt' => date('c')];
+        $c['kind'] = 'collection';
         $c['order'] = $ids;
         return $c;
     });
-    return ['sidecar' => $c, 'galleries' => $galleries, 'warnings' => $warnings];
+    return ['kind' => 'collection', 'sidecar' => $c, 'galleries' => $galleries, 'items' => [], 'children' => [], 'warnings' => $warnings];
 }
 
 // The whole portfolio, reconciled against disk. Memoised per request; pass
@@ -4821,7 +4848,8 @@ function portfolioTree($refresh = false) {
             $gal['category'] = $r['sidecar']['id'];
         }
         unset($gal);
-        $categories[] = [
+        $entry = [
+            'kind' => $r['kind'],
             'id' => $r['sidecar']['id'],
             'slug' => $r['sidecar']['slug'],
             'folder' => $n,
@@ -4831,6 +4859,17 @@ function portfolioTree($refresh = false) {
             'galleries' => $r['galleries'],
             'warnings' => $r['warnings'],
         ];
+        if ($r['kind'] === 'gallery') {
+            // A top-level gallery is its own node: no category prefix, so its
+            // slug path is empty and its URL is /portfolio/<slug>.
+            $entry['items'] = $r['items'];
+            $entry['children'] = $r['children'];
+            $entry['slugPath'] = [];
+            $entry['isTopGallery'] = true;
+            $entry['parent'] = null;
+            $entry['pending'] = $r['pending'] ?? [];
+        }
+        $categories[] = $entry;
     }
     $ids = array_column($categories, 'id');
     portfolioSidecarUpdate(PORTFOLIO_DIR . '/.portfolio.json', function ($p) use ($ids) {
@@ -4874,6 +4913,10 @@ function portfolioFindGallery($id) {
     $home = portfolioTree()['home'];
     if ($home && $home['id'] === $id) return [portfolioHomeCategory(), $home];
     foreach (portfolioTree()['categories'] as $cat) {
+        if (!empty($cat['isTopGallery'])) {
+            if ($cat['id'] === $id) return [$cat, $cat];
+            continue;
+        }
         $hit = portfolioFindNodeById($cat['galleries'], $id);
         if ($hit) return [$cat, $hit];
     }
@@ -4914,6 +4957,8 @@ function portfolioFindCategoryBySlug($slug) {
 function portfolioFindByPath($catSlug, array $segments) {
     $cat = portfolioFindCategoryBySlug($catSlug);
     if (!$cat) return null;
+    // A top-level gallery has no children: its URL is /portfolio/<slug>.
+    if (!empty($cat['isTopGallery'])) return [$cat, $cat];
     $nodes = $cat['galleries'];
     $node = null;
     foreach ($segments as $seg) {
@@ -5033,7 +5078,14 @@ function portfolioProcess($galleryId, $sliceSeconds) {
             $collect($gal['children'] ?? []);
         }
     };
-    foreach (portfolioTree(true)['categories'] as $cat) $collect($cat['galleries']);
+    foreach (portfolioTree(true)['categories'] as $cat) {
+        if (!empty($cat['isTopGallery'])) {
+            if ($cat['id'] === $galleryId) array_unshift($galleries, $cat);
+            else $galleries[] = $cat;
+            continue;
+        }
+        $collect($cat['galleries']);
+    }
     $processed = 0;
     $remaining = 0;
     $failed = 0;
@@ -5078,9 +5130,13 @@ function portfolioMediaUrl($rel, $file) {
     return '/media/' . implode('/', $parts) . '/' . rawurlencode($file);
 }
 
-function portfolioCategoryUrl($cat) { return '/portfolio/' . $cat['slug']; }
+function portfolioCategoryUrl($cat) {
+    if (!empty($cat['isTopGallery'])) return '/portfolio/' . rawurlencode($cat['slug']);
+    return '/portfolio/' . $cat['slug'];
+}
 function portfolioGalleryUrl($cat, $gal) {
     if (!empty($gal['home'])) return '/';
+    if (!empty($gal['isTopGallery'])) return '/portfolio/' . rawurlencode($gal['slug']);
     $path = !empty($gal['slugPath']) ? $gal['slugPath'] : [$gal['slug']];
     return '/portfolio/' . rawurlencode($cat['slug']) . '/' . implode('/', array_map('rawurlencode', $path));
 }
@@ -5318,6 +5374,7 @@ function portfolioCategoryPayload($cat) {
         'title' => portfolioTitle($cat),
         'description' => (string)($cat['sidecar']['description'] ?? ''),
         'url' => portfolioCategoryUrl($cat),
+        'kind' => 'collection',
         'galleries' => $galleries,
     ];
 }
@@ -5389,6 +5446,19 @@ function portfolioPublicCategories() {
     $out = [];
     foreach (portfolioTree()['categories'] as $cat) {
         if (($cat['sidecar']['visible'] ?? true) === false) continue;
+        if (!empty($cat['isTopGallery'])) {
+            if (!portfolioGalleryIsPublic($cat, $cat)) continue;
+            // A top-level gallery is itself a card in the index.
+            $out[] = [
+                'id' => $cat['id'],
+                'slug' => $cat['slug'],
+                'title' => portfolioTitle($cat),
+                'url' => portfolioCategoryUrl($cat),
+                'kind' => 'gallery',
+                'galleries' => [portfolioGallerySummary($cat, $cat)],
+            ];
+            continue;
+        }
         $p = portfolioCategoryPayload($cat);
         if ($p['galleries']) $out[] = $p;
     }
@@ -5418,6 +5488,14 @@ if ($method === 'GET' && $uri === '/api/portfolio/home') {
 if ($method === 'GET' && matchRoute('/api/portfolio/c/{cat}', $uri, $params)) {
     $cat = portfolioFindCategoryBySlug($params['cat']);
     if (!$cat || ($cat['sidecar']['visible'] ?? true) === false) respondError('Not found', 404);
+    // A top-level gallery has no separate category page — the URL is the gallery.
+    if (!empty($cat['isTopGallery'])) {
+        if (!portfolioGalleryIsReachable($cat, $cat)) respondError('Not found', 404);
+        if (portfolioAccess($cat) === 'password' && !portfolioIsUnlocked($cat['id'])) {
+            respond(['locked' => true, 'title' => portfolioTitle($cat)]);
+        }
+        respond(['gallery' => portfolioGalleryPayload($cat, $cat)]);
+    }
     respond([
         'category' => portfolioCategoryPayload($cat),
         'index' => readThemeConfig()['index'],
@@ -5497,6 +5575,21 @@ if ($method === 'GET' && $uri === '/api/admin/portfolio') {
     $tree = portfolioTree();
     $categories = [];
     foreach ($tree['categories'] as $cat) {
+        if (!empty($cat['isTopGallery'])) {
+            $categories[] = [
+                'id' => $cat['id'],
+                'slug' => $cat['slug'],
+                'folder' => $cat['folder'],
+                'title' => portfolioTitle($cat),
+                'visible' => ($cat['sidecar']['visible'] ?? true) !== false,
+                'url' => portfolioCategoryUrl($cat),
+                'kind' => 'gallery',
+                'self' => portfolioAdminGalleryNode($cat, $cat),
+                'galleries' => [],
+                'warnings' => $cat['warnings'],
+            ];
+            continue;
+        }
         $galleries = array_map(fn($gal) => portfolioAdminGalleryNode($cat, $gal), $cat['galleries']);
         $categories[] = [
             'id' => $cat['id'],
@@ -5505,6 +5598,7 @@ if ($method === 'GET' && $uri === '/api/admin/portfolio') {
             'title' => portfolioTitle($cat),
             'visible' => ($cat['sidecar']['visible'] ?? true) !== false,
             'url' => portfolioCategoryUrl($cat),
+            'kind' => 'collection',
             'galleries' => $galleries,
             'warnings' => $cat['warnings'],
         ];

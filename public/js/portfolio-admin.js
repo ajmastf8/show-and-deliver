@@ -266,10 +266,14 @@
       <div class="rail-row new-collection" id="pfa-new-cat"><span class="rail-name">+ New collection</span></div>
     `;
     function catRow(c) {
+      const isGal = c.kind === 'gallery';
+      const active = isGal ? state.galleryId === c.id : state.categoryId === c.id;
+      const count = isGal ? (c.self ? c.self.itemCount : 0) : c.galleries.length;
+      const attrs = isGal ? `data-topgid="${esc(c.id)}"` : `data-cat="${esc(c.id)}"`;
       return `
-        <div class="rail-row ${state.categoryId === c.id ? 'active' : ''} ${c.visible ? '' : 'inactive'}" data-cat="${esc(c.id)}">
+        <div class="rail-row ${active ? 'active' : ''} ${c.visible ? '' : 'inactive'}" ${attrs}>
           <span class="rail-name">${esc(c.title)}</span>
-          <span class="rail-count">${c.galleries.length}</span>
+          <span class="rail-count">${count}</span>
           <a class="rail-open" href="${esc(c.url)}" target="_blank" rel="noopener" title="Open in a new window" aria-label="Open in a new window">↗</a>
         </div>`;
     }
@@ -286,6 +290,9 @@
       });
     });
     $('pfa-checks').addEventListener('toggle', e => { state.checksOpen = e.target.open; });
+    rail.querySelectorAll('[data-topgid]').forEach(row => {
+      row.addEventListener('click', () => openGallery(row.dataset.topgid));
+    });
     $('pfa-new-cat').addEventListener('click', newCategory);
     $('pfa-home-row').addEventListener('click', openHome);
     $('pfa-design-row').addEventListener('click', openDesign);
@@ -311,14 +318,17 @@
   galleriesInScope.all = function () {
     const cats = state.tree?.categories || [];
     const home = state.tree?.home;
-    const all = cats.flatMap(c => c.galleries.map(g => ({ ...g, category: c })));
+    const all = cats.flatMap(c => (c.kind === 'gallery' && c.self) ? [{ ...c.self, category: c }] : c.galleries.map(g => ({ ...g, category: c })));
     return home ? [...all, { id: home.id, title: 'Home page', category: null }] : all;
   };
 
   function galleriesInScope() {
     const cats = state.tree?.categories || [];
     const scoped = state.categoryId ? cats.filter(c => c.id === state.categoryId) : cats;
-    return scoped.flatMap(c => c.galleries.map(g => ({ ...g, category: c })));
+    return scoped.flatMap(c => {
+      if (c.kind === 'gallery' && c.self) return [{ ...c.self, category: c }];
+      return c.galleries.map(g => ({ ...g, category: c }));
+    });
   }
 
   // The readiness gate, condensed for the browse header; opens the full panel.

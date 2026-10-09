@@ -4883,6 +4883,15 @@ function portfolioTree($refresh = false) {
     return $tree;
 }
 
+// A new gallery's starting layout: whatever the home page is set to, so the
+// site reads as one consistent design unless a gallery's own Layout picker
+// overrides it. Falls back to justified before the home gallery exists.
+function portfolioDefaultLayout() {
+    $home = portfolioScanHome();
+    $layout = $home['sidecar']['layout'] ?? null;
+    return in_array($layout, PORTFOLIO_LAYOUTS, true) ? $layout : 'justified';
+}
+
 // The home gallery node, or null when the folder hasn't been created yet.
 function portfolioScanHome() {
     $dir = PORTFOLIO_DIR . '/' . PORTFOLIO_HOME_FOLDER;
@@ -6134,10 +6143,10 @@ if ($method === 'POST' && $uri === '/api/admin/portfolio/galleries') {
     if ($name === '') respondError('Name is required', 400);
     $name = portfolioUniqueChildName($targetDir, $name);
     if (!@mkdir($targetDir . '/' . $name, 0755)) respondError('Could not create the folder', 500);
-    // New galleries open full-screen (the Full screen layout) and carry a
-    // sidecar before anything scans the tree (an empty folder would reconcile
-    // as a collection first and stick that way).
-    @file_put_contents($targetDir . '/' . $name . '/.gallery.json', json_encode(['layout' => 'fullscreen']));
+    // New galleries start on the home page's layout, and carry a sidecar
+    // before anything scans the tree (an empty folder would reconcile as a
+    // collection first and stick that way).
+    @file_put_contents($targetDir . '/' . $name . '/.gallery.json', json_encode(['layout' => portfolioDefaultLayout()]));
     if ($isTopGallery) {
         $taken = array_map(fn($c) => $c['slug'], portfolioTree(true)['categories']);
         portfolioReconcileGallery($targetDir . '/' . $name, $name, $taken);

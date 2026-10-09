@@ -253,13 +253,20 @@ function renderGalleryBody(container, gallery, layoutName) {
   const tiles = new Map();
   const instances = [];
 
+  // Immersive layouts fill most of the viewport, so a 640px thumbnail
+  // stretched that large looks soft — use the 2048px proxy there. Scanning
+  // layouts render small grid tiles, where the thumbnail is already sharp
+  // and far lighter to load.
+  const immersive = layoutName === 'fullscreen' || layoutName === 'horizontal' || layoutName === 'slideshow';
   const tile = item => {
     const index = media.indexOf(item);
     const node = el('button', 'pf-tile');
     node.type = 'button';
-    if (item.thumb) {
+    const hiRes = item.type === 'video' ? item.poster : item.proxy;
+    const displaySrc = (immersive && hiRes) || item.thumb;
+    if (displaySrc) {
       const img = el('img');
-      img.src = item.thumb;
+      img.src = displaySrc;
       img.alt = item.title || '';
       img.loading = 'lazy';
       node.appendChild(img);

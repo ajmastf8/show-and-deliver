@@ -444,8 +444,8 @@
 
   function galleryCard(g) {
     const flags = [
-      { public: '', unlisted: '<span class="pfa-badge">Unlisted</span>',
-        password: '<span class="pfa-badge">Password</span>', hidden: '<span class="pfa-badge">Hidden</span>' }[g.access] ?? '',
+      { public: '', unlisted: '<span class="pfa-badge">Private</span>',
+        password: '<span class="pfa-badge">Private · password</span>', hidden: '<span class="pfa-badge">Private</span>' }[g.access] ?? '',
       g.processing ? `<span class="pfa-badge work">${g.processing} processing</span>` : '',
       g.needsPoster ? `<span class="pfa-badge work">${g.needsPoster} need posters</span>` : '',
       g.pending.length ? `<span class="pfa-badge work">${g.pending.length} arriving</span>` : '',
@@ -1433,6 +1433,7 @@
               <div class="pfa-page-row" data-page="${esc(p.id)}">
                 <span class="pfa-page-title">${esc(p.title)}</span>
                 <span class="pfa-page-meta">${esc(p.url)}${p.type === 'contact' ? ' · form' : ''}${p.visible ? '' : ' · hidden'}</span>
+                <a class="rail-open" href="${esc(p.url)}" target="_blank" rel="noopener" title="Open in a new window" aria-label="Open in a new window" data-open>↗</a>
               </div>`).join('')}
           </div>`
           : `<div class="pfa-empty"><p>No pages yet.</p>
@@ -1443,8 +1444,11 @@
     if (!page) {
       $('pfa-new-page').addEventListener('click', () => newPage('text'));
       $('pfa-new-contact').addEventListener('click', () => newPage('contact'));
-      $('pfa-centre').querySelectorAll('[data-page]').forEach(row =>
-        row.addEventListener('click', () => { state.pageId = row.dataset.page; render(); }));
+      $('pfa-centre').querySelectorAll('[data-page]').forEach(row => {
+        row.addEventListener('click', () => { state.pageId = row.dataset.page; render(); });
+        const open = row.querySelector('[data-open]');
+        if (open) open.addEventListener('click', e => e.stopPropagation());
+      });
       return;
     }
     wirePageEditor(page);

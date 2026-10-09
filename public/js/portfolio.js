@@ -179,17 +179,30 @@ const VIEW_ICONS = {
 };
 
 // Which LAYOUTS key each view uses, given the gallery's configured layout.
-function viewModes(layout) {
-  const configured = LAYOUTS[layout] ? layout : 'justified';
+// The immersive view's axis comes from the gallery's Scrolling option: a
+// slideshow keeps its own layout; otherwise horizontal filmstrip or vertical
+// one-per-screen. The configured layout seeds it when the option is the default.
+function immersiveLayout(g) {
+  const configured = LAYOUTS[g.layout] ? g.layout : 'justified';
+  if (configured === 'slideshow') return 'slideshow';
+  const scroll = g.options && g.options.scroll;
+  if (scroll === 'horizontal') return 'horizontal';
+  if (scroll === 'vertical') return 'fullscreen';
+  return configured === 'horizontal' ? 'horizontal' : 'fullscreen';
+}
+
+function viewModes(g) {
+  const configured = LAYOUTS[g.layout] ? g.layout : 'justified';
+  const immersive = immersiveLayout(g);
   return {
     grid: PF_SCANNING.includes(configured) ? configured : 'justified',
-    fullscreen: PF_IMMERSIVE.includes(configured) ? configured : 'fullscreen',
+    fullscreen: PF_IMMERSIVE.includes(immersive) ? immersive : 'fullscreen',
   };
 }
 
 // The view a gallery opens in, so its own layout is the default.
-function defaultView(layout) {
-  const configured = LAYOUTS[layout] ? layout : 'justified';
+function defaultView(g) {
+  const configured = LAYOUTS[g.layout] ? g.layout : 'justified';
   return PF_IMMERSIVE.includes(configured) ? 'fullscreen' : 'grid';
 }
 
@@ -327,8 +340,8 @@ function renderGallery(gallery, opts = {}) {
     renderGalleryCards(root, gallery.children, {});
   }
 
-  const views = viewModes(gallery.layout);
-  let mode = readView() || defaultView(gallery.layout);
+  const views = viewModes(gallery);
+  let mode = readView() || defaultView(gallery);
 
   const body = el('div', 'pf-gallery-body');
   const hasPictures = gallery.items.some(i => i.type !== 'header');

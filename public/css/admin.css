@@ -1426,6 +1426,57 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
   border-bottom: 1px solid var(--border-row);
 }
 
+/* Collapsible: set once per gallery, so one summary line stands in for it. */
+.pfa-settings-wrap { margin-bottom: 18px; border-bottom: 1px solid var(--border-row); }
+.pfa-settings-wrap > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 8px 0 12px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-3);
+}
+.pfa-settings-wrap > summary::-webkit-details-marker { display: none; }
+.pfa-settings-wrap > summary::before { content: '\25B8'; color: var(--text-5); }
+.pfa-settings-wrap[open] > summary::before { content: '\25BE'; }
+.pfa-settings-summary { color: var(--text-5); }
+.pfa-settings-wrap[open] .pfa-settings-summary { display: none; }
+.pfa-settings-wrap .pfa-settings { border-bottom: 0; margin-bottom: 0; }
+
+/* More menu */
+.pfa-menu { position: relative; }
+.pfa-menu > summary { list-style: none; cursor: pointer; }
+.pfa-menu > summary::-webkit-details-marker { display: none; }
+.pfa-menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 20;
+  min-width: 190px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-input);
+  border-radius: 6px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+.pfa-menu-list button {
+  border: 0;
+  background: none;
+  padding: 7px 10px;
+  text-align: left;
+  border-radius: 4px;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.pfa-menu-list button:hover { background: var(--accent-dim); color: var(--accent); }
+.pfa-menu-list button.danger { color: var(--danger); }
+
 .pfa-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-4); }
 .pfa-field.wide { flex: 1 1 320px; }
 .pfa-field .setting-input { min-width: 180px; }
@@ -1443,6 +1494,8 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
   text-align: center;
 }
 
+.pfa-drop.compact { padding: 8px 14px; margin-bottom: 18px; }
+.pfa-drop.compact p { margin: 0; }
 .pfa-drop.over { border-color: var(--accent); background: var(--accent-dim); }
 .pfa-drop p { margin: 0 0 4px; }
 .linkish { border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; padding: 0; }
@@ -1503,6 +1556,12 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
   cursor: pointer;
 }
 .pfa-item-actions button:hover { color: var(--accent); }
+
+/* Per-item actions stay out of the way until the tile is hovered or focused. */
+.pfa-item .pfa-item-actions { opacity: 0; transition: opacity .12s; min-height: 18px; }
+.pfa-item:hover .pfa-item-actions,
+.pfa-item:focus-within .pfa-item-actions { opacity: 1; }
+@media (hover: none) { .pfa-item .pfa-item-actions { opacity: 1; } }
 
 /* A section header spans the grid, the way it will read on the site. */
 .pfa-section {

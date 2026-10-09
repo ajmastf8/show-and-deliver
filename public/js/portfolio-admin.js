@@ -523,29 +523,37 @@
           <h1>${esc(isHome ? 'Home page' : g.title)}</h1>
           <p class="centre-sub">
             <a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.url)}</a>
-            ${isHome ? '· what visitors see first' : `· <code>${esc(g.folder)}</code>`}
+            ${isHome ? '· what visitors see first' : ''}
             ${isHome || g.visible ? '' : '· <span class="pfa-badge">Hidden</span>'}
           </p>
           ${isHome ? '' : galleryNudges(g)}
         </div>
         <div class="centre-controls">
           <span class="pfa-pill" id="pfa-progress" hidden></span>
-          <button class="ctrl" id="pfa-add-section">Add section</button>
-          <button class="ctrl" id="pfa-add-picks">Add from a gallery</button>
-          ${isHome ? '' : '<button class="ctrl" id="pfa-g-rename">Rename</button>'}
-          ${isHome ? '' : '<button class="ctrl" id="pfa-g-delete">Delete</button>'}
+          <details class="pfa-menu" id="pfa-more">
+            <summary class="ctrl" aria-label="More actions">More &#9662;</summary>
+            <div class="pfa-menu-list">
+              <button type="button" id="pfa-add-section">Add section</button>
+              <button type="button" id="pfa-add-picks">Add from a gallery</button>
+              ${isHome ? '' : '<button type="button" id="pfa-new-subgallery">New sub-gallery</button>'}
+              ${isHome ? '' : '<button type="button" id="pfa-g-rename">Rename</button>'}
+              ${isHome ? '' : '<button type="button" class="danger" id="pfa-g-delete">Delete gallery</button>'}
+            </div>
+          </details>
           <button class="btn-primary small" id="pfa-add-files">Add files</button>
         </div>
       </div>
       <div class="pfa-scroll">
-        ${isHome ? '' : `
+        ${!isHome && g.children && g.children.length ? `
         <div class="pfa-section">
           <div class="pfa-section-text">Sub-galleries</div>
-          <button class="btn-primary small" id="pfa-new-subgallery">New sub-gallery</button>
         </div>
-        ${g.children && g.children.length
-          ? `<div class="pfa-cards" id="pfa-subcards">${g.children.map(subGalleryCard).join('')}</div>`
-          : '<p class="pfa-hint">Nest galleries inside this one to build a collection.</p>'}`}
+        <div class="pfa-cards" id="pfa-subcards">${g.children.map(subGalleryCard).join('')}</div>` : ''}
+        <details class="pfa-settings-wrap" id="pfa-settings-wrap" ${state.settingsOpen ? 'open' : ''}>
+          <summary>
+            <span class="pfa-settings-title">Gallery settings</span>
+            <span class="pfa-settings-summary">${esc(settingsSummary(g, isHome))}</span>
+          </summary>
         <div class="pfa-settings">
           <div class="pfa-field">
             <span>Layout</span>
@@ -610,10 +618,11 @@
             <textarea class="setting-input" id="pfa-desc" rows="2" maxlength="2000">${esc(g.description)}</textarea>
           </label>
         </div>
+        </details>
 
-        <div class="pfa-drop" id="pfa-drop">
+        <div class="pfa-drop ${g.items.length ? 'compact' : ''}" id="pfa-drop" title="Copied into ${esc(g.folder)}. Files dropped into that folder over FTP appear here too.">
           <p>Drop photos and videos here, or <button class="linkish" id="pfa-browse">choose files</button>.</p>
-          <p class="pfa-hint">They are copied into <code>${esc(g.folder)}</code>. Files dropped into that folder over FTP appear here too.</p>
+          ${g.items.length ? '' : `<p class="pfa-hint">They are copied into <code>${esc(g.folder)}</code>. Files dropped into that folder over FTP appear here too.</p>`}
           <input type="file" id="pfa-file-input" multiple accept="image/*,video/*" hidden>
           <div id="pfa-upload-status"></div>
         </div>
@@ -630,6 +639,13 @@
     `;
     renderProgress();
     wireGalleryEditor(g);
+  }
+
+  const ACCESS_LABELS = { public: 'Public', unlisted: 'Unlisted', password: 'Password', hidden: 'Hidden' };
+
+  function settingsSummary(g, isHome) {
+    const layout = (LAYOUTS.find(l => l[0] === g.layout) || [])[1] || g.layout;
+    return isHome ? layout : [layout, ACCESS_LABELS[g.access] || g.access, '/' + g.slug].join(' \u00b7 ');
   }
 
   function itemTile(item) {
@@ -683,6 +699,8 @@
       </figure>`;
   }
 
+  let moreMenuWired = false;
+
   function wireGalleryEditor(g) {
     const gid = g.id;
     const put = (body) => act(() => send('/api/admin/portfolio/galleries/' + encodeURIComponent(gid), 'PUT', body));
@@ -728,6 +746,16 @@
       $('pfa-slug').addEventListener('change', e => put({ slug: e.target.value }));
       $('pfa-g-rename').addEventListener('click', () => renameGallery(g));
       $('pfa-g-delete').addEventListener('click', () => deleteGallery(g));
+    }
+    $('pfa-settings-wrap').addEventListener('toggle', e => { state.settingsOpen = e.target.open; });
+    const more = $('pfa-more');
+    more.addEventListener('click', e => { if (e.target.closest('.pfa-menu-list button')) more.open = false; });
+    if (!moreMenuWired) {
+      moreMenuWired = true;
+      document.addEventListener('click', e => {
+        const m = $('pfa-more');
+        if (m && m.open && !m.contains(e.target)) m.open = false;
+      });
     }
     $('pfa-add-section').addEventListener('click', async () => {
       const text = await S().prompt({ title: 'Add section', okText: 'Add', field: { label: 'Section heading', type: 'text' } });

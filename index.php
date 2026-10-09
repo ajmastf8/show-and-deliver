@@ -4396,11 +4396,14 @@ function portfolioListDirs($dir, $where) {
 function portfolioScanGallery($dir, array $trusted = []) {
     $files = [];
     $videoBases = [];
+    $children = [];
     $warnings = [];
     foreach (@scandir($dir) ?: [] as $n) {
         if (portfolioIgnoredName($n)) continue;
         if (is_dir("$dir/$n")) {
-            $warnings[] = "Folder \"$n\" is nested too deep and is ignored — a portfolio is Category / Gallery / files.";
+            // A gallery folder may hold child galleries: the node becomes a
+            // collection. Nesting is recursive — see portfolioReconcileGallery().
+            $children[] = $n;
             continue;
         }
         $files[] = $n;
@@ -4408,6 +4411,7 @@ function portfolioScanGallery($dir, array $trusted = []) {
             $videoBases[strtolower(pathinfo($n, PATHINFO_FILENAME))] = $n;
         }
     }
+    usort($children, 'strnatcasecmp');
     $media = [];
     $posters = [];
     $captions = [];
@@ -4445,14 +4449,14 @@ function portfolioScanGallery($dir, array $trusted = []) {
     uksort($media, 'strnatcasecmp');
     foreach ($captions as &$c) ksort($c);
     unset($c);
-    return ['media' => $media, 'posters' => $posters, 'captions' => $captions, 'warnings' => $warnings, 'pending' => $pending];
+    return ['media' => $media, 'posters' => $posters, 'captions' => $captions, 'children' => $children, 'warnings' => $warnings, 'pending' => $pending];
 }
 
 // Merges a gallery folder's contents into its sidecar and returns the result.
 // New files join the end of the order; vanished ones drop out, along with their
 // thumbnail and proxy. A file still arriving (see PORTFOLIO_SETTLE_SECONDS) is
 // not added yet, and a known file being replaced keeps its entry untouched.
-function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trusted = []) {
+function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trusted = [], array $slugPrefix = []) {
     $scan = portfolioScanGallery($dir, $trusted);
     $removedIds = [];
     $g = portfolioSidecarUpdate("$dir/.gallery.json", function ($g) use ($scan, $folder, $takenSlugs, &$removedIds) {
@@ -4543,7 +4547,59 @@ function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trus
         @unlink(THUMBS_DIR . "/$id.jpg");
         @unlink(PROXY_DIR . "/{$id}_proxy.jpg");
     }
-    return ['sidecar' => $g, 'warnings' => $scan['warnings'], 'pending' => $scan['pending']];
+    // Child galleries make this a collection node. Nesting is recursive, and
+    // sibling slugs are unique within the node. The full slug path is what
+    // public URLs and the resolved media paths are built from.
+    $children = portfolioReconcileChildren($dir, $scan['children'], $g['id'], array_merge($slugPrefix, [$g['slug']]));
+    return ['sidecar' => $g, 'children' => $children, 'warnings' => $scan['warnings'], 'pending' => $scan['pending']];
+}
+
+// Reconciles a node's child galleries in their saved order (new ones after, by
+// name), recursing through portfolioReconcileGallery(). Returns the child node
+// arrays and records their order in the parent sidecar, exactly as a category
+// orders its galleries.
+function portfolioReconcileChildren($dir, array $names, $parentId, array $parentPath) {
+    $existing = jsonRead("$dir/.gallery.json");
+    $saved = is_array($existing['childOrder'] ?? null) ? $existing['childOrder'] : [];
+    $byId = [];
+    $rest = [];
+    foreach ($names as $n) {
+        $id = jsonRead("$dir/$n/.gallery.json")['id'] ?? null;
+        if ($id && !isset($byId[$id])) $byId[$id] = $n;
+        else $rest[] = $n;
+    }
+    $sequence = [];
+    foreach ($saved as $id) {
+        if (isset($byId[$id])) { $sequence[] = $byId[$id]; unset($byId[$id]); }
+    }
+    usort($rest, 'strnatcasecmp');
+    $sequence = array_merge($sequence, array_values($byId), $rest);
+
+    $children = [];
+    $slugs = [];
+    foreach ($sequence as $n) {
+        $r = portfolioReconcileGallery("$dir/$n", $n, $slugs, [], $parentPath);
+        $s = $r['sidecar'];
+        $slugs[] = $s['slug'];
+        $children[] = [
+            'id' => $s['id'],
+            'slug' => $s['slug'],
+            'folder' => $n,
+            'rel' => ltrim(substr("$dir/$n", strlen(PORTFOLIO_DIR)), '/'),
+            'dir' => "$dir/$n",
+            'parent' => $parentId,
+            'slugPath' => array_merge($parentPath, [$s['slug']]),
+            'children' => $r['children'],
+            'sidecar' => $s,
+            'warnings' => $r['warnings'],
+            'pending' => $r['pending'],
+        ];
+    }
+    portfolioSidecarUpdate("$dir/.gallery.json", function ($s) use ($children) {
+        $s['childOrder'] = array_column($children, 'id');
+        return $s;
+    });
+    return $children;
 }
 
 // Walks the category folder's galleries in their saved order (new ones after,
@@ -4571,14 +4627,18 @@ function portfolioReconcileCategory($dir, $folder, array $takenSlugs) {
     $slugs = [];
     foreach ($sequence as $n) {
         $r = portfolioReconcileGallery("$dir/$n", $n, $slugs);
-        $slugs[] = $r['sidecar']['slug'];
+        $s = $r['sidecar'];
+        $slugs[] = $s['slug'];
         $galleries[] = [
-            'id' => $r['sidecar']['id'],
-            'slug' => $r['sidecar']['slug'],
+            'id' => $s['id'],
+            'slug' => $s['slug'],
             'folder' => $n,
             'rel' => "$folder/$n",
             'dir' => "$dir/$n",
-            'sidecar' => $r['sidecar'],
+            'parent' => null,
+            'slugPath' => [$s['slug']],
+            'children' => $r['children'],
+            'sidecar' => $s,
             'warnings' => $r['warnings'],
             'pending' => $r['pending'],
         ];
@@ -4684,9 +4744,18 @@ function portfolioFindGallery($id) {
     $home = portfolioTree()['home'];
     if ($home && $home['id'] === $id) return [portfolioHomeCategory(), $home];
     foreach (portfolioTree()['categories'] as $cat) {
-        foreach ($cat['galleries'] as $gal) {
-            if ($gal['id'] === $id) return [$cat, $gal];
-        }
+        $hit = portfolioFindNodeById($cat['galleries'], $id);
+        if ($hit) return [$cat, $hit];
+    }
+    return null;
+}
+
+// Depth-first search for a node id, through collections of any depth.
+function portfolioFindNodeById(array $nodes, $id) {
+    foreach ($nodes as $n) {
+        if ($n['id'] === $id) return $n;
+        $hit = portfolioFindNodeById($n['children'] ?? [], $id);
+        if ($hit) return $hit;
     }
     return null;
 }
@@ -4698,13 +4767,26 @@ function portfolioFindCategoryBySlug($slug) {
     return null;
 }
 
-function portfolioFindBySlug($catSlug, $galSlug) {
+// Resolves /portfolio/{cat}/{slug}/{slug}... to a node at any depth.
+function portfolioFindByPath($catSlug, array $segments) {
     $cat = portfolioFindCategoryBySlug($catSlug);
     if (!$cat) return null;
-    foreach ($cat['galleries'] as $gal) {
-        if ($gal['slug'] === $galSlug) return [$cat, $gal];
+    $nodes = $cat['galleries'];
+    $node = null;
+    foreach ($segments as $seg) {
+        $next = null;
+        foreach ($nodes as $n) {
+            if ($n['slug'] === $seg) { $next = $n; break; }
+        }
+        if (!$next) return null;
+        $node = $next;
+        $nodes = $next['children'] ?? [];
     }
-    return null;
+    return $node ? [$cat, $node] : null;
+}
+
+function portfolioFindBySlug($catSlug, $galSlug) {
+    return portfolioFindByPath($catSlug, [$galSlug]);
 }
 
 // --- Derivatives ---
@@ -4801,12 +4883,14 @@ function portfolioProcess($galleryId, $sliceSeconds) {
     @set_time_limit(max(60, $sliceSeconds * 4));
     $start = microtime(true);
     $galleries = [];
-    foreach (portfolioTree(true)['categories'] as $cat) {
-        foreach ($cat['galleries'] as $gal) {
+    $collect = function ($nodes) use (&$collect, &$galleries, $galleryId) {
+        foreach ($nodes as $gal) {
             if ($gal['id'] === $galleryId) array_unshift($galleries, $gal);
             else $galleries[] = $gal;
+            $collect($gal['children'] ?? []);
         }
-    }
+    };
+    foreach (portfolioTree(true)['categories'] as $cat) $collect($cat['galleries']);
     $processed = 0;
     $remaining = 0;
     $failed = 0;
@@ -4854,7 +4938,8 @@ function portfolioMediaUrl($rel, $file) {
 function portfolioCategoryUrl($cat) { return '/portfolio/' . $cat['slug']; }
 function portfolioGalleryUrl($cat, $gal) {
     if (!empty($gal['home'])) return '/';
-    return '/portfolio/' . $cat['slug'] . '/' . $gal['slug'];
+    $path = !empty($gal['slugPath']) ? $gal['slugPath'] : [$gal['slug']];
+    return '/portfolio/' . rawurlencode($cat['slug']) . '/' . implode('/', array_map('rawurlencode', $path));
 }
 function portfolioTitle($node) {
     $t = trim((string)($node['sidecar']['title'] ?? ''));
@@ -5021,6 +5106,27 @@ function portfolioPublicItemCount($gal) {
     return $n;
 }
 
+// A node's cover: its own first usable picture, or otherwise the first its
+// children can offer — so a collection card is not blank.
+function portfolioNodeCover($cat, $node) {
+    $c = portfolioGalleryCover($cat, $node);
+    if ($c) return $c;
+    foreach ($node['children'] ?? [] as $ch) {
+        $c = portfolioNodeCover($cat, $ch);
+        if ($c) return $c;
+    }
+    return null;
+}
+
+// How many of a node's child galleries a visitor may see.
+function portfolioPublicChildCount($cat, $node) {
+    $n = 0;
+    foreach ($node['children'] ?? [] as $ch) {
+        if (portfolioGalleryIsPublic($cat, $ch)) $n++;
+    }
+    return $n;
+}
+
 function portfolioAccess($gal) {
     $a = $gal['sidecar']['access'] ?? 'public';
     return in_array($a, PORTFOLIO_ACCESS, true) ? $a : 'public';
@@ -5029,14 +5135,15 @@ function portfolioAccess($gal) {
 // Whether a visitor who types the address can see the gallery at all. Only
 // `hidden` is refused outright; `password` is answered with a prompt.
 function portfolioGalleryIsReachable($cat, $gal) {
-    return portfolioAccess($gal) !== 'hidden' && portfolioPublicItemCount($gal) > 0;
+    return portfolioAccess($gal) !== 'hidden'
+        && (portfolioPublicItemCount($gal) > 0 || portfolioPublicChildCount($cat, $gal) > 0);
 }
 
 // Whether it belongs in listings and menus.
 function portfolioGalleryIsPublic($cat, $gal) {
     return ($cat['sidecar']['visible'] ?? true) !== false
         && portfolioAccess($gal) === 'public'
-        && portfolioPublicItemCount($gal) > 0;
+        && (portfolioPublicItemCount($gal) > 0 || portfolioPublicChildCount($cat, $gal) > 0);
 }
 
 // The admin sees every gallery, so a locked one can be checked without
@@ -5051,8 +5158,9 @@ function portfolioGallerySummary($cat, $gal) {
         'slug' => $gal['slug'],
         'title' => portfolioTitle($gal),
         'url' => portfolioGalleryUrl($cat, $gal),
-        'cover' => portfolioGalleryCover($cat, $gal),
+        'cover' => portfolioNodeCover($cat, $gal),
         'count' => portfolioPublicItemCount($gal),
+        'childCount' => portfolioPublicChildCount($cat, $gal),
     ];
 }
 
@@ -5094,8 +5202,28 @@ function portfolioHeroPayload($gal) {
     ];
 }
 
+// The chain of collections above a node, for the page breadcrumb.
+function portfolioBreadcrumbs($cat, $node) {
+    $crumbs = [['title' => portfolioTitle($cat), 'url' => portfolioCategoryUrl($cat)]];
+    $path = $node['slugPath'] ?? [];
+    $nodes = $cat['galleries'];
+    for ($i = 0; $i < count($path) - 1; $i++) {
+        foreach ($nodes as $n) {
+            if ($n['slug'] !== $path[$i]) continue;
+            $crumbs[] = ['title' => portfolioTitle($n), 'url' => portfolioGalleryUrl($cat, $n)];
+            $nodes = $n['children'] ?? [];
+            break;
+        }
+    }
+    return $crumbs;
+}
+
 function portfolioGalleryPayload($cat, $gal) {
     $g = $gal['sidecar'];
+    $children = [];
+    foreach ($gal['children'] ?? [] as $ch) {
+        if (portfolioGalleryIsPublic($cat, $ch)) $children[] = portfolioGallerySummary($cat, $ch);
+    }
     return [
         'id' => $gal['id'],
         'slug' => $gal['slug'],
@@ -5105,6 +5233,9 @@ function portfolioGalleryPayload($cat, $gal) {
         'options' => portfolioNormalizeOptions($g['options'] ?? []),
         'url' => portfolioGalleryUrl($cat, $gal),
         'category' => ['slug' => $cat['slug'], 'title' => portfolioTitle($cat), 'url' => portfolioCategoryUrl($cat)],
+        'breadcrumbs' => portfolioBreadcrumbs($cat, $gal),
+        'kind' => !empty($gal['children']) ? 'collection' : 'gallery',
+        'children' => $children,
         'hero' => portfolioHeroPayload($gal),
         'items' => portfolioGalleryItems($cat, $gal),
     ];
@@ -5152,8 +5283,9 @@ if ($method === 'GET' && matchRoute('/api/portfolio/c/{cat}', $uri, $params)) {
     ]);
 }
 
-if ($method === 'GET' && matchRoute('/api/portfolio/g/{cat}/{gal}', $uri, $params)) {
-    $found = portfolioFindBySlug($params['cat'], $params['gal']);
+// A gallery or collection at any depth: /api/portfolio/g/{cat}/{slug}/{slug}...
+if ($method === 'GET' && preg_match('#^/api/portfolio/g/([^/]+)/(.+)$#', $uri, $m)) {
+    $found = portfolioFindByPath(rawurldecode($m[1]), array_map('rawurldecode', explode('/', rtrim($m[2], '/'))));
     if (!$found || !portfolioGalleryIsReachable(...$found)) respondError('Not found', 404);
     [$cat, $gal] = $found;
     if (portfolioAccess($gal) === 'password' && !portfolioIsUnlocked($gal['id'])) {
@@ -5163,9 +5295,9 @@ if ($method === 'GET' && matchRoute('/api/portfolio/g/{cat}/{gal}', $uri, $param
 }
 
 // Unlocking a password-protected gallery, remembered for the session.
-if ($method === 'POST' && matchRoute('/api/portfolio/g/{cat}/{gal}/unlock', $uri, $params)) {
+if ($method === 'POST' && preg_match('#^/api/portfolio/g/([^/]+)/(.+)/unlock$#', $uri, $m)) {
     rateLimitCheck('pfunlock:' . ($_SERVER['REMOTE_ADDR'] ?? ''), 12, 300);
-    $found = portfolioFindBySlug($params['cat'], $params['gal']);
+    $found = portfolioFindByPath(rawurldecode($m[1]), array_map('rawurldecode', explode('/', rtrim($m[2], '/'))));
     if (!$found || !portfolioGalleryIsReachable(...$found)) respondError('Not found', 404);
     [$cat, $gal] = $found;
     $hash = $gal['sidecar']['passwordHash'] ?? '';
@@ -5179,6 +5311,41 @@ if ($method === 'POST' && matchRoute('/api/portfolio/g/{cat}/{gal}/unlock', $uri
 
 // --- Admin routes ---
 
+// One gallery/collection as the admin sees it, recursing into child galleries
+// so the Portfolio tab can browse a nested tree.
+function portfolioAdminGalleryNode($cat, $gal) {
+    $g = $gal['sidecar'];
+    $work = 0;
+    $capture = 0;
+    $failed = 0;
+    foreach ($g['items'] as $name => $it) {
+        $t = portfolioItemTasks($gal['dir'], (string)$name, $it);
+        if ($t['work']) $work++;
+        if ($t['capture']) $capture++;
+        if (!empty($it['error'])) $failed++;
+    }
+    return [
+        'id' => $gal['id'],
+        'slug' => $gal['slug'],
+        'folder' => $gal['folder'],
+        'title' => portfolioTitle($gal),
+        'visible' => ($g['visible'] ?? true) !== false,
+        'access' => portfolioAccess($gal),
+        'layout' => $g['layout'],
+        'url' => portfolioGalleryUrl($cat, $gal),
+        'cover' => portfolioNodeCover($cat, $gal),
+        'itemCount' => count($g['items']),
+        'publicCount' => portfolioPublicItemCount($gal),
+        'childCount' => count($gal['children'] ?? []),
+        'processing' => $work,
+        'needsPoster' => $capture,
+        'failed' => $failed,
+        'pending' => $gal['pending'],
+        'warnings' => $gal['warnings'],
+        'children' => array_map(fn($ch) => portfolioAdminGalleryNode($cat, $ch), $gal['children'] ?? []),
+    ];
+}
+
 // The whole tree as the admin sees it: hidden and empty folders included, with
 // scan warnings, files still arriving, and per-gallery processing counts.
 if ($method === 'GET' && $uri === '/api/admin/portfolio') {
@@ -5186,37 +5353,7 @@ if ($method === 'GET' && $uri === '/api/admin/portfolio') {
     $tree = portfolioTree();
     $categories = [];
     foreach ($tree['categories'] as $cat) {
-        $galleries = [];
-        foreach ($cat['galleries'] as $gal) {
-            $g = $gal['sidecar'];
-            $work = 0;
-            $capture = 0;
-            $failed = 0;
-            foreach ($g['items'] as $name => $it) {
-                $t = portfolioItemTasks($gal['dir'], (string)$name, $it);
-                if ($t['work']) $work++;
-                if ($t['capture']) $capture++;
-                if (!empty($it['error'])) $failed++;
-            }
-            $galleries[] = [
-                'id' => $gal['id'],
-                'slug' => $gal['slug'],
-                'folder' => $gal['folder'],
-                'title' => portfolioTitle($gal),
-                'visible' => ($g['visible'] ?? true) !== false,
-                'access' => portfolioAccess($gal),
-                'layout' => $g['layout'],
-                'url' => portfolioGalleryUrl($cat, $gal),
-                'cover' => portfolioGalleryCover($cat, $gal),
-                'itemCount' => count($g['items']),
-                'publicCount' => portfolioPublicItemCount($gal),
-                'processing' => $work,
-                'needsPoster' => $capture,
-                'failed' => $failed,
-                'pending' => $gal['pending'],
-                'warnings' => $gal['warnings'],
-            ];
-        }
+        $galleries = array_map(fn($gal) => portfolioAdminGalleryNode($cat, $gal), $cat['galleries']);
         $categories[] = [
             'id' => $cat['id'],
             'slug' => $cat['slug'],
@@ -5243,6 +5380,129 @@ if ($method === 'GET' && $uri === '/api/admin/portfolio') {
     ]);
 }
 
+// Portfolio readiness: the pre-launch checklist from docs/portfolio/. Advisory
+// only — it reports what a visitor would find, and never blocks publishing.
+if ($method === 'GET' && $uri === '/api/admin/portfolio/readiness') {
+    requireAuth();
+    $tree = portfolioTree();
+
+    // Walks every node, nested collections included. A collection is judged by
+    // its public children; an image gallery by its pictures.
+    $acc = [
+        'empty' => [], 'noCover' => [], 'undescribed' => [], 'oversize' => [],
+        'emptyCollections' => [], 'pending' => 0, 'failed' => 0,
+        'described' => 0, 'items' => 0, 'galleries' => 0, 'collections' => 0,
+    ];
+    $scanNode = function ($cat, $gal) use (&$scanNode, &$acc) {
+        $g = $gal['sidecar'];
+        if (($g['visible'] ?? true) === false) return;
+        $children = $gal['children'] ?? [];
+        if ($children) {
+            $acc['collections']++;
+            // A collection with its own pictures is not empty, even with no
+            // public child galleries.
+            if (portfolioPublicChildCount($cat, $gal) === 0 && portfolioPublicItemCount($gal) === 0) {
+                $acc['emptyCollections'][] = portfolioTitle($gal);
+            }
+            foreach ($children as $ch) $scanNode($cat, $ch);
+        }
+        $acc['galleries']++;
+        $n = portfolioPublicItemCount($gal);
+        if ($n === 0) {
+            if (!$children) $acc['empty'][] = portfolioTitle($gal);
+            return;
+        }
+        if ($n > 40) $acc['oversize'][] = portfolioTitle($gal) . " ($n)";
+        if (!portfolioNodeCover($cat, $gal)) $acc['noCover'][] = portfolioTitle($gal);
+        $descs = 0;
+        foreach ($g['items'] as $name => $it) {
+            if (!portfolioItemIsPublic($it)) continue;
+            $acc['items']++;
+            if (!empty($it['description'])) { $descs++; $acc['described']++; }
+            $t = portfolioItemTasks($gal['dir'], (string)$name, $it);
+            if (!empty($t['work'])) $acc['pending']++;
+            if (!empty($it['error'])) $acc['failed']++;
+        }
+        if ($descs === 0) $acc['undescribed'][] = portfolioTitle($gal);
+    };
+    foreach ($tree['categories'] as $cat) {
+        if (($cat['sidecar']['visible'] ?? true) === false) continue;
+        foreach ($cat['galleries'] as $gal) $scanNode($cat, $gal);
+    }
+
+    $hasContact = false;
+    $hasAbout = false;
+    foreach (readPages() as $p) {
+        if (($p['visible'] ?? true) === false) continue;
+        if (($p['type'] ?? 'text') === 'contact') $hasContact = true;
+        elseif (in_array(strtolower((string)($p['slug'] ?? '')), ['about', 'services', 'work', 'info'], true)) $hasAbout = true;
+    }
+
+    $home = $tree['home'];
+    $homeCount = $home ? portfolioPublicItemCount($home) : 0;
+
+    $checks = [];
+    $add = function ($id, $group, $label, $status, $detail = '') use (&$checks) {
+        $checks[] = ['id' => $id, 'group' => $group, 'label' => $label, 'status' => $status, 'detail' => $detail];
+    };
+    $incl = fn(array $a) => implode(', ', array_slice($a, 0, 6)) . (count($a) > 6 ? ' +' . (count($a) - 6) . ' more' : '');
+
+    // Structure
+    $add('home', 'Structure', 'A home page gathers the best work',
+        !$home ? 'fail' : ($homeCount > 0 ? 'pass' : 'warn'),
+        !$home ? 'No home page yet — set one up to feature your strongest frames.'
+               : $homeCount . ' item(s) on the home page.');
+    $add('galleries', 'Structure', 'At least one visible gallery with published work',
+        $acc['galleries'] > 0 ? 'pass' : 'fail',
+        $acc['galleries'] . ' visible gallery(ies)' . ($acc['collections'] ? ' including ' . $acc['collections'] . ' collection(s)' : '') . '.');
+    $add('gallery_items', 'Structure', 'Every image gallery has published pictures',
+        $acc['empty'] ? 'warn' : 'pass',
+        $acc['empty'] ? 'Empty: ' . $incl($acc['empty']) : 'All image galleries have public pictures.');
+    if ($acc['collections']) {
+        $add('collections', 'Structure', 'Every collection has a public gallery in it',
+            $acc['emptyCollections'] ? 'warn' : 'pass',
+            $acc['emptyCollections'] ? 'Empty: ' . $incl($acc['emptyCollections']) : 'All collections have public galleries.');
+    }
+    $add('covers', 'Structure', 'Every gallery has a cover image',
+        $acc['noCover'] ? 'warn' : 'pass',
+        $acc['noCover'] ? 'No cover: ' . $incl($acc['noCover']) : 'All galleries have covers.');
+
+    // Presentation
+    $add('captions', 'Presentation', 'Images carry credits/captions',
+        ($acc['items'] === 0 || $acc['described'] === 0) ? 'warn' : 'pass',
+        $acc['items'] === 0 ? 'No published images yet.'
+            : $acc['described'] . ' of ' . $acc['items'] . ' image(s) have a caption box.');
+    if ($acc['undescribed']) {
+        $add('captions_gaps', 'Presentation', 'Galleries with no captions at all',
+            'warn', $incl($acc['undescribed']));
+    }
+    $add('credit_immersive', 'Presentation', 'Credits show in the immersive views',
+        'pass', 'The caption box renders in the slideshow, fullscreen and horizontal views.');
+
+    // Editorial
+    $add('tight_edit', 'Editorial', 'Front-end edit stays tight (~20–40 images)',
+        $acc['oversize'] ? 'warn' : 'pass',
+        $acc['oversize'] ? 'Large: ' . $incl($acc['oversize']) : 'No gallery exceeds 40 images.');
+    $add('contact', 'Editorial', 'Somewhere to go next (contact / inquiry)',
+        $hasContact ? 'pass' : 'warn',
+        $hasContact ? 'A contact page exists.' : 'No contact page — add one so a visitor can start a job.');
+    $add('about', 'Editorial', 'An About / Services page says what you shoot',
+        $hasAbout ? 'pass' : 'warn',
+        $hasAbout ? 'An about/services page exists.' : 'No about or services page found.');
+
+    // Performance
+    $add('processing', 'Performance', 'No files still processing',
+        $acc['pending'] === 0 ? 'pass' : 'warn',
+        $acc['pending'] === 0 ? 'Everything is processed.' : $acc['pending'] . ' file(s) still processing.');
+    $add('failed', 'Performance', 'No failed imports',
+        $acc['failed'] === 0 ? 'pass' : 'fail',
+        $acc['failed'] === 0 ? 'No failures.' : $acc['failed'] . ' file(s) failed to import.');
+
+    $summary = ['pass' => 0, 'warn' => 0, 'fail' => 0];
+    foreach ($checks as $c) $summary[$c['status']]++;
+    respond(['checks' => $checks, 'summary' => $summary]);
+}
+
 if ($method === 'GET' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri, $params)) {
     requireAuth();
     $found = portfolioFindGallery($params['gid']);
@@ -5257,6 +5517,10 @@ if ($method === 'GET' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
     $p['cover'] = $gal['sidecar']['cover'];
     $p['pending'] = $gal['pending'];
     $p['warnings'] = $gal['warnings'];
+    // The admin sees every child (hidden and empty included), as admin nodes.
+    $p['children'] = array_map(fn($ch) => portfolioAdminGalleryNode($cat, $ch), $gal['children'] ?? []);
+    $p['childCount'] = count($gal['children'] ?? []);
+    $p['parentId'] = $gal['parent'] ?? null;
     respond(['gallery' => $p]);
 }
 
@@ -5512,15 +5776,43 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/categories/{cid}/order
 if ($method === 'POST' && $uri === '/api/admin/portfolio/galleries') {
     requireAuth();
     $input = getInput();
-    $cat = portfolioRequireCategory((string)($input['categoryId'] ?? ''));
+    // Create under a category, or inside a gallery to build a collection.
+    $parentId = (string)($input['parentId'] ?? '');
+    if ($parentId !== '') {
+        [$cat, $parent] = portfolioRequireGallery($parentId);
+        $targetDir = $parent['dir'];
+    } else {
+        $cat = portfolioRequireCategory((string)($input['categoryId'] ?? ''));
+        $targetDir = $cat['dir'];
+    }
     $name = portfolioSafeName($input['name'] ?? '');
     if ($name === '') respondError('Name is required', 400);
-    $name = portfolioUniqueChildName($cat['dir'], $name);
-    if (!@mkdir($cat['dir'] . '/' . $name, 0755)) respondError('Could not create the folder', 500);
+    $name = portfolioUniqueChildName($targetDir, $name);
+    if (!@mkdir($targetDir . '/' . $name, 0755)) respondError('Could not create the folder', 500);
     portfolioTree(true);
-    foreach (portfolioFindCategoryBySlug($cat['slug'])['galleries'] as $g) {
+    $cat = portfolioFindCategoryBySlug($cat['slug']);
+    $nodes = $parentId !== '' ? (portfolioFindGallery($parentId)[1]['children'] ?? []) : $cat['galleries'];
+    foreach ($nodes as $g) {
         if ($g['folder'] === $name) respond(['ok' => true, 'gallery' => portfolioGalleryResponse($g['id'])]);
     }
+    respond(['ok' => true]);
+}
+
+// Reorder a collection's child galleries (its `childOrder`), as the category
+// order route does one level up.
+if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/children/order', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    $ids = (array)(getInput()['children'] ?? []);
+    $have = array_map(fn($c) => $c['id'], $gal['children'] ?? []);
+    $order = array_values(array_filter($ids, fn($id) => in_array($id, $have, true)));
+    foreach ($have as $id) {
+        if (!in_array($id, $order, true)) $order[] = $id;
+    }
+    portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($order) {
+        $g['childOrder'] = $order;
+        return $g;
+    });
     respond(['ok' => true]);
 }
 
@@ -5532,12 +5824,42 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
     // The home page lives in a reserved folder, so only its contents and
     // layout are editable.
     if (!empty($gal['home'])) {
-        unset($input['categoryId'], $input['folder'], $input['slug'], $input['visible'], $input['access']);
+        unset($input['categoryId'], $input['parentId'], $input['folder'], $input['slug'], $input['visible'], $input['access']);
+    }
+
+    // Reparenting: move the folder inside another gallery, or back to the
+    // category root. The slug only has to be unique among its new siblings, and
+    // a gallery can never be moved inside itself.
+    if (array_key_exists('parentId', $input)) {
+        $newParent = (string)$input['parentId'];
+        if ($newParent !== '') {
+            [, $parent] = portfolioRequireGallery($newParent);
+            $descendant = [];
+            $collect = function ($nodes) use (&$collect, &$descendant) {
+                foreach ($nodes as $n) { $descendant[] = $n['id']; $collect($n['children'] ?? []); }
+            };
+            $collect($gal['children'] ?? []);
+            if ($newParent === $gal['id'] || in_array($newParent, $descendant, true)) {
+                respondError("A gallery can't be moved inside itself", 400);
+            }
+            $targetDir = $parent['dir'];
+        } else {
+            // Back to a category root — the current one unless another is named.
+            if (!empty($input['categoryId']) && $input['categoryId'] !== $cat['id']) {
+                $cat = portfolioRequireCategory((string)$input['categoryId']);
+            }
+            $targetDir = $cat['dir'];
+        }
+        if (rtrim(dirname($dir), '/') !== rtrim($targetDir, '/')) {
+            $folder = portfolioUniqueChildName($targetDir, $gal['folder']);
+            if (!@rename($dir, $targetDir . '/' . $folder)) respondError('Could not move the gallery', 500);
+            $dir = $targetDir . '/' . $folder;
+        }
     }
 
     // Moving to another category is a folder move; the slug only has to be
     // unique among its new siblings.
-    if (!empty($input['categoryId']) && $input['categoryId'] !== $cat['id']) {
+    if (!array_key_exists('parentId', $input) && !empty($input['categoryId']) && $input['categoryId'] !== $cat['id']) {
         $target = portfolioRequireCategory((string)$input['categoryId']);
         $folder = portfolioUniqueChildName($target['dir'], $gal['folder']);
         if (!@rename($dir, $target['dir'] . '/' . $folder)) respondError('Could not move the gallery', 500);
@@ -5554,8 +5876,15 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
         }
     }
     $taken = [];
-    foreach ($cat['galleries'] as $g) {
-        if ($g['id'] !== $gal['id']) $taken[] = $g['slug'];
+    if (!empty($input['parentId'])) {
+        [, $parent] = portfolioRequireGallery((string)$input['parentId']);
+        foreach ($parent['children'] ?? [] as $c) {
+            if ($c['id'] !== $gal['id']) $taken[] = $c['slug'];
+        }
+    } else {
+        foreach ($cat['galleries'] as $g) {
+            if ($g['id'] !== $gal['id']) $taken[] = $g['slug'];
+        }
     }
     $keys = array_merge(array_keys($gal['sidecar']['items']), array_keys($gal['sidecar']['refs'] ?? []));
     portfolioSidecarPatch($dir, '.gallery.json', function ($g) use ($input, $taken, $keys) {

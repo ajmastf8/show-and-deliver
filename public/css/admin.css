@@ -1686,6 +1686,8 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 }
 
 .pfa-page-row:hover { background: var(--hover); }
+.pfa-check-row { justify-content: space-between; cursor: default; }
+.pfa-check-row:hover { background: transparent; }
 .pfa-page-title { color: var(--text); font-size: 14px; }
 .pfa-page-meta { color: var(--text-5); font-size: 12px; }
 .pfa-page-body { width: 100%; max-width: 780px; font-family: var(--font); line-height: 1.6; }

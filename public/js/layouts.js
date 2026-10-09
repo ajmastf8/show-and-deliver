@@ -20,6 +20,18 @@ const ratio = item => {
   return w / h;
 };
 
+// A credit/caption overlaid on the picture. Only the immersive layouts use it:
+// the scanning layouts leave credits to the lightbox, and the slideshow draws
+// its own caption under the frame. The title and video badge sit at the bottom
+// of the tile, so the credit takes the top edge.
+function withCredit(node, item) {
+  if (!item.description || typeof window.renderCaptionBox !== 'function') return node;
+  const cap = document.createElement('div');
+  cap.className = 'pf-credit';
+  if (window.renderCaptionBox(cap, item.description)) node.appendChild(cap);
+  return node;
+}
+
 // Rows of equal height that keep each picture's aspect ratio, scaled to fill the
 // width — the usual photographer's grid. The last row is left unstretched so a
 // single leftover frame isn't blown up across the page.
@@ -142,7 +154,7 @@ export function horizontal(root, items, tile, opts = {}) {
   const height = { compact: 52, normal: 66, roomy: 80 }[opts.density] ?? 66;
   strip.style.setProperty('--pf-strip-h', height + 'vh');
   items.forEach((item, i) => {
-    const node = tile(item);
+    const node = withCredit(tile(item), item);
     node.style.height = '100%';
     node.style.width = Math.round((window.innerHeight * height / 100) * ratio(item)) + 'px';
     strip.appendChild(node);
@@ -176,7 +188,7 @@ export function fullscreen(root, items, tile, opts = {}) {
   root.append(...items.map(item => {
     const frame = document.createElement('div');
     frame.className = 'pf-screen';
-    frame.appendChild(tile(item));
+    frame.appendChild(withCredit(tile(item), item));
     return frame;
   }));
   return { relayout() {}, destroy() { root.replaceChildren(); } };

@@ -18,6 +18,8 @@
     gallery: null,      // its payload
     design: false,      // the Site design panel
     pagesView: false,   // the Pages panel
+    readinessView: false, // the Readiness panel
+    readiness: null,    // its payload
     pages: [],
     pageId: null,
     migration: null,    // reels galleries still waiting to move into folders
@@ -86,6 +88,9 @@
   async function loadTree() {
     state.tree = await req('/api/admin/portfolio');
     state.migration = await req('/api/admin/portfolio/migrate').catch(() => null);
+    // The readiness summary rides along once, so the browse can show the gate
+    // without opening the panel; the panel refreshes it on demand.
+    if (!state.readiness) state.readiness = await req('/api/admin/portfolio/readiness').catch(() => null);
     if (state.categoryId && !state.tree.categories.some(c => c.id === state.categoryId)) state.categoryId = null;
   }
 
@@ -197,6 +202,7 @@
     renderRail();
     if (state.pagesView) renderPages();
     else if (state.design) renderDesign();
+    else if (state.readinessView) renderReadiness();
     else if (state.galleryId && state.gallery) renderGalleryEditor();
     else renderBrowse();
   }
@@ -227,6 +233,11 @@
       <div class="rail-row ${state.design ? 'active' : ''}" id="pfa-design-row">
         <span class="rail-name">Site design</span>
       </div>
+      <div class="rail-row ${state.readinessView ? 'active' : ''}" id="pfa-readiness-row">
+        <span class="rail-name">Readiness</span>
+        ${state.readiness && (state.readiness.summary.warn + state.readiness.summary.fail) > 0
+          ? `<span class="rail-count">${state.readiness.summary.warn + state.readiness.summary.fail}</span>` : ''}
+      </div>
       <div class="rail-section-label">Categories</div>
       <div class="rail-row ${state.categoryId ? '' : 'active'}" data-cat="">
         <span class="rail-name">All galleries</span>
@@ -248,6 +259,7 @@
         state.gallery = null;
         state.design = false;
         state.pagesView = false;
+        state.readinessView = false;
         render();
       });
     });
@@ -255,6 +267,7 @@
     $('pfa-home-row').addEventListener('click', openHome);
     $('pfa-design-row').addEventListener('click', openDesign);
     $('pfa-pages-row').addEventListener('click', openPages);
+    $('pfa-readiness-row').addEventListener('click', openReadiness);
 
     // Drag to reorder categories; the order is what the public nav follows.
     const list = $('pfa-cat-list');
@@ -282,6 +295,15 @@
     return scoped.flatMap(c => c.galleries.map(g => ({ ...g, category: c })));
   }
 
+  // The readiness gate, condensed for the browse header; opens the full panel.
+  function readinessChip() {
+    const s = state.readiness && state.readiness.summary;
+    if (!s) return 'Readiness';
+    if (s.fail) return `Readiness · ${s.fail} to fix`;
+    if (s.warn) return `Readiness · ${s.warn} to review`;
+    return 'Readiness · all set';
+  }
+
   function renderBrowse() {
     const cats = state.tree?.categories || [];
     const cat = cats.find(c => c.id === state.categoryId) || null;
@@ -300,6 +322,7 @@
         </div>
         <div class="centre-controls">
           <span class="pfa-pill" id="pfa-progress" hidden></span>
+          <button class="ctrl" id="pfa-readiness-btn">${readinessChip()}</button>
           <button class="ctrl" id="pfa-rescan">Rescan folders</button>
           ${cat ? '<button class="ctrl" id="pfa-cat-rename">Rename</button>' : ''}
           ${cat ? `<button class="ctrl" id="pfa-cat-visible">${cat.visible ? 'Hide' : 'Show'}</button>` : ''}
@@ -321,6 +344,7 @@
     renderProgress();
 
     $('pfa-rescan').addEventListener('click', () => act(async () => { S().toast('Rescanned'); }));
+    $('pfa-readiness-btn').addEventListener('click', openReadiness);
     const migrateBtn = $('pfa-migrate');
     if (migrateBtn) migrateBtn.addEventListener('click', runMigration);
     $('pfa-new-gallery').addEventListener('click', newGallery);
@@ -404,7 +428,57 @@
         <div class="pfa-card-frame">${g.cover ? `<img src="${esc(g.cover)}" alt="" loading="lazy">` : '<span class="pfa-card-empty"></span>'}</div>
         <div class="pfa-card-body">
           <div class="pfa-card-title">${esc(g.title)}</div>
-          <div class="pfa-card-meta">${g.publicCount} of ${g.itemCount} live${state.categoryId ? '' : ' · ' + esc(g.category.title)}</div>
+          <div class="pfa-card-meta">${g.childCount ? `${g.childCount} ${g.childCount === 1 ? 'gallery' : 'galleries'}` : `${g.publicCount} of ${g.itemCount} live`}${state.categoryId || !g.category ? '' : ' · ' + esc(g.category.title)}</div>
+          <div class="pfa-flags">${flags}</div>
+        </div>
+      </div>`;
+  }
+
+  // Where a gallery sits: the top level of any category, or inside any gallery
+  // (which turns that gallery into a collection). A node can't move into itself.
+  function locationOptions(g, cats) {
+    const ban = new Set([g.id]);
+    const banWalk = ns => (ns || []).forEach(n => { ban.add(n.id); banWalk(n.children); });
+    banWalk(g.children);
+    const here = g.parentId ? 'gal:' + g.parentId : 'cat:' + g.categoryId;
+    const roots = cats.map(c => {
+      const v = 'cat:' + c.id;
+      return `<option value="${esc(v)}" ${v === here ? 'selected' : ''}>▣ ${esc(c.title)} — top level</option>`;
+    }).join('');
+    const rows = [];
+    const walk = (ns, depth) => (ns || []).forEach(n => {
+      if (ban.has(n.id)) return;
+      const v = 'gal:' + n.id;
+      rows.push(`<option value="${esc(v)}" ${v === here ? 'selected' : ''}>${'&nbsp;&nbsp;&nbsp;'.repeat(depth)}↳ ${esc(n.title)}</option>`);
+      walk(n.children, depth + 1);
+    });
+    cats.forEach(c => walk(c.galleries, 0));
+    return roots + (rows.length ? `<optgroup label="Inside a gallery">${rows.join('')}</optgroup>` : '');
+  }
+
+  // Editorial nudges for the open gallery — the readiness advice, in place.
+  function galleryNudges(g) {
+    const out = [];
+    if (g.itemCount > 40) out.push(`${g.itemCount} pictures — the edit reads best at ~20–40.`);
+    if (g.itemCount && !(g.description || '').trim()) out.push('No description yet.');
+    if (g.itemCount && !g.cover) out.push('No cover chosen.');
+    return out.length ? `<p class="pfa-hint pfa-nudges">${out.map(esc).join(' · ')}</p>` : '';
+  }
+
+  // A child gallery inside the open gallery: same card, but the node arrives as
+  // an admin node (no `category`), so it carries its own meta.
+  function subGalleryCard(g) {
+    const flags = [
+      g.access && g.access !== 'public' ? `<span class="pfa-badge">${esc(g.access)}</span>` : '',
+      g.processing ? `<span class="pfa-badge work">${g.processing} processing</span>` : '',
+      g.failed ? `<span class="pfa-badge bad">${g.failed} unreadable</span>` : '',
+    ].filter(Boolean).join('');
+    return `
+      <div class="pfa-card" data-gid="${esc(g.id)}">
+        <div class="pfa-card-frame">${g.cover ? `<img src="${esc(g.cover)}" alt="" loading="lazy">` : '<span class="pfa-card-empty"></span>'}</div>
+        <div class="pfa-card-body">
+          <div class="pfa-card-title">${esc(g.title)}</div>
+          <div class="pfa-card-meta">${g.childCount ? `${g.childCount} ${g.childCount === 1 ? 'gallery' : 'galleries'}` : `${g.publicCount} of ${g.itemCount} live`}</div>
           <div class="pfa-flags">${flags}</div>
         </div>
       </div>`;
@@ -416,6 +490,7 @@
     try {
       state.design = false;
       state.pagesView = false;
+      state.readinessView = false;
       await loadGallery(gid);
       state.categoryId = state.gallery.categoryId;
       render();
@@ -442,6 +517,7 @@
             ${isHome ? '· what visitors see first' : `· <code>${esc(g.folder)}</code>`}
             ${isHome || g.visible ? '' : '· <span class="pfa-badge">Hidden</span>'}
           </p>
+          ${isHome ? '' : galleryNudges(g)}
         </div>
         <div class="centre-controls">
           <span class="pfa-pill" id="pfa-progress" hidden></span>
@@ -453,6 +529,14 @@
         </div>
       </div>
       <div class="pfa-scroll">
+        ${isHome ? '' : `
+        <div class="pfa-section">
+          <div class="pfa-section-text">Sub-galleries</div>
+          <button class="btn-primary small" id="pfa-new-subgallery">New sub-gallery</button>
+        </div>
+        ${g.children && g.children.length
+          ? `<div class="pfa-cards" id="pfa-subcards">${g.children.map(subGalleryCard).join('')}</div>`
+          : '<p class="pfa-hint">Nest galleries inside this one to build a collection.</p>'}`}
         <div class="pfa-settings">
           <div class="pfa-field">
             <span>Layout</span>
@@ -460,9 +544,9 @@
           </div>
           ${isHome ? '' : `
             <label class="pfa-field">
-              <span>Category</span>
+              <span>Location</span>
               <select class="setting-input" id="pfa-move">
-                ${cats.map(c => `<option value="${esc(c.id)}" ${c.id === g.categoryId ? 'selected' : ''}>${esc(c.title)}</option>`).join('')}
+                ${locationOptions(g, cats)}
               </select>
             </label>
             <label class="pfa-field">
@@ -596,6 +680,10 @@
 
     const isHome = !!(state.tree?.home && state.tree.home.id === gid);
     $('pfa-back').addEventListener('click', () => { state.galleryId = null; state.gallery = null; render(); });
+    if ($('pfa-new-subgallery')) $('pfa-new-subgallery').addEventListener('click', () => newSubGallery(gid));
+    document.querySelectorAll('#pfa-subcards .pfa-card').forEach(card => {
+      card.addEventListener('click', () => openGallery(card.dataset.gid));
+    });
     $('pfa-centre').querySelectorAll('[data-layout]').forEach(btn => {
       btn.addEventListener('click', () => put({ layout: btn.dataset.layout }));
     });
@@ -618,7 +706,12 @@
     const interval = $('pfa-interval');
     if (interval) interval.addEventListener('change', e => put({ options: { interval: Number(e.target.value) || 5 } }));
     if (!isHome) {
-      $('pfa-move').addEventListener('change', e => put({ categoryId: e.target.value }));
+      $('pfa-move').addEventListener('change', e => {
+        const v = e.target.value;
+        // Top level of a category, or inside another gallery (a collection).
+        if (v.startsWith('cat:')) put({ parentId: '', categoryId: v.slice(4) });
+        else put({ parentId: v.slice(4) });
+      });
       $('pfa-centre').querySelectorAll('[data-access]').forEach(b =>
         b.addEventListener('click', () => put({ access: b.dataset.access })));
       const pw = $('pfa-password');
@@ -795,6 +888,7 @@
   async function openDesign() {
     state.design = true;
     state.pagesView = false;
+    state.readinessView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -1017,6 +1111,7 @@
   async function openPages() {
     state.pagesView = true;
     state.design = false;
+    state.readinessView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -1025,6 +1120,58 @@
     } catch (err) {
       S().toast(err.message || 'Could not load the pages');
     }
+  }
+
+  // ---------- Readiness ----------
+
+  async function openReadiness() {
+    state.readinessView = true;
+    state.design = false;
+    state.pagesView = false;
+    state.galleryId = null;
+    state.gallery = null;
+    try {
+      state.readiness = await req('/api/admin/portfolio/readiness');
+      render();
+    } catch (err) {
+      S().toast(err.message || 'Could not load readiness');
+    }
+  }
+
+  // The pre-launch checklist (docs/portfolio/). Reports only; it never blocks
+  // publishing. Each check carries a status: pass, warn or fail.
+  function renderReadiness() {
+    const r = state.readiness || { checks: [], summary: { pass: 0, warn: 0, fail: 0 } };
+    const groups = [...new Set(r.checks.map(c => c.group))];
+    const cls = s => (s === 'pass' ? 'good' : s === 'fail' ? 'bad' : 'work');
+    const word = s => (s === 'pass' ? 'Ready' : s === 'fail' ? 'Fix' : 'Review');
+    $('pfa-centre').innerHTML = `
+      <div class="centre-header">
+        <div>
+          <h1>Readiness</h1>
+          <p class="centre-sub">A pre-launch pass over the portfolio. Advisory — it never blocks publishing.</p>
+        </div>
+        <div class="pfa-flags">
+          <span class="pfa-badge good">${r.summary.pass} ready</span>
+          <span class="pfa-badge work">${r.summary.warn} review</span>
+          <span class="pfa-badge bad">${r.summary.fail} fix</span>
+        </div>
+      </div>
+      ${groups.map(g => `
+        <div class="pfa-section">
+          <div class="pfa-section-text">${esc(g)}</div>
+        </div>
+        <div class="pfa-page-list" style="max-width:100%">
+          ${r.checks.filter(c => c.group === g).map(c => `
+            <div class="pfa-page-row pfa-check-row">
+              <div>
+                <div class="pfa-page-title">${esc(c.label)}</div>
+                <div class="pfa-page-meta">${esc(c.detail || '')}</div>
+              </div>
+              <span class="pfa-badge ${cls(c.status)}">${word(c.status)}</span>
+            </div>`).join('')}
+        </div>`).join('')}
+    `;
   }
 
   function renderPages() {
@@ -1293,6 +1440,17 @@
       const r = await send('/api/admin/portfolio/galleries', 'POST', { categoryId, name });
       if (r.gallery) { state.galleryId = r.gallery.id; state.gallery = r.gallery; }
     });
+  }
+
+  // Create a gallery inside the open gallery, turning it into a collection.
+  async function newSubGallery(parentId) {
+    const name = await S().prompt({
+      title: 'New sub-gallery', okText: 'Create',
+      field: { label: 'Folder name, e.g. IU Sports', type: 'text' },
+    });
+    if (!name || !name.trim()) return;
+    await act(() => send('/api/admin/portfolio/galleries', 'POST', { parentId, name }));
+    await openGallery(parentId);
   }
 
   async function renameGallery(g) {

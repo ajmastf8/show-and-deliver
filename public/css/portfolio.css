@@ -175,14 +175,13 @@
   height: var(--pf-strip-h, 66vh);
   overflow-x: auto;
   overflow-y: hidden;
-  scroll-snap-type: x proximity;
   scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
   padding-bottom: 10px;
 }
 
 .pf-strip .pf-tile {
   flex: 0 0 auto;
-  scroll-snap-align: center;
 }
 
 /* Fullscreen: one picture per screen, whole frame visible. */

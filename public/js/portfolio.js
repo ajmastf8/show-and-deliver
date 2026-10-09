@@ -182,13 +182,11 @@ const VIEW_ICONS = {
 // The immersive view's axis comes from the gallery's Scrolling option: a
 // slideshow keeps its own layout; otherwise horizontal filmstrip or vertical
 // one-per-screen. The configured layout seeds it when the option is the default.
+// The immersive view is the gallery's own immersive layout, or one-per-screen
+// for a grid style.
 function immersiveLayout(g) {
   const configured = LAYOUTS[g.layout] ? g.layout : 'justified';
-  // An immersive layout chosen directly (Horizontal row / Full screen /
-  // Slideshow) wins; a grid style falls back to the Scrolling option.
-  if (PF_IMMERSIVE.includes(configured)) return configured;
-  const scroll = g.options && g.options.scroll;
-  return scroll === 'horizontal' ? 'horizontal' : 'fullscreen';
+  return PF_IMMERSIVE.includes(configured) ? configured : 'fullscreen';
 }
 
 function viewModes(g) {
@@ -203,8 +201,7 @@ function viewModes(g) {
 // The view a gallery opens in, so its own layout is the default.
 function defaultView(g) {
   const configured = LAYOUTS[g.layout] ? g.layout : 'justified';
-  if (PF_IMMERSIVE.includes(configured)) return 'fullscreen';
-  return (g.options && g.options.view === 'immersive') ? 'fullscreen' : 'grid';
+  return PF_IMMERSIVE.includes(configured) ? 'fullscreen' : 'grid';
 }
 
 // A shared link can name a view; otherwise remember the visitor's last choice.

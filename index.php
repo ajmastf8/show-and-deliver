@@ -53,13 +53,6 @@ define('PORTFOLIO_OPTION_VALUES', [
     'density' => ['compact', 'normal', 'roomy'],
     'titles' => ['none', 'hover', 'under'],
     'crop' => ['fit', 'fill'],
-    // Immersive view axis. Listed horizontal-first so the default (the entry at
-    // index 1, per portfolioNormalizeOptions) is vertical.
-    'scroll' => ['horizontal', 'vertical'],
-    // The view a gallery opens in. Listed immersive-first so the default (index
-    // 1) is grid — existing galleries stay as they were; new ones are created
-    // with `immersive` set explicitly.
-    'view' => ['immersive', 'grid'],
 ]);
 // How much room a single picture takes in the "featured tiles" layout. Called
 // `tile`, not `size`: an item's `size` is already its file size in bytes.

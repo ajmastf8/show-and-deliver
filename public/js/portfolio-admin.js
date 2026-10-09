@@ -51,8 +51,6 @@
     ['density', 'Image size', [['compact', 'Smaller'], ['normal', 'Normal'], ['roomy', 'Larger']]],
     ['titles', 'Titles', [['none', 'Hidden'], ['hover', 'On hover'], ['under', 'Always']]],
     ['crop', 'Thumbnails', [['fit', 'Whole frame'], ['fill', 'Cropped']]],
-    ['scroll', 'Scrolling', [['vertical', 'Vertical'], ['horizontal', 'Horizontal']]],
-    ['view', 'Opens as', [['grid', 'Grid'], ['immersive', 'Full screen']]],
   ];
 
   const TILE_SIZES = [['normal', 'Normal'], ['wide', 'Wide'], ['tall', 'Tall'], ['big', 'Big']];

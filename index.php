@@ -4760,6 +4760,19 @@ function portfolioFindNodeById(array $nodes, $id) {
     return null;
 }
 
+// Every gallery node with its category, nested collections included.
+function portfolioAllNodes() {
+    $out = [];
+    $walk = function ($cat, $nodes) use (&$walk, &$out) {
+        foreach ($nodes as $n) {
+            $out[] = [$cat, $n];
+            $walk($cat, $n['children'] ?? []);
+        }
+    };
+    foreach (portfolioTree()['categories'] as $cat) $walk($cat, $cat['galleries']);
+    return $out;
+}
+
 function portfolioFindCategoryBySlug($slug) {
     foreach (portfolioTree()['categories'] as $cat) {
         if ($cat['slug'] === $slug) return $cat;
@@ -5501,6 +5514,85 @@ if ($method === 'GET' && $uri === '/api/admin/portfolio/readiness') {
     $summary = ['pass' => 0, 'warn' => 0, 'fail' => 0];
     foreach ($checks as $c) $summary[$c['status']]++;
     respond(['checks' => $checks, 'summary' => $summary]);
+}
+
+// Files that exist more than once on disk (same bytes), so a copy can become a
+// pick of one original. Size groups first — identical files share a size — so
+// only genuine candidates are hashed.
+if ($method === 'GET' && $uri === '/api/admin/portfolio/duplicates') {
+    requireAuth();
+    $bySize = [];
+    foreach (portfolioAllNodes() as [$cat, $gal]) {
+        foreach ($gal['sidecar']['items'] as $name => $it) {
+            $path = $gal['dir'] . '/' . $name;
+            if (!is_file($path)) continue;
+            $bySize[(int)@filesize($path)][] = ['cat' => $cat, 'gal' => $gal, 'file' => (string)$name, 'it' => $it, 'path' => $path];
+        }
+    }
+    $groups = [];
+    foreach ($bySize as $size => $files) {
+        if (count($files) < 2) continue;
+        $byHash = [];
+        foreach ($files as $f) {
+            $h = @hash_file('sha256', $f['path']);
+            if ($h !== false) $byHash[$h][] = $f;
+        }
+        foreach ($byHash as $h => $fs) {
+            if (count($fs) < 2) continue;
+            $groups[] = ['size' => $size, 'files' => array_map(fn($f) => [
+                'galleryId' => $f['gal']['id'],
+                'galleryTitle' => portfolioTitle($f['gal']),
+                'file' => $f['file'],
+                'itemId' => $f['it']['id'] ?? '',
+                'title' => (string)($f['it']['title'] ?? ''),
+                'url' => portfolioGalleryUrl($f['cat'], $f['gal']),
+            ], $fs)];
+        }
+    }
+    respond(['groups' => $groups]);
+}
+
+// Keep one file; turn each other copy into a pick of it and remove the bytes.
+if ($method === 'POST' && $uri === '/api/admin/portfolio/duplicates/link') {
+    requireAuth();
+    $in = getInput();
+    $keepG = (string)($in['keep']['galleryId'] ?? '');
+    $keepF = (string)($in['keep']['file'] ?? '');
+    [$kCat, $kGal] = portfolioRequireGallery($keepG);
+    if (!isset($kGal['sidecar']['items'][$keepF]) || !is_file($kGal['dir'] . '/' . $keepF)) {
+        respondError('The kept file is gone', 404);
+    }
+    $keepHash = @hash_file('sha256', $kGal['dir'] . '/' . $keepF);
+    $linked = 0;
+    foreach ((array)($in['link'] ?? []) as $l) {
+        $gid = (string)($l['galleryId'] ?? '');
+        $file = (string)($l['file'] ?? '');
+        if (($gid === $keepG && $file === $keepF) || $gid === '' || $file === '') continue;
+        [$cat, $gal] = portfolioRequireGallery($gid);
+        $it = $gal['sidecar']['items'][$file] ?? null;
+        if (!$it || !is_file($gal['dir'] . '/' . $file)) continue;
+        // Only link files that really are the same bytes.
+        if ($keepHash === false || @hash_file('sha256', $gal['dir'] . '/' . $file) !== $keepHash) continue;
+        $refKey = generateId('r_');
+        $ref = ['gallery' => $kGal['id'], 'file' => $keepF, 'visible' => ($it['visible'] ?? true) !== false];
+        if (!empty($it['title'])) $ref['title'] = (string)$it['title'];
+        if (!empty($it['description'])) $ref['description'] = (string)$it['description'];
+        portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($file, $refKey, $ref) {
+            $pos = array_search($file, $g['order'], true);
+            unset($g['items'][$file]);
+            $g['order'] = array_values(array_filter($g['order'], fn($o) => $o !== $file));
+            if ($g['cover'] === $file) $g['cover'] = null;
+            $g['refs'][$refKey] = $ref;
+            $at = $pos === false ? count($g['order']) : min($pos, count($g['order']));
+            array_splice($g['order'], $at, 0, [$refKey]);
+            return $g;
+        });
+        if (!empty($it['id'])) portfolioDropDerivatives($it['id']);
+        portfolioTrash($gal['dir'] . '/' . $file, $file);
+        $linked++;
+    }
+    portfolioTree(true);
+    respond(['ok' => true, 'linked' => $linked]);
 }
 
 if ($method === 'GET' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri, $params)) {

@@ -20,6 +20,8 @@
     pagesView: false,   // the Pages panel
     readinessView: false, // the Readiness panel
     readiness: null,    // its payload
+    duplicatesView: false, // the Duplicates panel
+    duplicates: null,   // its payload
     pages: [],
     pageId: null,
     migration: null,    // reels galleries still waiting to move into folders
@@ -203,6 +205,7 @@
     if (state.pagesView) renderPages();
     else if (state.design) renderDesign();
     else if (state.readinessView) renderReadiness();
+    else if (state.duplicatesView) renderDuplicates();
     else if (state.galleryId && state.gallery) renderGalleryEditor();
     else renderBrowse();
   }
@@ -238,6 +241,9 @@
         ${state.readiness && (state.readiness.summary.warn + state.readiness.summary.fail) > 0
           ? `<span class="rail-count">${state.readiness.summary.warn + state.readiness.summary.fail}</span>` : ''}
       </div>
+      <div class="rail-row ${state.duplicatesView ? 'active' : ''}" id="pfa-duplicates-row">
+        <span class="rail-name">Duplicates</span>
+      </div>
       <div class="rail-section-label">Categories</div>
       <div class="rail-row ${state.categoryId ? '' : 'active'}" data-cat="">
         <span class="rail-name">All galleries</span>
@@ -260,6 +266,7 @@
         state.design = false;
         state.pagesView = false;
         state.readinessView = false;
+        state.duplicatesView = false;
         render();
       });
     });
@@ -268,6 +275,7 @@
     $('pfa-design-row').addEventListener('click', openDesign);
     $('pfa-pages-row').addEventListener('click', openPages);
     $('pfa-readiness-row').addEventListener('click', openReadiness);
+    $('pfa-duplicates-row').addEventListener('click', openDuplicates);
 
     // Drag to reorder categories; the order is what the public nav follows.
     const list = $('pfa-cat-list');
@@ -491,6 +499,7 @@
       state.design = false;
       state.pagesView = false;
       state.readinessView = false;
+      state.duplicatesView = false;
       await loadGallery(gid);
       state.categoryId = state.gallery.categoryId;
       render();
@@ -889,6 +898,7 @@
     state.design = true;
     state.pagesView = false;
     state.readinessView = false;
+    state.duplicatesView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -1112,6 +1122,7 @@
     state.pagesView = true;
     state.design = false;
     state.readinessView = false;
+    state.duplicatesView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -1128,6 +1139,7 @@
     state.readinessView = true;
     state.design = false;
     state.pagesView = false;
+    state.duplicatesView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -1172,6 +1184,81 @@
             </div>`).join('')}
         </div>`).join('')}
     `;
+  }
+
+  // ---------- Duplicates ----------
+
+  async function openDuplicates() {
+    state.duplicatesView = true;
+    state.design = false;
+    state.pagesView = false;
+    state.readinessView = false;
+    state.galleryId = null;
+    state.gallery = null;
+    try {
+      state.duplicates = await req('/api/admin/portfolio/duplicates');
+      render();
+    } catch (err) {
+      S().toast(err.message || 'Could not scan for duplicates');
+    }
+  }
+
+  // Files with identical bytes, grouped. Keep one; the rest become picks of it.
+  function renderDuplicates() {
+    const groups = (state.duplicates && state.duplicates.groups) || [];
+    $('pfa-centre').innerHTML = `
+      <div class="centre-header">
+        <div>
+          <h1>Duplicates</h1>
+          <p class="centre-sub">Identical files across galleries. Keep one and link the rest, so the picture lives in one place but shows in every gallery.</p>
+        </div>
+        <div class="centre-controls">
+          <button class="ctrl" id="pfa-dup-rescan">Rescan</button>
+        </div>
+      </div>
+      <div class="pfa-scroll">
+        ${groups.length ? groups.map((g, i) => dupGroup(g, i)).join('')
+          : `<div class="pfa-empty"><p>No duplicate files found.</p>
+             <p class="pfa-hint">Files with identical content in more than one gallery are grouped here.</p></div>`}
+      </div>`;
+    $('pfa-dup-rescan').addEventListener('click', openDuplicates);
+    $('pfa-centre').querySelectorAll('[data-keep]').forEach(btn => {
+      btn.addEventListener('click', () => linkDuplicates(+btn.dataset.group, btn.dataset.gid, btn.dataset.file));
+    });
+  }
+
+  function dupGroup(g, gi) {
+    const rows = g.files.map(f => `
+      <div class="pfa-dup-file">
+        <div class="pfa-dup-frame">${f.itemId ? `<img src="/thumbnails/${esc(f.itemId)}.jpg" alt="" loading="lazy">` : ''}</div>
+        <div class="pfa-dup-meta">
+          <div class="pfa-card-title">${esc(f.title || f.file)}</div>
+          <div class="pfa-page-meta">${esc(f.galleryTitle)} · <code>${esc(f.file)}</code></div>
+        </div>
+        <button class="ctrl" data-keep="1" data-group="${gi}" data-gid="${esc(f.galleryId)}" data-file="${esc(f.file)}">Keep this</button>
+      </div>`).join('');
+    return `
+      <div class="pfa-section"><div class="pfa-section-text">${g.files.length} identical · ${Math.round(g.size / 1024)} KB</div></div>
+      <div class="pfa-dup-group">${rows}</div>`;
+  }
+
+  async function linkDuplicates(groupIndex, galleryId, file) {
+    const g = state.duplicates && state.duplicates.groups[groupIndex];
+    if (!g) return;
+    const link = g.files.filter(f => !(f.galleryId === galleryId && f.file === file))
+      .map(f => ({ galleryId: f.galleryId, file: f.file }));
+    if (!link.length) return;
+    const ok = await S().confirm({
+      title: 'Link duplicates?',
+      message: `Keep "${file}" and replace ${link.length} other cop${link.length === 1 ? 'y' : 'ies'} with links to it. The copies move to site-data/portfolio-trash/ — nothing is deleted.`,
+      okText: 'Link', danger: true,
+    });
+    if (!ok) return;
+    await act(async () => {
+      const r = await send('/api/admin/portfolio/duplicates/link', 'POST', { keep: { galleryId, file }, link });
+      S().toast(`Linked ${r.linked} file${r.linked === 1 ? '' : 's'}`);
+    });
+    await openDuplicates();
   }
 
   function renderPages() {

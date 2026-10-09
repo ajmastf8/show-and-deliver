@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.2.0 — 2026-10-09
+- **Duplicate files can be linked instead of copied.** A new **Duplicates** panel in the Portfolio tab finds files that exist byte-for-byte more than once across the portfolio, nested collections included, and lets you keep one and turn the rest into **picks** of it — the picture shows in every gallery while the bytes live in one place. Files are grouped on size first, so only genuine candidates are hashed; nothing is deleted (copies move to `site-data/portfolio-trash/`) and any title or caption on a copy carries onto the link. This is the app-level answer to "one picture, many galleries" — picks rather than symlinks, so identity and metadata stay shared and nothing breaks across FTP, backups or zips.
+
 ## 2.1.0 — 2026-10-09
 - **Galleries can be viewed two ways, switched in place.** Any gallery with pictures now carries a Grid / Fullscreen toggle above it: the visitor flips between a scanning grid and an immersive strip without a page reload. The choice rides in the URL (`?view=`) so a shared link opens the way it was sent, and is remembered per visitor. Both views are one of the gallery's existing layouts, so nothing about how layouts are stored changed.
 - **Credits show in the immersive layouts.** The caption box that already rendered in the slideshow and the lightbox now appears in the fullscreen and horizontal (filmstrip) views as a small credit over the picture, matching the ajmast.com reference. The scanning views still leave credits to the lightbox.

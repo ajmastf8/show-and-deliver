@@ -188,7 +188,14 @@ export function fullscreen(root, items, tile, opts = {}) {
   root.append(...items.map(item => {
     const frame = document.createElement('div');
     frame.className = 'pf-screen';
-    frame.appendChild(withCredit(tile(item), item));
+    const node = withCredit(tile(item), item);
+    // As large as the screen allows, but never past the picture's own size.
+    const img = node.querySelector('img');
+    if (img && item.width > 0 && item.height > 0) {
+      img.style.maxWidth = item.width + 'px';
+      img.style.maxHeight = item.height + 'px';
+    }
+    frame.appendChild(node);
     return frame;
   }));
   return { relayout() {}, destroy() { root.replaceChildren(); } };

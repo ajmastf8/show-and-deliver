@@ -561,3 +561,41 @@
   background: var(--color-gray-light);
 }
 .pf-view-btn svg { width: 18px; height: 12px; fill: currentColor; }
+
+/* Portfolio pages fill the viewport. The gallery is full-bleed; only the
+   text chrome and the scanning layouts keep a margin, and the immersive
+   layouts fill the screen height below the header. */
+.pf-page { max-width: none; padding: 0; }
+
+.pf-page .pf-head,
+.pf-page .pf-viewtoggle,
+.pf-page .pf-section,
+.pf-page .pf-description,
+.pf-page .pf-crumbs { padding-left: 40px; padding-right: 40px; }
+
+.pf-page .pf-index-search,
+.pf-page .pf-filters,
+.pf-page .pf-card-grid,
+.pf-page .pf-catnav,
+.pf-page .pf-index-empty,
+.pf-page .pf-locked { padding-left: 40px; padding-right: 40px; }
+
+/* Scanning layouts keep a small gutter; immersive ones stay edge-to-edge. */
+.pf-page .pf-justified,
+.pf-page .pf-masonry,
+.pf-page .pf-grid,
+.pf-page .pf-featured { padding: 0 8px; }
+
+/* Fullscreen fills what's left under the header. */
+.pf-page .pf-screen { height: calc(100vh - 76px); }
+
+@media (max-width: 760px) {
+  .pf-page .pf-head,
+  .pf-page .pf-viewtoggle,
+  .pf-page .pf-section,
+  .pf-page .pf-description,
+  .pf-page .pf-index-search,
+  .pf-page .pf-filters,
+  .pf-page .pf-card-grid,
+  .pf-page .pf-catnav { padding-left: 18px; padding-right: 18px; }
+}

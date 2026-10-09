@@ -52,6 +52,8 @@ body {
 button { font-family: inherit; cursor: pointer; }
 input, select, textarea { font-family: inherit; }
 a { color: var(--accent); text-decoration: none; }
+/* One face throughout the admin: file names read as text, not as code. */
+code, kbd, samp { font-family: inherit; font-size: inherit; }
 [hidden] { display: none !important; }
 
 /* ---------- Buttons ---------- */
@@ -337,6 +339,9 @@ a { color: var(--accent); text-decoration: none; }
   color: var(--text);
 }
 .centre-sub { margin: 8px 0 0; font-size: 13px; color: var(--text-4); }
+/* Orange is for what you can act on; a page address is reference. */
+.centre-sub a { color: var(--text-4); }
+.centre-sub a:hover { color: var(--accent); }
 .centre-controls { display: flex; align-items: center; gap: 22px; }
 .ctrl {
   background: none;

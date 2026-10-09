@@ -5,8 +5,8 @@
   const PRESETS = {
     light: { '--color-white': '#ffffff', '--color-black': '#000000', '--color-body-text': '#5f5f5f',
              '--color-gray-light': '#f5f5f5', '--color-gray-mid': '#e0e0e0', '--color-gray-text': '#8e8e8e' },
-    dark:  { '--color-white': '#101010', '--color-black': '#f2f2f2', '--color-body-text': '#bdbdbd',
-             '--color-gray-light': '#1a1a1a', '--color-gray-mid': '#2b2b2b', '--color-gray-text': '#8a8a8a' },
+    dark:  { '--color-white': '#1c1c1c', '--color-black': '#ededed', '--color-body-text': '#c4c4c4',
+             '--color-gray-light': '#262626', '--color-gray-mid': '#343434', '--color-gray-text': '#9c9c9c' },
     warm:  { '--color-white': '#f7f3ee', '--color-black': '#241f1b', '--color-body-text': '#5b524a',
              '--color-gray-light': '#efe8e0', '--color-gray-mid': '#ddd2c6', '--color-gray-text': '#8c8075' },
   };

@@ -151,14 +151,14 @@ export function horizontal(root, items, tile, opts = {}) {
   const strip = document.createElement('div');
   strip.className = 'pf-strip';
   strip.style.gap = gap + 'px';
-  // Fill the screen height under the header; pictures keep their shape at that
-  // height and one fills a whole screen of the strip.
-  const stripPx = Math.max(240, window.innerHeight - 76);
-  strip.style.setProperty('--pf-strip-h', stripPx + 'px');
+  // Fill exactly the space left in the viewport under the header and the page
+  // chrome, so a picture is seen whole with no page scrolling.
+  const avail = () => Math.max(240, window.innerHeight - root.getBoundingClientRect().top - 8);
+  strip.style.setProperty('--pf-strip-h', avail() + 'px');
   items.forEach((item, i) => {
     const node = withCredit(tile(item), item);
     node.style.height = '100%';
-    node.style.width = Math.round(stripPx * ratio(item)) + 'px';
+    node.style.width = Math.round(avail() * ratio(item)) + 'px';
     strip.appendChild(node);
   });
   root.replaceChildren(strip);
@@ -173,8 +173,10 @@ export function horizontal(root, items, tile, opts = {}) {
   strip.addEventListener('wheel', onWheel, { passive: false });
 
   const relayout = () => {
-    const h = strip.clientHeight;
-    [...strip.children].forEach((node, i) => { node.style.width = Math.round(h * ratio(items[i])) + 'px'; });
+    const h = avail();
+    strip.style.setProperty('--pf-strip-h', h + 'px');
+    const ch = strip.clientHeight || h;
+    [...strip.children].forEach((node, i) => { node.style.width = Math.round(ch * ratio(items[i])) + 'px'; });
   };
   relayout();
   return {
@@ -187,7 +189,9 @@ export function horizontal(root, items, tile, opts = {}) {
 // keeps the browser's own momentum and keyboard scrolling.
 export function fullscreen(root, items, tile, opts = {}) {
   root.style.gap = gapOf(opts) + 'px';
-  root.append(...items.map(item => {
+  // Each picture fills the space left in the viewport under the page chrome.
+  const avail = () => Math.max(240, window.innerHeight - root.getBoundingClientRect().top - 8);
+  const frames = items.map(item => {
     const frame = document.createElement('div');
     frame.className = 'pf-screen';
     const node = withCredit(tile(item), item);
@@ -199,8 +203,11 @@ export function fullscreen(root, items, tile, opts = {}) {
     }
     frame.appendChild(node);
     return frame;
-  }));
-  return { relayout() {}, destroy() { root.replaceChildren(); } };
+  });
+  root.append(...frames);
+  const size = () => frames.forEach(f => { f.style.height = avail() + 'px'; });
+  size();
+  return { relayout: size, destroy() { root.replaceChildren(); } };
 }
 
 // One item at a time, filling the page: arrows, keyboard, swipe and a counter.

@@ -7,7 +7,7 @@
 // lightbox is PhotoSwipe (public/vendor/photoswipe), with video slides handled
 // here. A gallery set to the slideshow layout plays in place and has no lightbox.
 import PhotoSwipeLightbox from '/vendor/photoswipe/photoswipe-lightbox.esm.min.js';
-import { LAYOUTS } from '/js/layouts.js?v=4';
+import { LAYOUTS } from '/js/layouts.js?v=5';
 
 const root = document.getElementById('portfolio');
 

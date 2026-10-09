@@ -70,10 +70,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 0.4s ease;
 }
-
-.pf-card:hover .pf-card-frame img { transform: scale(1.04); }
 
 .pf-card-title {
   margin: 10px 0 0;
@@ -106,10 +103,7 @@
   height: 100%;
   object-fit: cover;
   display: block;
-  transition: transform 0.4s ease;
 }
-
-.pf-tile:hover img { transform: scale(1.04); }
 
 .pf-tile-placeholder {
   width: 100%;
@@ -599,3 +593,6 @@
   .pf-page .pf-card-grid,
   .pf-page .pf-catnav { padding-left: 18px; padding-right: 18px; }
 }
+
+/* Immersive pictures are never cropped — they fit inside the frame. */
+.pf-strip .pf-tile img { object-fit: contain; }

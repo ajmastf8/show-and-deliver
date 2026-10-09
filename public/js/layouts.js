@@ -151,12 +151,14 @@ export function horizontal(root, items, tile, opts = {}) {
   const strip = document.createElement('div');
   strip.className = 'pf-strip';
   strip.style.gap = gap + 'px';
-  const height = { compact: 52, normal: 66, roomy: 80 }[opts.density] ?? 66;
-  strip.style.setProperty('--pf-strip-h', height + 'vh');
+  // Fill the screen height under the header; pictures keep their shape at that
+  // height and one fills a whole screen of the strip.
+  const stripPx = Math.max(240, window.innerHeight - 76);
+  strip.style.setProperty('--pf-strip-h', stripPx + 'px');
   items.forEach((item, i) => {
     const node = withCredit(tile(item), item);
     node.style.height = '100%';
-    node.style.width = Math.round((window.innerHeight * height / 100) * ratio(item)) + 'px';
+    node.style.width = Math.round(stripPx * ratio(item)) + 'px';
     strip.appendChild(node);
   });
   root.replaceChildren(strip);

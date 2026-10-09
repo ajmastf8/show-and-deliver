@@ -1,0 +1,19 @@
+# 2.0 release freeze
+
+`main` is production and frozen. The folder-backed portfolio rewrite (the 2.x
+line) lives on its own branch and must not reach `main` until it is deliberately
+released.
+
+While this file exists:
+
+- Do not merge the 2.x branch into `main`.
+- Do not push `main` — a git `pre-push` hook (`.githooks/pre-push`) refuses it.
+- Do not propose promoting 2.x to `main` unless the owner asks.
+
+## To release
+
+1. Delete this file.
+2. Merge the rewrite branch into `main`.
+3. Bump `VERSION` and add a `CHANGELOG.md` entry.
+4. Tag `vX.Y.Z` to match `VERSION` and publish a GitHub Release.
+5. Decide whether to re-add this file for the next freeze.

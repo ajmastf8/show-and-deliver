@@ -224,6 +224,7 @@
     const cats = state.tree?.categories || [];
     const rail = $('pfa-rail');
     const home = state.tree?.home;
+    const checkIssues = (state.readiness && (state.readiness.summary.warn + state.readiness.summary.fail)) || 0;
     rail.innerHTML = `
       <div class="rail-section-label">Site</div>
       <div class="rail-row ${state.galleryId && home && state.galleryId === home.id ? 'active' : ''}" id="pfa-home-row">
@@ -236,14 +237,19 @@
       <div class="rail-row ${state.design ? 'active' : ''}" id="pfa-design-row">
         <span class="rail-name">Site design</span>
       </div>
-      <div class="rail-row ${state.readinessView ? 'active' : ''}" id="pfa-readiness-row">
-        <span class="rail-name">Readiness</span>
-        ${state.readiness && (state.readiness.summary.warn + state.readiness.summary.fail) > 0
-          ? `<span class="rail-count">${state.readiness.summary.warn + state.readiness.summary.fail}</span>` : ''}
-      </div>
-      <div class="rail-row ${state.duplicatesView ? 'active' : ''}" id="pfa-duplicates-row">
-        <span class="rail-name">Duplicates</span>
-      </div>
+      <details class="rail-group" id="pfa-checks" ${state.readinessView || state.duplicatesView || state.checksOpen ? 'open' : ''}>
+        <summary class="rail-row">
+          <span class="rail-name">Checks</span>
+          ${checkIssues ? `<span class="rail-count">${checkIssues}</span>` : ''}
+        </summary>
+        <div class="rail-row sub ${state.readinessView ? 'active' : ''}" id="pfa-readiness-row">
+          <span class="rail-name">Readiness</span>
+          ${checkIssues ? `<span class="rail-count">${checkIssues}</span>` : ''}
+        </div>
+        <div class="rail-row sub ${state.duplicatesView ? 'active' : ''}" id="pfa-duplicates-row">
+          <span class="rail-name">Duplicates</span>
+        </div>
+      </details>
       <div class="rail-section-label">Categories</div>
       <div class="rail-row ${state.categoryId ? '' : 'active'}" data-cat="">
         <span class="rail-name">All galleries</span>
@@ -270,6 +276,7 @@
         render();
       });
     });
+    $('pfa-checks').addEventListener('toggle', e => { state.checksOpen = e.target.open; });
     $('pfa-new-cat').addEventListener('click', newCategory);
     $('pfa-home-row').addEventListener('click', openHome);
     $('pfa-design-row').addEventListener('click', openDesign);

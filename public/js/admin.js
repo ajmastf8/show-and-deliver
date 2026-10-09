@@ -341,6 +341,9 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateUploadsCount() {
     const active = state.upload.queue.filter(i => i.status === 'uploading' || i.status === 'waiting').length;
     $('uploads-count').textContent = active;
+    // Only worth a place in the bar while there is something to watch;
+    // New > Upload files opens the screen otherwise.
+    $('nav-uploads').hidden = !state.upload.queue.length;
   }
 
   // Global search

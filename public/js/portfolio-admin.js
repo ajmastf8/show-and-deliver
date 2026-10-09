@@ -40,8 +40,6 @@
     ['masonry', 'Masonry', '<rect x="1" y="2" width="12" height="14"/><rect x="15" y="2" width="12" height="9"/><rect x="29" y="2" width="12" height="18"/><rect x="1" y="18" width="12" height="6"/><rect x="15" y="13" width="12" height="11"/><rect x="29" y="22" width="12" height="2"/>'],
     ['grid', 'Grid', '<rect x="1" y="2" width="12" height="10"/><rect x="15" y="2" width="12" height="10"/><rect x="29" y="2" width="12" height="10"/><rect x="1" y="14" width="12" height="10"/><rect x="15" y="14" width="12" height="10"/><rect x="29" y="14" width="12" height="10"/>'],
     ['slideshow', 'Slideshow', '<rect x="7" y="2" width="30" height="22"/><rect x="1" y="10" width="4" height="6"/><rect x="39" y="10" width="4" height="6"/>'],
-    ['horizontal', 'Horizontal', '<rect x="1" y="4" width="14" height="18"/><rect x="17" y="4" width="20" height="18"/><rect x="39" y="4" width="10" height="18"/>'],
-    ['fullscreen', 'Fullscreen', '<rect x="4" y="2" width="36" height="22"/>'],
     ['featured', 'Featured tiles', '<rect x="1" y="2" width="20" height="14"/><rect x="23" y="2" width="9" height="6"/><rect x="34" y="2" width="9" height="6"/><rect x="23" y="10" width="20" height="6"/><rect x="1" y="18" width="9" height="6"/><rect x="12" y="18" width="9" height="6"/>'],
   ];
 

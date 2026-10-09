@@ -51,6 +51,7 @@
     ['density', 'Image size', [['compact', 'Smaller'], ['normal', 'Normal'], ['roomy', 'Larger']]],
     ['titles', 'Titles', [['none', 'Hidden'], ['hover', 'On hover'], ['under', 'Always']]],
     ['crop', 'Thumbnails', [['fit', 'Whole frame'], ['fill', 'Cropped']]],
+    ['watermark', 'Watermark', [['inherit', 'Inherit'], ['off', 'Off']]],
   ];
 
   const TILE_SIZES = [['normal', 'Normal'], ['wide', 'Wide'], ['tall', 'Tall'], ['big', 'Big']];
@@ -1110,6 +1111,29 @@
           </div>
           <button class="ctrl" id="pfa-social-add">+ Add a link</button>
         </section>
+
+        <section>
+          <h4>Watermark</h4>
+          <div class="pfa-field">
+            <label class="pfa-check"><input type="checkbox" id="pfa-wm-enabled" ${(t.watermark || {}).enabled ? 'checked' : ''}> Stamp a watermark on portfolio pictures</label>
+          </div>
+          <div class="pfa-field">
+            <span>Position</span>
+            <div class="pfa-seg">
+              ${[['tl', 'Top left'], ['tr', 'Top right'], ['bl', 'Bottom left'], ['br', 'Bottom right'], ['center', 'Center']].map(([v, l]) =>
+                `<button type="button" class="${((t.watermark || {}).position || 'br') === v ? 'active' : ''}" data-wm-pos="${v}">${l}</button>`).join('')}
+            </div>
+          </div>
+          <div class="pfa-field">
+            <span>Image</span>
+            <div class="pfa-logo-row">
+              ${(t.watermark || {}).src ? `<img src="${esc(t.watermark.src)}" alt="" class="pfa-logo-preview">` : '<span class="pfa-hint">No watermark — upload a transparent PNG</span>'}
+              <button class="ctrl" id="pfa-wm-upload">${(t.watermark || {}).src ? 'Replace' : 'Upload'}</button>
+              <input type="file" id="pfa-wm-file" accept="image/png" hidden>
+            </div>
+            <span class="pfa-hint">Applies across the portfolio; turn it off for a collection or gallery.</span>
+          </div>
+        </section>
       </div>
     `;
     wireDesign();
@@ -1133,6 +1157,21 @@
     $('pfa-centre').querySelectorAll('[data-header-layout]').forEach(b =>
       b.addEventListener('click', () => saveTheme({ headerLayout: b.dataset.headerLayout })));
     const index = (patch) => saveTheme({ index: { ...(state.theme.index || {}), ...patch } });
+    const wm = (patch) => saveTheme({ watermark: { ...((state.theme && state.theme.watermark) || {}), ...patch } });
+    if ($('pfa-wm-enabled')) $('pfa-wm-enabled').addEventListener('change', e => wm({ enabled: e.target.checked }));
+    $('pfa-centre').querySelectorAll('[data-wm-pos]').forEach(b =>
+      b.addEventListener('click', () => wm({ position: b.dataset.wmPos })));
+    if ($('pfa-wm-upload')) $('pfa-wm-upload').addEventListener('click', () => $('pfa-wm-file').click());
+    if ($('pfa-wm-file')) $('pfa-wm-file').addEventListener('change', async e => {
+      const file = e.target.files[0]; if (!file) return;
+      const fd = new FormData(); fd.append('watermark', file);
+      await act(async () => {
+        await fetch('/api/settings/watermark', { method: 'POST', body: fd });
+        state.header = await req('/api/header');
+        state.theme = state.header.theme;
+        state.design = true;
+      });
+    });
     $('pfa-centre').querySelectorAll('[data-index-layout]').forEach(b =>
       b.addEventListener('click', () => index({ layout: b.dataset.indexLayout })));
     $('pfa-centre').querySelectorAll('[data-index-sidebar]').forEach(b =>

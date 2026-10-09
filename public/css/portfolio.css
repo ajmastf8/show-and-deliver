@@ -595,3 +595,24 @@
 
 /* Immersive pictures are never cropped — they fit inside the frame. */
 .pf-strip .pf-tile img { object-fit: contain; }
+
+/* Full-screen icon beside the view toggle; the body fills the screen. */
+.pf-fs-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.pf-gallery-body:fullscreen { background: var(--color-white); overflow: hidden; }
+
+/* Watermark: a transparent PNG stamped in a corner of each picture. */
+.pf-tile img.pf-watermark {
+  position: absolute;
+  width: 18%;
+  max-width: 160px;
+  min-width: 54px;
+  height: auto;
+  object-fit: contain;
+  opacity: 0.85;
+  pointer-events: none;
+}
+.pf-wm-tl { top: 4%; left: 4%; }
+.pf-wm-tr { top: 4%; right: 4%; }
+.pf-wm-bl { bottom: 4%; left: 4%; }
+.pf-wm-br { bottom: 4%; right: 4%; }
+.pf-wm-center { top: 50%; left: 50%; transform: translate(-50%, -50%); }

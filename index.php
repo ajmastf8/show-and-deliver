@@ -53,6 +53,8 @@ define('PORTFOLIO_OPTION_VALUES', [
     'density' => ['compact', 'normal', 'roomy'],
     'titles' => ['none', 'hover', 'under'],
     'crop' => ['fit', 'fill'],
+    // Per-gallery watermark override: inherit the site setting, or off.
+    'watermark' => ['off', 'inherit'],
 ]);
 // How much room a single picture takes in the "featured tiles" layout. Called
 // `tile`, not `size`: an item's `size` is already its file size in bytes.
@@ -5435,6 +5437,7 @@ function portfolioGalleryPayload($cat, $gal) {
         'description' => (string)($g['description'] ?? ''),
         'layout' => $g['layout'],
         'options' => portfolioNormalizeOptions($g['options'] ?? []),
+        'watermark' => portfolioWatermarkFor($cat, $gal),
         'url' => portfolioGalleryUrl($cat, $gal),
         'category' => ['slug' => $cat['slug'], 'title' => portfolioTitle($cat), 'url' => portfolioCategoryUrl($cat)],
         'breadcrumbs' => portfolioBreadcrumbs($cat, $gal),
@@ -5443,6 +5446,17 @@ function portfolioGalleryPayload($cat, $gal) {
         'hero' => portfolioHeroPayload($gal),
         'items' => portfolioGalleryItems($cat, $gal),
     ];
+}
+
+// The watermark to stamp on a gallery's pictures: the site one, unless the
+// gallery or its collection turns it off.
+function portfolioWatermarkFor($cat, $gal) {
+    $wm = readThemeConfig()['watermark'];
+    if (!$wm['enabled'] || $wm['src'] === '') return null;
+    $galOpt = $gal['sidecar']['options']['watermark'] ?? 'inherit';
+    $catOpt = $cat['sidecar']['watermark'] ?? 'inherit';
+    if ($galOpt === 'off' || $catOpt === 'off') return null;
+    return ['src' => $wm['src'], 'position' => $wm['position']];
 }
 
 // Public categories, each with its public galleries; empty ones are left out.
@@ -7115,6 +7129,12 @@ function readThemeConfig() {
             'filters' => !empty($t['index']['filters']),
             'sidebar' => in_array($t['index']['sidebar'] ?? '', ['off', 'left', 'right'], true) ? $t['index']['sidebar'] : 'off',
         ],
+        // A transparent PNG stamped over portfolio pictures, corner-positioned.
+        'watermark' => [
+            'enabled' => !empty($t['watermark']['enabled']),
+            'position' => in_array($t['watermark']['position'] ?? '', ['tl', 'tr', 'bl', 'br', 'center'], true) ? $t['watermark']['position'] : 'br',
+            'src' => (string)($t['watermark']['src'] ?? ''),
+        ],
     ];
 }
 
@@ -7138,6 +7158,7 @@ if ($method === 'PUT' && $uri === '/api/settings/theme') {
             'text' => array_key_exists('contact', $input) ? (string)($input['contact']['text'] ?? '') : $current['contact']['text'],
         ],
         'index' => array_key_exists('index', $input) ? array_merge($current['index'], (array)$input['index']) : $current['index'],
+        'watermark' => array_key_exists('watermark', $input) ? array_merge($current['watermark'], (array)$input['watermark']) : $current['watermark'],
     ];
     jsonWrite(THEME_CONFIG_PATH, $next);
     respond(['ok' => true, 'theme' => readThemeConfig()]);
@@ -7180,6 +7201,22 @@ if ($method === 'POST' && $uri === '/api/settings/header/logo') {
     jsonWrite(HEADER_CONFIG_PATH, $config);
 
     respond(['ok' => true, 'variant' => $variant, 'src' => '/logo/' . $filename]);
+}
+
+// Upload the watermark (a transparent PNG) and switch it on.
+if ($method === 'POST' && $uri === '/api/settings/watermark') {
+    requireAuth();
+    if (empty($_FILES['watermark'])) respondError('No file uploaded', 400);
+    $ext = strtolower(pathinfo($_FILES['watermark']['name'], PATHINFO_EXTENSION));
+    if ($ext !== 'png') respondError('Upload a transparent PNG.', 400);
+    foreach (glob(LOGO_DIR . '/watermark.*') as $old) unlink($old);
+    if (!move_uploaded_file($_FILES['watermark']['tmp_name'], LOGO_DIR . '/watermark.png')) {
+        respondError('Could not save the watermark', 500);
+    }
+    $t = jsonRead(THEME_CONFIG_PATH) ?: [];
+    $t['watermark'] = array_merge(['position' => 'br'], (array)($t['watermark'] ?? []), ['src' => '/logo/watermark.png', 'enabled' => true]);
+    jsonWrite(THEME_CONFIG_PATH, $t);
+    respond(['ok' => true, 'src' => '/logo/watermark.png']);
 }
 
 // ============================================================

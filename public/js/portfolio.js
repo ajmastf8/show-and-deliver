@@ -178,74 +178,67 @@ const VIEW_ICONS = {
   fullscreen: '<rect x="4" y="2" width="36" height="22"/>',
 };
 
-// Which LAYOUTS key each view uses, given the gallery's configured layout.
-// The immersive view's axis comes from the gallery's Scrolling option: a
-// slideshow keeps its own layout; otherwise horizontal filmstrip or vertical
-// one-per-screen. The configured layout seeds it when the option is the default.
-// The immersive view is the gallery's own immersive layout, or one-per-screen
-// for a grid style.
-function immersiveLayout(g) {
+// A gallery has two presentations: `default` is its configured layout, `grid`
+// is a flat grid — the configured style when it is already one, else justified.
+function galleryViews(g) {
   const configured = LAYOUTS[g.layout] ? g.layout : 'justified';
-  return PF_IMMERSIVE.includes(configured) ? configured : 'fullscreen';
-}
-
-function viewModes(g) {
-  const configured = LAYOUTS[g.layout] ? g.layout : 'justified';
-  const immersive = immersiveLayout(g);
   return {
+    default: configured,
     grid: PF_SCANNING.includes(configured) ? configured : 'justified',
-    fullscreen: PF_IMMERSIVE.includes(immersive) ? immersive : 'fullscreen',
   };
 }
 
-// The view a gallery opens in, so its own layout is the default.
-function defaultView(g) {
-  const configured = LAYOUTS[g.layout] ? g.layout : 'justified';
-  return PF_IMMERSIVE.includes(configured) ? 'fullscreen' : 'grid';
-}
-
-// A shared link can name a view; otherwise remember the visitor's last choice.
+// Whether the grid view is on: ?view=grid, else the visitor's last choice.
 function readView() {
   const fromUrl = new URLSearchParams(location.search).get('view');
-  if (fromUrl === 'grid' || fromUrl === 'fullscreen') return fromUrl;
-  try {
-    const stored = localStorage.getItem('pf-view');
-    if (stored === 'grid' || stored === 'fullscreen') return stored;
-  } catch (_) {}
-  return null;
+  if (fromUrl === 'grid') return true;
+  if (fromUrl) return false;
+  try { return localStorage.getItem('pf-view') === 'grid'; } catch (_) { return false; }
 }
 
 // Written only on a real toggle, so first paint never adds ?view= to the URL.
-function rememberView(view) {
-  try { localStorage.setItem('pf-view', view); } catch (_) {}
+function rememberView(on) {
+  try {
+    if (on) localStorage.setItem('pf-view', 'grid');
+    else localStorage.removeItem('pf-view');
+  } catch (_) {}
   const url = new URL(location.href);
-  if (url.searchParams.get('view') === view) return;
-  url.searchParams.set('view', view);
+  if (on) {
+    if (url.searchParams.get('view') === 'grid') return;
+    url.searchParams.set('view', 'grid');
+  } else {
+    if (!url.searchParams.has('view')) return;
+    url.searchParams.delete('view');
+  }
   history.replaceState(null, '', url);
 }
 
-function buildViewToggle(onPick) {
+function buildViewToggle(onToggleGrid, onFullscreen) {
   const bar = el('div', 'pf-viewtoggle');
   bar.setAttribute('role', 'group');
   bar.setAttribute('aria-label', 'Gallery view');
-  const buttons = {};
-  [['grid', 'Grid'], ['fullscreen', 'Fullscreen']].forEach(([id, label]) => {
-    const b = el('button', 'pf-view-btn');
+  // One binary grid button: pressed = a flat grid, unpressed = the gallery's
+  // default view.
+  const g = el('button', 'pf-view-btn');
+  g.type = 'button';
+  g.title = 'Grid view';
+  g.setAttribute('aria-label', 'Grid view');
+  g.setAttribute('aria-pressed', 'false');
+  g.innerHTML = `<svg viewBox="0 0 42 26" aria-hidden="true">${VIEW_ICONS.grid}</svg>`;
+  g.addEventListener('click', onToggleGrid);
+  bar.appendChild(g);
+  if (onFullscreen) {
+    const b = el('button', 'pf-view-btn pf-fs-btn');
     b.type = 'button';
-    b.title = label + ' view';
-    b.setAttribute('aria-label', label + ' view');
-    b.setAttribute('aria-pressed', 'false');
-    b.innerHTML = `<svg viewBox="0 0 42 26" aria-hidden="true">${VIEW_ICONS[id]}</svg>`;
-    b.addEventListener('click', () => onPick(id));
+    b.title = 'Full screen';
+    b.setAttribute('aria-label', 'Full screen');
+    b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
+    b.addEventListener('click', onFullscreen);
     bar.appendChild(b);
-    buttons[id] = b;
-  });
-  bar.setActive = view => {
-    Object.entries(buttons).forEach(([id, b]) => {
-      const on = id === view;
-      b.classList.toggle('active', on);
-      b.setAttribute('aria-pressed', on ? 'true' : 'false');
-    });
+  }
+  bar.setGrid = on => {
+    g.classList.toggle('active', on);
+    g.setAttribute('aria-pressed', on ? 'true' : 'false');
   };
   return bar;
 }
@@ -276,6 +269,12 @@ function renderGalleryBody(container, gallery, layoutName) {
     }
     if (item.type === 'video') node.appendChild(el('span', 'pf-badge', formatDuration(item.duration) || '▶'));
     if (item.title && options.titles !== 'none') node.appendChild(el('span', 'pf-tile-title', item.title));
+    if (gallery.watermark && gallery.watermark.src) {
+      const wm = el('img', `pf-watermark pf-wm-${gallery.watermark.position || 'br'}`);
+      wm.src = gallery.watermark.src;
+      wm.alt = '';
+      node.appendChild(wm);
+    }
     if (lightbox) node.addEventListener('click', () => lightbox.loadAndOpen(index));
     tiles.set(index, node);
     return node;
@@ -308,24 +307,10 @@ function renderGallery(gallery, opts = {}) {
     // give the cover something to point at.
     if (gallery.hero.only) return;
   }
-  // The home page is a gallery too, but it reads as a landing page: no
-  // breadcrumb, no title above the pictures.
+  // No per-gallery title header — the pictures are the page. The home page
+  // keeps its own intro line.
   if (!opts.home) {
     document.title = gallery.title;
-    const head = el('header', 'pf-head');
-    const crumbs = el('nav', 'pf-crumbs');
-    const trail = (gallery.breadcrumbs && gallery.breadcrumbs.length)
-      ? gallery.breadcrumbs
-      : [{ title: gallery.category.title, url: gallery.category.url }];
-    trail.forEach((b, i) => {
-      if (i) crumbs.appendChild(document.createTextNode(' / '));
-      const a = el('a', null, b.title);
-      a.href = b.url;
-      crumbs.appendChild(a);
-    });
-    head.append(crumbs, el('h1', 'pf-title', gallery.title));
-    if (gallery.description) head.appendChild(el('p', 'pf-description', gallery.description));
-    root.appendChild(head);
   } else if (gallery.description) {
     const head = el('header', 'pf-head');
     head.appendChild(el('p', 'pf-description', gallery.description));
@@ -338,13 +323,22 @@ function renderGallery(gallery, opts = {}) {
     renderGalleryCards(root, gallery.children, {});
   }
 
-  const views = viewModes(gallery);
-  let mode = readView() || defaultView(gallery);
+  const views = galleryViews(gallery);
+  let grid = readView();
 
   const body = el('div', 'pf-gallery-body');
   const hasPictures = gallery.items.some(i => i.type !== 'header');
-  const toggle = (hasPictures && views.grid !== views.fullscreen)
-    ? buildViewToggle(id => { mode = id; paint(true); })
+  // Beside the grid button, this one goes to real browser full screen.
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+      return;
+    }
+    const req = body.requestFullscreen || body.webkitRequestFullscreen || body.msRequestFullscreen;
+    if (req) req.call(body);
+  };
+  const toggle = hasPictures
+    ? buildViewToggle(() => { grid = !grid; paint(true); }, toggleFullscreen)
     : null;
   if (toggle) root.appendChild(toggle);
   root.appendChild(body);
@@ -353,9 +347,9 @@ function renderGallery(gallery, opts = {}) {
   const paint = persist => {
     if (cleanup) cleanup();
     body.replaceChildren();
-    if (toggle) toggle.setActive(mode);
-    cleanup = renderGalleryBody(body, gallery, views[mode]);
-    if (persist) rememberView(mode);
+    if (toggle) toggle.setGrid(grid);
+    cleanup = renderGalleryBody(body, gallery, grid ? views.grid : views.default);
+    if (persist) rememberView(grid);
   };
   paint(false);
 }

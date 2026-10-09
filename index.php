@@ -4933,7 +4933,8 @@ function portfolioFindNodeById(array $nodes, $id) {
     return null;
 }
 
-// Every gallery node with its category, nested collections included.
+// Every gallery node with its category, nested collections included. A
+// top-level gallery is its own node (its "category" is itself).
 function portfolioAllNodes() {
     $out = [];
     $walk = function ($cat, $nodes) use (&$walk, &$out) {
@@ -4942,7 +4943,10 @@ function portfolioAllNodes() {
             $walk($cat, $n['children'] ?? []);
         }
     };
-    foreach (portfolioTree()['categories'] as $cat) $walk($cat, $cat['galleries']);
+    foreach (portfolioTree()['categories'] as $cat) {
+        if (!empty($cat['isTopGallery'])) { $out[] = [$cat, $cat]; continue; }
+        $walk($cat, $cat['galleries']);
+    }
     return $out;
 }
 
@@ -5665,6 +5669,7 @@ if ($method === 'GET' && $uri === '/api/admin/portfolio/readiness') {
     };
     foreach ($tree['categories'] as $cat) {
         if (($cat['sidecar']['visible'] ?? true) === false) continue;
+        if (!empty($cat['isTopGallery'])) { $scanNode($cat, $cat); continue; }
         foreach ($cat['galleries'] as $gal) $scanNode($cat, $gal);
     }
 
@@ -6093,22 +6098,40 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/categories/{cid}/order
 if ($method === 'POST' && $uri === '/api/admin/portfolio/galleries') {
     requireAuth();
     $input = getInput();
-    // Create under a category, or inside a gallery to build a collection.
+    // A gallery is created inside a category, inside another gallery (a
+    // collection), or at the top level of the Image Library as its own gallery.
     $parentId = (string)($input['parentId'] ?? '');
+    $categoryId = (string)($input['categoryId'] ?? '');
+    $isTopGallery = false;
     if ($parentId !== '') {
         [$cat, $parent] = portfolioRequireGallery($parentId);
         if (!empty($parent['sidecar']['items'])) {
             respondError("A gallery can't hold other galleries — move its media into a gallery first.", 400);
         }
         $targetDir = $parent['dir'];
-    } else {
-        $cat = portfolioRequireCategory((string)($input['categoryId'] ?? ''));
+    } elseif ($categoryId !== '') {
+        $cat = portfolioRequireCategory($categoryId);
         $targetDir = $cat['dir'];
+    } else {
+        $isTopGallery = true;
+        $targetDir = PORTFOLIO_DIR;
     }
     $name = portfolioSafeName($input['name'] ?? '');
     if ($name === '') respondError('Name is required', 400);
     $name = portfolioUniqueChildName($targetDir, $name);
     if (!@mkdir($targetDir . '/' . $name, 0755)) respondError('Could not create the folder', 500);
+    if ($isTopGallery) {
+        // Mark it as a gallery before anything scans the tree, or an empty
+        // folder would reconcile as a collection first and stick that way.
+        @file_put_contents($targetDir . '/' . $name . '/.gallery.json', '{}');
+        $taken = array_map(fn($c) => $c['slug'], portfolioTree(true)['categories']);
+        portfolioReconcileGallery($targetDir . '/' . $name, $name, $taken);
+        portfolioTree(true);
+        foreach (portfolioTree()['categories'] as $c) {
+            if ($c['folder'] === $name) respond(['ok' => true, 'gallery' => portfolioGalleryResponse($c['id'])]);
+        }
+        respond(['ok' => true]);
+    }
     portfolioTree(true);
     $cat = portfolioFindCategoryBySlug($cat['slug']);
     $nodes = $parentId !== '' ? (portfolioFindGallery($parentId)[1]['children'] ?? []) : $cat['galleries'];

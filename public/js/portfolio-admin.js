@@ -363,7 +363,9 @@
           ${cat ? '<button class="ctrl" id="pfa-cat-rename">Rename</button>' : ''}
           ${cat ? `<button class="ctrl" id="pfa-cat-visible">${cat.visible ? 'Make private' : 'Make public'}</button>` : ''}
           ${cat ? '<button class="ctrl" id="pfa-cat-delete">Delete</button>' : ''}
-          <button class="btn-primary small" id="pfa-new-gallery">${cat ? 'New gallery' : 'New collection'}</button>
+          ${cat
+            ? '<button class="btn-primary small" id="pfa-new-gallery">New gallery</button>'
+            : '<button class="ctrl" id="pfa-new-coll">New collection</button><button class="btn-primary small" id="pfa-new-topgallery">New gallery</button>'}
         </div>
       </div>
       <div class="pfa-scroll">
@@ -383,7 +385,9 @@
     $('pfa-readiness-btn').addEventListener('click', openReadiness);
     const migrateBtn = $('pfa-migrate');
     if (migrateBtn) migrateBtn.addEventListener('click', runMigration);
-    $('pfa-new-gallery').addEventListener('click', newGallery);
+    if ($('pfa-new-gallery')) $('pfa-new-gallery').addEventListener('click', newGallery);
+    if ($('pfa-new-coll')) $('pfa-new-coll').addEventListener('click', newCategory);
+    if ($('pfa-new-topgallery')) $('pfa-new-topgallery').addEventListener('click', newTopGallery);
     if (cat) {
       $('pfa-cat-rename').addEventListener('click', () => renameCategory(cat));
       $('pfa-cat-visible').addEventListener('click', () =>
@@ -1687,6 +1691,17 @@
     if (!name || !name.trim()) return;
     await act(async () => {
       const r = await send('/api/admin/portfolio/galleries', 'POST', { categoryId, name });
+      if (r.gallery) { state.galleryId = r.gallery.id; state.gallery = r.gallery; }
+    });
+  }
+
+  // Create a gallery at the top level of the Image Library (a sibling of the
+  // collections, not inside one).
+  async function newTopGallery() {
+    const name = await S().prompt({ title: 'New gallery', okText: 'Create', field: { label: 'Folder name', type: 'text' } });
+    if (!name || !name.trim()) return;
+    await act(async () => {
+      const r = await send('/api/admin/portfolio/galleries', 'POST', { name });
       if (r.gallery) { state.galleryId = r.gallery.id; state.gallery = r.gallery; }
     });
   }

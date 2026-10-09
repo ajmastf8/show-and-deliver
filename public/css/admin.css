@@ -1438,6 +1438,37 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
   border-bottom: 1px solid var(--border-row);
 }
 
+/* Settings read top to bottom as a form: a label column, then its controls. */
+.pfa-settings-wrap .pfa-settings { display: block; padding-bottom: 6px; }
+.pfa-group {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 8px 24px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border-row);
+}
+.pfa-group:first-child { border-top: 0; padding-top: 4px; }
+.pfa-group > h3 {
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+.pfa-group-body { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 28px; min-width: 0; }
+.pfa-group-body.stack { flex-direction: column; align-items: flex-start; gap: 10px; }
+.pfa-group-body.stack > .setting-input,
+.pfa-group-body.stack > .pfa-row { width: 100%; max-width: 640px; }
+.pfa-group-body.stack > textarea.setting-input { max-width: 720px; }
+.pfa-row { display: flex; flex-wrap: wrap; gap: 10px 14px; }
+.pfa-row.center { align-items: center; }
+.pfa-row > .setting-input { flex: 1 1 220px; min-width: 0; }
+.pfa-group .setting-input { min-width: 0; }
+.pfa-group .pfa-field .setting-input:not(.narrow):not(textarea) { min-width: 220px; }
+.pfa-group .setting-input.narrow { width: 160px; }
+@media (max-width: 760px) { .pfa-group { grid-template-columns: 1fr; } .pfa-group > h3 { margin-top: 0; } }
+
 /* Collapsible: set once per gallery, so one summary line stands in for it. */
 .pfa-settings-wrap { margin-bottom: 18px; border-bottom: 1px solid var(--border-row); }
 .pfa-settings-wrap > summary {

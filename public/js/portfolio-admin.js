@@ -562,23 +562,49 @@
             <span class="pfa-settings-summary">${esc(settingsSummary(g, isHome))}</span>
           </summary>
         <div class="pfa-settings">
-          <div class="pfa-field">
-            <span>Layout</span>
-            ${layoutPicker(g.layout)}
-          </div>
-          ${isHome ? '' : `
-            <label class="pfa-field">
-              <span>Location</span>
-              <select class="setting-input" id="pfa-move">
-                ${locationOptions(g, cats)}
+          <section class="pfa-group">
+            <h3>Layout</h3>
+            <div class="pfa-group-body">${layoutPicker(g.layout)}</div>
+          </section>
+
+          <section class="pfa-group">
+            <h3>Display</h3>
+            <div class="pfa-group-body">
+              ${optionControls(g.options || {})}
+              ${['slideshow', 'fullscreen'].includes(g.layout) ? `
+                <label class="pfa-field">
+                  <span>Seconds per slide</span>
+                  <input class="setting-input narrow" id="pfa-interval" type="number" min="2" max="30" value="${Number((g.options || {}).interval) || 5}">
+                </label>
+                <label class="pfa-check"><input type="checkbox" id="pfa-autoplay" ${(g.options || {}).autoplay ? 'checked' : ''}> Play automatically</label>` : ''}
+            </div>
+          </section>
+
+          ${isHome ? `
+          <section class="pfa-group">
+            <h3>Opening cover</h3>
+            <div class="pfa-group-body stack">
+              <select class="setting-input" id="pfa-hero-file">
+                <option value="">No cover — start with the gallery</option>
+                ${g.items.filter(i => i.type === 'photo' || i.type === 'video').map(i =>
+                  `<option value="${esc(i.file)}" ${(g.hero || {}).file === i.file ? 'selected' : ''}>${esc(i.title || (i.source ? i.source.file : i.file))}</option>`).join('')}
               </select>
-            </label>
-            <label class="pfa-field">
-              <span>Web address</span>
-              <input class="setting-input" id="pfa-slug" value="${esc(g.slug)}">
-            </label>
-            <div class="pfa-field">
-              <span>Who can see it</span>
+              <div class="pfa-row">
+                <input class="setting-input" id="pfa-hero-title" placeholder="Your name" value="${esc((g.hero || {}).title || '')}">
+                <input class="setting-input" id="pfa-hero-sub" placeholder="What you do, where" value="${esc((g.hero || {}).subtitle || '')}">
+              </div>
+              <div class="pfa-row center">
+                <div class="pfa-seg">
+                  ${[['full', 'Full screen'], ['large', 'Tall band']].map(([v, l]) =>
+                    `<button type="button" class="${((g.hero || {}).height || 'full') === v ? 'active' : ''}" data-hero-height="${v}">${l}</button>`).join('')}
+                </div>
+                <label class="pfa-check"><input type="checkbox" id="pfa-hero-only" ${(g.hero || {}).only ? 'checked' : ''}> Cover only — nothing below it</label>
+              </div>
+            </div>
+          </section>` : `
+          <section class="pfa-group">
+            <h3>Access</h3>
+            <div class="pfa-group-body stack">
               <div class="pfa-seg">
                 ${[['public', 'Public'], ['unlisted', 'Unlisted'], ['password', 'Password'], ['hidden', 'Hidden']].map(([v, l]) =>
                   `<button type="button" class="${g.access === v ? 'active' : ''}" data-access="${v}">${l}</button>`).join('')}
@@ -589,41 +615,36 @@
                 password: 'The link works once the visitor types the password.',
                 hidden: 'Not served at all, like a draft.',
               }[g.access] || ''}</span>
+              ${g.access === 'password' || g.hasPassword ? `
+                <label class="pfa-field">
+                  <span>Password${g.hasPassword ? ' (set)' : ''}</span>
+                  <input class="setting-input narrow" id="pfa-password" type="text" placeholder="${g.hasPassword ? 'Type to replace' : 'Choose a password'}">
+                </label>` : ''}
             </div>
-            ${g.access === 'password' || g.hasPassword ? `
+          </section>
+
+          <section class="pfa-group">
+            <h3>Address</h3>
+            <div class="pfa-group-body">
               <label class="pfa-field">
-                <span>Password${g.hasPassword ? ' (set)' : ''}</span>
-                <input class="setting-input" id="pfa-password" type="text" placeholder="${g.hasPassword ? 'Type to replace' : 'Choose a password'}">
-              </label>` : ''}`}
-          ${isHome ? `
-            <div class="pfa-field wide">
-              <span>Opening cover</span>
-              <div class="pfa-hero-row">
-                <select class="setting-input" id="pfa-hero-file">
-                  <option value="">No cover — start with the gallery</option>
-                  ${g.items.filter(i => i.type === 'photo' || i.type === 'video').map(i =>
-                    `<option value="${esc(i.file)}" ${(g.hero || {}).file === i.file ? 'selected' : ''}>${esc(i.title || (i.source ? i.source.file : i.file))}</option>`).join('')}
+                <span>Location</span>
+                <select class="setting-input" id="pfa-move">
+                  ${locationOptions(g, cats)}
                 </select>
-                <input class="setting-input" id="pfa-hero-title" placeholder="Your name" value="${esc((g.hero || {}).title || '')}">
-                <input class="setting-input" id="pfa-hero-sub" placeholder="What you do, where" value="${esc((g.hero || {}).subtitle || '')}">
-                <div class="pfa-seg">
-                  ${[['full', 'Full screen'], ['large', 'Tall band']].map(([v, l]) =>
-                    `<button type="button" class="${((g.hero || {}).height || 'full') === v ? 'active' : ''}" data-hero-height="${v}">${l}</button>`).join('')}
-                </div>
-                <label class="pfa-check"><input type="checkbox" id="pfa-hero-only" ${(g.hero || {}).only ? 'checked' : ''}> Cover only — nothing below it</label>
-              </div>
-            </div>` : ''}
-          ${optionControls(g.options || {})}
-          ${['slideshow', 'fullscreen'].includes(g.layout) ? `
-            <label class="pfa-check"><input type="checkbox" id="pfa-autoplay" ${(g.options || {}).autoplay ? 'checked' : ''}> Play automatically</label>
-            <label class="pfa-field">
-              <span>Seconds per slide</span>
-              <input class="setting-input" id="pfa-interval" type="number" min="2" max="30" value="${Number((g.options || {}).interval) || 5}">
-            </label>` : ''}
-          <label class="pfa-field wide">
-            <span>${isHome ? 'Intro text' : 'Description'}</span>
-            <textarea class="setting-input" id="pfa-desc" rows="2" maxlength="2000">${esc(g.description)}</textarea>
-          </label>
+              </label>
+              <label class="pfa-field">
+                <span>Web address</span>
+                <input class="setting-input" id="pfa-slug" value="${esc(g.slug)}">
+              </label>
+            </div>
+          </section>`}
+
+          <section class="pfa-group">
+            <h3>${isHome ? 'Intro text' : 'Description'}</h3>
+            <div class="pfa-group-body stack">
+              <textarea class="setting-input" id="pfa-desc" rows="2" maxlength="2000">${esc(g.description)}</textarea>
+            </div>
+          </section>
         </div>
         </details>
 

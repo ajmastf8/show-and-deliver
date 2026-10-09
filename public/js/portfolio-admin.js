@@ -23,6 +23,7 @@
     duplicatesView: false, // the Duplicates panel
     duplicates: null,   // its payload
     item: null,         // the open item's metadata view
+    settingsOpen: (() => { try { const v = localStorage.getItem('pfa-settings-open'); return v == null ? null : v === '1'; } catch (_) { return null; } })(),
     pages: [],
     pageId: null,
     migration: null,    // reels galleries still waiting to move into folders
@@ -553,6 +554,10 @@
     const isHome = !!(state.tree?.home && state.tree.home.id === g.id);
     // Strict kinds: a collection holds galleries, a gallery holds media.
     const isCollection = !!(g.children && g.children.length);
+    // Open by default while a gallery is empty (that is when you set it up),
+    // then it remembers your choice.
+    const open = state.settingsOpen == null ? !g.items.length && !isCollection : state.settingsOpen;
+    const keepRailScroll = ($('pfa-rail-body') || {}).scrollTop || 0;
 
     $('pfa-centre').innerHTML = `
       <div class="centre-header">
@@ -578,9 +583,11 @@
               ${isHome ? '' : '<button type="button" class="danger" id="pfa-g-delete">Delete gallery</button>'}
             </div>
           </details>
+          <button class="ctrl pfa-settings-toggle ${open ? 'active' : ''}" id="pfa-settings-toggle" aria-pressed="${open}" title="${esc(settingsSummary(g, isHome))}">Settings</button>
           ${isCollection ? '' : '<button class="btn-primary small" id="pfa-add-files">Add media</button>'}
         </div>
       </div>
+      <div class="pfa-editor ${open ? 'with-rail' : ''}" id="pfa-editor">
       <div class="pfa-scroll">
         ${isHome ? '' : (isCollection ? `
         <div class="pfa-section">
@@ -588,11 +595,29 @@
         </div>
         <div class="pfa-cards" id="pfa-subcards">${g.children.map(subGalleryCard).join('')}</div>`
         : `<p class="pfa-hint">This is a gallery — it holds media. Collections hold galleries. Use Location to move it, or add a gallery to turn it into a collection.</p>`)}
-        <details class="pfa-settings-wrap" id="pfa-settings-wrap" ${state.settingsOpen ? 'open' : ''}>
-          <summary>
-            <span class="pfa-settings-title">Gallery settings</span>
-            <span class="pfa-settings-summary">${esc(settingsSummary(g, isHome))}</span>
-          </summary>
+
+        <div class="pfa-drop ${g.items.length ? 'compact' : ''}" id="pfa-drop" title="Copied into ${esc(g.folder)}. Files dropped into that folder over FTP appear here too.">
+          <p>Drop photos and videos here, or <button class="linkish" id="pfa-browse">choose files</button>.</p>
+          ${g.items.length ? '' : `<p class="pfa-hint">They are copied into <code>${esc(g.folder)}</code>. Files dropped into that folder over FTP appear here too.</p>`}
+          <input type="file" id="pfa-file-input" multiple accept="image/*,video/*" hidden>
+          <div id="pfa-upload-status"></div>
+        </div>
+
+        ${g.warnings.length || g.pending.length ? `
+          <div class="pfa-warnings">
+            ${g.pending.map(p => `<div>${esc(p)} is still uploading — it will appear once it settles.</div>`).join('')}
+            ${g.warnings.map(w => `<div>${esc(w)}</div>`).join('')}
+          </div>` : ''}
+
+        ${g.items.length ? `<div class="pfa-items" id="pfa-items">${g.items.map(itemTile).join('')}</div>`
+          : '<div class="pfa-empty"><p>This gallery is empty.</p></div>'}
+      </div>
+      <aside class="pfa-rail" id="pfa-rail" aria-label="Settings">
+        <div class="pfa-rail-head">
+          <span>Settings</span>
+          <button type="button" class="pfa-rail-close" id="pfa-rail-close" aria-label="Close settings">&times;</button>
+        </div>
+        <div class="pfa-rail-body" id="pfa-rail-body">
         <div class="pfa-settings">
           <section class="pfa-group">
             <h3>Layout</h3>
@@ -678,25 +703,12 @@
             </div>
           </section>
         </div>
-        </details>
-
-        <div class="pfa-drop ${g.items.length ? 'compact' : ''}" id="pfa-drop" title="Copied into ${esc(g.folder)}. Files dropped into that folder over FTP appear here too.">
-          <p>Drop photos and videos here, or <button class="linkish" id="pfa-browse">choose files</button>.</p>
-          ${g.items.length ? '' : `<p class="pfa-hint">They are copied into <code>${esc(g.folder)}</code>. Files dropped into that folder over FTP appear here too.</p>`}
-          <input type="file" id="pfa-file-input" multiple accept="image/*,video/*" hidden>
-          <div id="pfa-upload-status"></div>
         </div>
-
-        ${g.warnings.length || g.pending.length ? `
-          <div class="pfa-warnings">
-            ${g.pending.map(p => `<div>${esc(p)} is still uploading — it will appear once it settles.</div>`).join('')}
-            ${g.warnings.map(w => `<div>${esc(w)}</div>`).join('')}
-          </div>` : ''}
-
-        ${g.items.length ? `<div class="pfa-items" id="pfa-items">${g.items.map(itemTile).join('')}</div>`
-          : '<div class="pfa-empty"><p>This gallery is empty.</p></div>'}
+      </aside>
       </div>
     `;
+    const railBody = $('pfa-rail-body');
+    if (railBody) railBody.scrollTop = keepRailScroll;
     renderProgress();
     wireGalleryEditor(g);
   }
@@ -808,7 +820,15 @@
       $('pfa-g-rename').addEventListener('click', () => renameGallery(g));
       $('pfa-g-delete').addEventListener('click', () => deleteGallery(g));
     }
-    $('pfa-settings-wrap').addEventListener('toggle', e => { state.settingsOpen = e.target.open; });
+    const setRail = (on) => {
+      state.settingsOpen = on;
+      try { localStorage.setItem('pfa-settings-open', on ? '1' : '0'); } catch (_) {}
+      $('pfa-editor').classList.toggle('with-rail', on);
+      $('pfa-settings-toggle').classList.toggle('active', on);
+      $('pfa-settings-toggle').setAttribute('aria-pressed', String(on));
+    };
+    $('pfa-settings-toggle').addEventListener('click', () => setRail(!$('pfa-editor').classList.contains('with-rail')));
+    $('pfa-rail-close').addEventListener('click', () => setRail(false));
     const more = $('pfa-more');
     more.addEventListener('click', e => { if (e.target.closest('.pfa-menu-list button')) more.open = false; });
     if (!moreMenuWired) {

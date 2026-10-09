@@ -1438,55 +1438,68 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
   border-bottom: 1px solid var(--border-row);
 }
 
-/* Settings read top to bottom as a form: a label column, then its controls. */
-.pfa-settings-wrap .pfa-settings { display: block; padding-bottom: 6px; }
-.pfa-group {
-  display: grid;
-  grid-template-columns: 130px minmax(0, 1fr);
-  gap: 8px 24px;
-  padding: 14px 0;
-  border-top: 1px solid var(--border-row);
+/* Settings live in a right-hand rail beside the photos, closed with one click. */
+.pfa-editor { position: relative; flex: 1; display: flex; min-height: 0; }
+.pfa-editor > .pfa-scroll { flex: 1; min-width: 0; }
+.pfa-rail {
+  display: none;
+  flex: none;
+  width: 340px;
+  flex-direction: column;
+  border-left: 1px solid var(--border-row);
+  background: var(--page);
 }
-.pfa-group:first-child { border-top: 0; padding-top: 4px; }
-.pfa-group > h3 {
-  margin: 8px 0 0;
+.pfa-editor.with-rail .pfa-rail { display: flex; }
+.pfa-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px 10px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: .12em;
   text-transform: uppercase;
   color: var(--text-4);
 }
-.pfa-group-body { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 28px; min-width: 0; }
-.pfa-group-body.stack { flex-direction: column; align-items: flex-start; gap: 10px; }
-.pfa-group-body.stack > .setting-input,
-.pfa-group-body.stack > .pfa-row { width: 100%; max-width: 640px; }
-.pfa-group-body.stack > textarea.setting-input { max-width: 720px; }
-.pfa-row { display: flex; flex-wrap: wrap; gap: 10px 14px; }
-.pfa-row.center { align-items: center; }
-.pfa-row > .setting-input { flex: 1 1 220px; min-width: 0; }
-.pfa-group .setting-input { min-width: 0; }
-.pfa-group .pfa-field .setting-input:not(.narrow):not(textarea) { min-width: 220px; }
-.pfa-group .setting-input.narrow { width: 160px; }
-@media (max-width: 760px) { .pfa-group { grid-template-columns: 1fr; } .pfa-group > h3 { margin-top: 0; } }
+.pfa-rail-close { border: 0; background: none; color: var(--text-5); font-size: 20px; line-height: 1; cursor: pointer; }
+.pfa-rail-close:hover { color: var(--text); }
+.pfa-rail-body { flex: 1; overflow-y: auto; padding: 0 20px 40px; }
+.pfa-settings-toggle.active { color: var(--text); border-bottom-color: var(--accent); }
 
-/* Collapsible: set once per gallery, so one summary line stands in for it. */
-.pfa-settings-wrap { margin-bottom: 18px; border-bottom: 1px solid var(--border-row); }
-.pfa-settings-wrap > summary {
-  display: flex;
-  align-items: baseline;
-  gap: 14px;
-  padding: 8px 0 12px;
-  cursor: pointer;
-  list-style: none;
-  font-size: 13px;
-  color: var(--text-3);
+/* Narrower windows: the rail floats over the photos instead of squeezing them. */
+@media (max-width: 1300px) {
+  .pfa-editor.with-rail .pfa-rail {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 15;
+    box-shadow: -12px 0 28px rgba(0, 0, 0, 0.18);
+  }
 }
-.pfa-settings-wrap > summary::-webkit-details-marker { display: none; }
-.pfa-settings-wrap > summary::before { content: '\25B8'; color: var(--text-5); }
-.pfa-settings-wrap[open] > summary::before { content: '\25BE'; }
-.pfa-settings-summary { color: var(--text-5); }
-.pfa-settings-wrap[open] .pfa-settings-summary { display: none; }
-.pfa-settings-wrap .pfa-settings { border-bottom: 0; margin-bottom: 0; }
+
+/* One column of groups, each a small heading over its controls. */
+.pfa-group { padding: 16px 0; border-top: 1px solid var(--border-row); }
+.pfa-group:first-child { border-top: 0; padding-top: 4px; }
+.pfa-group > h3 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+.pfa-group-body { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; min-width: 0; }
+.pfa-group-body .pfa-field { width: 100%; }
+.pfa-group-body .setting-input { width: 100%; min-width: 0; }
+.pfa-group-body .setting-input.narrow { width: 160px; }
+.pfa-group-body .pfa-seg { max-width: 100%; }
+.pfa-group-body .pfa-seg button { padding-left: 11px; padding-right: 11px; }
+.pfa-row { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.pfa-row.center { align-items: flex-start; }
+.pfa-group .pfa-layouts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; width: 100%; }
+.pfa-group .pfa-layout-opt { width: auto; min-width: 0; padding-left: 4px; padding-right: 4px; }
+.pfa-group .pfa-layout-opt span { white-space: normal; text-align: center; line-height: 1.15; }
 
 /* More menu */
 .pfa-menu { position: relative; }

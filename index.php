@@ -46,6 +46,9 @@ define('PORTFOLIO_PROCESS_SLICE_SECONDS', 8);
 // pending and left alone, so no thumbnail is ever cut from a truncated upload.
 define('PORTFOLIO_SETTLE_SECONDS', 60);
 define('PORTFOLIO_LAYOUTS', ['justified', 'masonry', 'grid', 'slideshow', 'horizontal', 'fullscreen', 'featured']);
+// A gallery folder migrated from PhotoShelter may carry this sidecar beside
+// the media — see portfolioMigrationMeta().
+define('PORTFOLIO_MIGRATION_SIDECAR', '_photoshelter.json');
 // Per-gallery presentation, kept as words rather than pixels so the same
 // setting reads sensibly on a phone and on a 5K display.
 define('PORTFOLIO_OPTION_VALUES', [
@@ -4432,7 +4435,27 @@ function portfolioIgnoredName($name) {
     if ($name === '' || $name[0] === '.') return true;
     $lower = strtolower($name);
     if ($lower === 'thumbs.db' || $lower === 'desktop.ini' || $name === "Icon\r") return true;
+    if ($lower === PORTFOLIO_MIGRATION_SIDECAR) return true;
     return (bool)preg_match('/\.(part|filepart|partial|tmp|crdownload)$/', $lower);
+}
+
+// Reads a gallery's PhotoShelter migration sidecar, if any: which images
+// were hidden there, and what order they were shown in, keyed by file name.
+// Harmless to leave the file in place after import — only a file's very
+// first reconcile (when it becomes a "new" item) ever consults it, so later
+// manual edits in this admin are never overwritten.
+function portfolioMigrationMeta($dir) {
+    $data = jsonRead($dir . '/' . PORTFOLIO_MIGRATION_SIDECAR);
+    $out = [];
+    foreach ((is_array($data) ? ($data['images'] ?? []) : []) as $img) {
+        $name = is_array($img) ? ($img['file_name'] ?? null) : null;
+        if (!is_string($name) || $name === '') continue;
+        $out[$name] = [
+            'visible' => !array_key_exists('visible', $img) || (bool)$img['visible'],
+            'order' => isset($img['display_order']) && is_numeric($img['display_order']) ? (float)$img['display_order'] : null,
+        ];
+    }
+    return $out;
 }
 
 // URL slug from a folder name. Accents fold to ASCII ("Été" → "ete"); a name
@@ -4680,7 +4703,8 @@ function portfolioScanGallery($dir, array $trusted = []) {
 function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trusted = [], array $slugPrefix = []) {
     $scan = portfolioScanGallery($dir, $trusted);
     $removedIds = [];
-    $g = portfolioSidecarUpdate("$dir/.gallery.json", function ($g) use ($scan, $folder, $takenSlugs, &$removedIds, $dir) {
+    $psMeta = portfolioMigrationMeta($dir);
+    $g = portfolioSidecarUpdate("$dir/.gallery.json", function ($g) use ($scan, $folder, $takenSlugs, &$removedIds, $dir, $psMeta) {
         $g['version'] = 1;
         if (empty($g['id'])) $g['id'] = generateId('pg_');
         if (empty($g['slug']) || in_array($g['slug'], $takenSlugs, true)) {
@@ -4731,7 +4755,8 @@ function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trus
         foreach ($new as $name => $f) {
             $items[$name] = [
                 'id' => generateId($f['type'] === 'video' ? 'v_' : 'p_'),
-                'title' => '', 'description' => '', 'visible' => true,
+                'title' => '', 'description' => '',
+                'visible' => $psMeta[$name]['visible'] ?? true,
                 'width' => 0, 'height' => 0, 'thumb' => 0, 'proxy' => 0,
                 'addedAt' => date('c'),
             ];
@@ -4758,9 +4783,22 @@ function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trus
         foreach ($order as $o) {
             if (is_string($o) && !isset($kept[$o]) && (isset($items[$o]) || isset($headers[$o]) || isset($refs[$o]))) $kept[$o] = true;
         }
-        foreach ($items as $name => $_) {
-            if (!isset($kept[$name])) $kept[$name] = true;
-        }
+        // Files not already in the saved order are new to this gallery. A
+        // PhotoShelter migration sidecar (see portfolioMigrationMeta()) can
+        // say what order they were shown in there; honor it so a migrated
+        // gallery arrives in its original sequence instead of alphabetical.
+        // Items the sidecar doesn't mention keep their natural scan order and
+        // sort after the ones it does.
+        $newNames = array_values(array_filter(array_keys($items), fn($name) => !isset($kept[$name])));
+        usort($newNames, function ($a, $b) use ($psMeta) {
+            $oa = $psMeta[$a]['order'] ?? null;
+            $ob = $psMeta[$b]['order'] ?? null;
+            if ($oa === null && $ob === null) return 0;
+            if ($oa === null) return 1;
+            if ($ob === null) return -1;
+            return $oa <=> $ob;
+        });
+        foreach ($newNames as $name) { $kept[$name] = true; }
         $g['order'] = array_map('strval', array_keys($kept));
         $g['headers'] = array_intersect_key($headers, $kept);
         $g['refs'] = array_intersect_key($refs, $kept);

@@ -4,6 +4,22 @@ Self-hosted portfolio and client-proofing site for photographers and
 videographers. Distributed publicly, so keep install-specific branding and
 credentials out of the code — per-site identity comes from Settings > Header.
 
+## Branching and the release freeze
+
+`main` is the production/default branch. The folder-backed portfolio rewrite
+(the 2.x line) lives on its own branch and must not reach `main` until it is
+deliberately released.
+
+- **Do not merge or push to `main`** while `/.release-freeze` exists — a git
+  `pre-push` hook refuses it (`.githooks/pre-push`, enabled via
+  `core.hooksPath`).
+- **Do not propose promoting the rewrite to `main`** unless the owner asks.
+  Treat the freeze as standing; the owner initiates the release.
+- Feature work happens on `agent/<slug>` branches/worktrees and is reconciled
+  periodically. A release is a deliberate act: remove `.release-freeze`, merge
+  the branch to `main`, bump `VERSION` + `CHANGELOG.md`, tag `vX.Y.Z`, publish
+  a GitHub Release.
+
 ## Stack
 
 - **Backend:** PHP (`index.php`) — single-file API handling all routes

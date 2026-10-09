@@ -97,8 +97,16 @@
     const logoLink = logo.link || '/';
     const logoHeight = logo.height || 74;
     let brandHtml = '';
-    if (logo.src) {
-      brandHtml = `<a href="${esc(logoLink)}" class="logo"><img src="${esc(logo.src)}" alt="${esc(logo.alt || '')}" class="logo-img" style="height:${logoHeight}px;"></a>`;
+    if (logo.src || logo.srcDark) {
+      // A light-background logo and a dark-background one; CSS swaps them by
+      // the theme. If only one exists it is shown on every background.
+      const both = logo.src && logo.srcDark;
+      const alt = esc(logo.alt || '');
+      const style = `height:${logoHeight}px;`;
+      const imgs = [];
+      if (logo.src) imgs.push(`<img src="${esc(logo.src)}" alt="${alt}" class="logo-img${both ? ' logo-img-light' : ''}" style="${style}">`);
+      if (logo.srcDark) imgs.push(`<img src="${esc(logo.srcDark)}" alt="${alt}" class="logo-img${both ? ' logo-img-dark' : ''}" style="${style}">`);
+      brandHtml = `<a href="${esc(logoLink)}" class="logo">${imgs.join('')}</a>`;
     } else if (logo.text) {
       brandHtml = `<a href="${esc(logoLink)}" class="logo logo-text">${esc(logo.text)}</a>`;
     } else if (logo.alt) {

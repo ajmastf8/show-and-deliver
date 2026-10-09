@@ -7161,24 +7161,25 @@ if ($method === 'POST' && $uri === '/api/settings/header/logo') {
     requireAuth();
     if (empty($_FILES['logo'])) respondError('No file uploaded', 400);
 
+    // Two variants: the light-background logo (default) and the dark-background
+    // one, swapped by the theme on the public pages.
+    $variant = ($_POST['variant'] ?? 'light') === 'dark' ? 'dark' : 'light';
     $file = $_FILES['logo'];
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
     if (!in_array($ext, ['png', 'jpg', 'jpeg', 'svg', 'webp', 'gif'])) {
         respondError('Unsupported image type. Use PNG, JPG, SVG, WebP, or GIF.', 400);
     }
 
-    // Remove old logos
-    foreach (glob(LOGO_DIR . '/logo.*') as $old) unlink($old);
-
-    $filename = 'logo.' . $ext;
+    foreach (glob(LOGO_DIR . "/logo-$variant.*") as $old) unlink($old);
+    $filename = "logo-$variant." . $ext;
     move_uploaded_file($file['tmp_name'], LOGO_DIR . '/' . $filename);
 
-    // Update header config with new logo path
     $config = readHeaderConfig();
-    $config['logo']['src'] = '/logo/' . $filename;
+    if ($variant === 'dark') $config['logo']['srcDark'] = '/logo/' . $filename;
+    else $config['logo']['src'] = '/logo/' . $filename;
     jsonWrite(HEADER_CONFIG_PATH, $config);
 
-    respond(['ok' => true, 'src' => '/logo/' . $filename]);
+    respond(['ok' => true, 'variant' => $variant, 'src' => '/logo/' . $filename]);
 }
 
 // ============================================================

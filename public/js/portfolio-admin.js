@@ -567,7 +567,7 @@
           <p class="centre-sub">
             <a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.url)}</a>
             ${isHome ? '· what visitors see first' : ''}
-            ${isHome || g.visible ? '' : '· <span class="pfa-badge">Hidden</span>'}
+            ${isHome || g.visible ? '' : '· <span class="pfa-badge">Private</span>'}
           </p>
           ${isHome ? '' : galleryNudges(g)}
         </div>
@@ -663,14 +663,19 @@
             <h3>Access</h3>
             <div class="pfa-group-body stack">
               <div class="pfa-seg">
-                ${[['public', 'Public'], ['unlisted', 'Unlisted'], ['password', 'Password'], ['hidden', 'Hidden']].map(([v, l]) =>
-                  `<button type="button" class="${g.access === v ? 'active' : ''}" data-access="${v}">${l}</button>`).join('')}
+                <button type="button" class="${g.access === 'public' ? 'active' : ''}" data-access="public">Public</button>
+                <button type="button" class="${g.access === 'public' ? '' : 'active'}" data-access="${g.access === 'public' ? 'unlisted' : g.access}">Private</button>
               </div>
+              ${g.access === 'public' ? '' : `
+              <div class="pfa-seg">
+                ${[['unlisted', 'Link only'], ['password', 'Password'], ['hidden', 'Not served']].map(([v, l]) =>
+                  `<button type="button" class="${g.access === v ? 'active' : ''}" data-access="${v}">${l}</button>`).join('')}
+              </div>`}
               <span class="pfa-hint">${{
                 public: 'Listed in the menu and on the index.',
-                unlisted: 'Off the menus — only people with the link.',
-                password: 'The link works once the visitor types the password.',
-                hidden: 'Not served at all, like a draft.',
+                unlisted: 'Private. Off the menus; only people with the link can see it.',
+                password: 'Private. The link works once the visitor types the password.',
+                hidden: 'Private. Not served at all, like a draft.',
               }[g.access] || ''}</span>
               ${g.access === 'password' || g.hasPassword ? `
                 <label class="pfa-field">
@@ -713,7 +718,7 @@
     wireGalleryEditor(g);
   }
 
-  const ACCESS_LABELS = { public: 'Public', unlisted: 'Unlisted', password: 'Password', hidden: 'Hidden' };
+  const ACCESS_LABELS = { public: 'Public', unlisted: 'Private', password: 'Private · password', hidden: 'Private' };
 
   function settingsSummary(g, isHome) {
     const layout = (LAYOUTS.find(l => l[0] === g.layout) || [])[1] || g.layout;

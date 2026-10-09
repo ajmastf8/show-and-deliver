@@ -533,6 +533,8 @@
     // The home page is a gallery in a reserved folder: same contents and
     // layout, but it has no category, no name and no address to change.
     const isHome = !!(state.tree?.home && state.tree.home.id === g.id);
+    // Strict kinds: a collection holds galleries, a gallery holds media.
+    const isCollection = !!(g.children && g.children.length);
 
     $('pfa-centre').innerHTML = `
       <div class="centre-header">
@@ -551,22 +553,23 @@
           <details class="pfa-menu" id="pfa-more">
             <summary class="ctrl" aria-label="More actions">More &#9662;</summary>
             <div class="pfa-menu-list">
-              <button type="button" id="pfa-add-section">Add section</button>
-              <button type="button" id="pfa-add-picks">Add from the library</button>
-              ${isHome ? '' : '<button type="button" id="pfa-new-subgallery">New sub-gallery</button>'}
+              ${isCollection ? '' : '<button type="button" id="pfa-add-section">Add section</button>'}
+              ${isCollection ? '' : '<button type="button" id="pfa-add-picks">Add from the library</button>'}
+              ${isHome || isCollection || g.itemCount ? '' : '<button type="button" id="pfa-new-subgallery">New gallery (make it a collection)</button>'}
               ${isHome ? '' : '<button type="button" id="pfa-g-rename">Rename</button>'}
               ${isHome ? '' : '<button type="button" class="danger" id="pfa-g-delete">Delete gallery</button>'}
             </div>
           </details>
-          <button class="btn-primary small" id="pfa-add-files">Add media</button>
+          ${isCollection ? '' : '<button class="btn-primary small" id="pfa-add-files">Add media</button>'}
         </div>
       </div>
       <div class="pfa-scroll">
-        ${!isHome && g.children && g.children.length ? `
+        ${isHome ? '' : (isCollection ? `
         <div class="pfa-section">
-          <div class="pfa-section-text">Sub-galleries</div>
+          <div class="pfa-section-text">Galleries in this collection</div>
         </div>
-        <div class="pfa-cards" id="pfa-subcards">${g.children.map(subGalleryCard).join('')}</div>` : ''}
+        <div class="pfa-cards" id="pfa-subcards">${g.children.map(subGalleryCard).join('')}</div>`
+        : `<p class="pfa-hint">This is a gallery — it holds media. Collections hold galleries. Use Location to move it, or add a gallery to turn it into a collection.</p>`)}
         <details class="pfa-settings-wrap" id="pfa-settings-wrap" ${state.settingsOpen ? 'open' : ''}>
           <summary>
             <span class="pfa-settings-title">Gallery settings</span>
@@ -754,7 +757,7 @@
       btn.addEventListener('click', () => put({ layout: btn.dataset.layout }));
     });
     $('pfa-desc').addEventListener('change', e => put({ description: e.target.value }));
-    $('pfa-add-picks').addEventListener('click', () => openPicker(gid));
+    if ($('pfa-add-picks')) $('pfa-add-picks').addEventListener('click', () => openPicker(gid));
     $('pfa-centre').querySelectorAll('[data-opt]').forEach(btn => {
       btn.addEventListener('click', () => put({ options: { [btn.dataset.opt]: btn.dataset.val } }));
     });
@@ -796,14 +799,14 @@
         if (m && m.open && !m.contains(e.target)) m.open = false;
       });
     }
-    $('pfa-add-section').addEventListener('click', async () => {
+    if ($('pfa-add-section')) $('pfa-add-section').addEventListener('click', async () => {
       const text = await S().prompt({ title: 'Add section', okText: 'Add', field: { label: 'Section heading', type: 'text' } });
       if (text && text.trim()) act(() => send(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/headers`, 'POST', { text }));
     });
 
     // Uploads
     const input = $('pfa-file-input');
-    $('pfa-add-files').addEventListener('click', () => input.click());
+    if ($('pfa-add-files')) $('pfa-add-files').addEventListener('click', () => input.click());
     $('pfa-browse').addEventListener('click', () => input.click());
     input.addEventListener('change', () => { uploadFiles([...input.files], gid); input.value = ''; });
     const drop = $('pfa-drop');

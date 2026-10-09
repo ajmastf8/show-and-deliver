@@ -4584,11 +4584,22 @@ function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trus
         @unlink(THUMBS_DIR . "/$id.jpg");
         @unlink(PROXY_DIR . "/{$id}_proxy.jpg");
     }
-    // Child galleries make this a collection node. Nesting is recursive, and
-    // sibling slugs are unique within the node. The full slug path is what
-    // public URLs and the resolved media paths are built from.
-    $children = portfolioReconcileChildren($dir, $scan['children'], $g['id'], array_merge($slugPrefix, [$g['slug']]));
-    return ['sidecar' => $g, 'children' => $children, 'warnings' => $scan['warnings'], 'pending' => $scan['pending']];
+    // Strict kinds: a gallery holds media, a collection holds galleries. A
+    // folder with both is a gallery — the nested folders are flagged, not shown,
+    // so a gallery can never contain another gallery. A folder with subfolders
+    // and no media is a collection, and its children are reconciled here.
+    $hasItems = !empty($g['items']);
+    $warnings = $scan['warnings'];
+    if ($hasItems && !empty($scan['children'])) {
+        foreach ($scan['children'] as $n) {
+            $warnings[] = "A gallery can't hold other galleries — \"$n\" is ignored. Move it out, or move this folder's media into a gallery first.";
+        }
+        $children = [];
+    } else {
+        $children = portfolioReconcileChildren($dir, $scan['children'], $g['id'], array_merge($slugPrefix, [$g['slug']]));
+    }
+    $g['kind'] = $hasItems ? 'gallery' : (!empty($scan['children']) ? 'collection' : 'gallery');
+    return ['sidecar' => $g, 'children' => $children, 'warnings' => $warnings, 'pending' => $scan['pending']];
 }
 
 // Reconciles a node's child galleries in their saved order (new ones after, by
@@ -5284,7 +5295,7 @@ function portfolioGalleryPayload($cat, $gal) {
         'url' => portfolioGalleryUrl($cat, $gal),
         'category' => ['slug' => $cat['slug'], 'title' => portfolioTitle($cat), 'url' => portfolioCategoryUrl($cat)],
         'breadcrumbs' => portfolioBreadcrumbs($cat, $gal),
-        'kind' => !empty($gal['children']) ? 'collection' : 'gallery',
+        'kind' => !empty($g['items']) ? 'gallery' : (!empty($gal['children']) ? 'collection' : 'gallery'),
         'children' => $children,
         'hero' => portfolioHeroPayload($gal),
         'items' => portfolioGalleryItems($cat, $gal),
@@ -5387,6 +5398,7 @@ function portfolioAdminGalleryNode($cat, $gal) {
         'itemCount' => count($g['items']),
         'publicCount' => portfolioPublicItemCount($gal),
         'childCount' => count($gal['children'] ?? []),
+        'kind' => !empty($g['items']) ? 'gallery' : (!empty($gal['children'] ?? []) ? 'collection' : 'gallery'),
         'processing' => $work,
         'needsPoster' => $capture,
         'failed' => $failed,
@@ -5909,6 +5921,9 @@ if ($method === 'POST' && $uri === '/api/admin/portfolio/galleries') {
     $parentId = (string)($input['parentId'] ?? '');
     if ($parentId !== '') {
         [$cat, $parent] = portfolioRequireGallery($parentId);
+        if (!empty($parent['sidecar']['items'])) {
+            respondError("A gallery can't hold other galleries — move its media into a gallery first.", 400);
+        }
         $targetDir = $parent['dir'];
     } else {
         $cat = portfolioRequireCategory((string)($input['categoryId'] ?? ''));
@@ -6273,6 +6288,7 @@ if ($method === 'DELETE' && matchRoute('/api/admin/portfolio/galleries/{gid}/hea
 if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/refs', $uri, $params)) {
     requireAuth();
     [, $gal] = portfolioRequireGallery($params['gid']);
+    if (!empty($gal['children'])) respondError('Collections hold galleries, not media — add this to a gallery instead.', 400);
     $picks = (array)(getInput()['items'] ?? []);
     if (!$picks) respondError('Nothing to add', 400);
     $add = [];
@@ -6331,6 +6347,7 @@ if ($method === 'DELETE' && matchRoute('/api/admin/portfolio/galleries/{gid}/ref
 if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/files', $uri, $params)) {
     requireAuth();
     [, $gal] = portfolioRequireGallery($params['gid']);
+    if (!empty($gal['children'])) respondError('Collections hold galleries, not media — add this to a gallery instead.', 400);
     if (empty($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) respondError('No file uploaded', 400);
     $tmp = UPLOAD_TMP_DIR . '/' . bin2hex(random_bytes(8)) . '.part';
     if (!move_uploaded_file($_FILES['file']['tmp_name'], $tmp)) respondError('Could not read the upload', 500);

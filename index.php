@@ -6127,10 +6127,10 @@ if ($method === 'POST' && $uri === '/api/admin/portfolio/galleries') {
     if ($name === '') respondError('Name is required', 400);
     $name = portfolioUniqueChildName($targetDir, $name);
     if (!@mkdir($targetDir . '/' . $name, 0755)) respondError('Could not create the folder', 500);
-    // New galleries open full-screen by default, and carry a sidecar before
-    // anything scans the tree (an empty folder would reconcile as a collection
-    // first and stick that way).
-    @file_put_contents($targetDir . '/' . $name . '/.gallery.json', json_encode(['options' => ['view' => 'immersive']]));
+    // New galleries open full-screen (the Full screen layout) and carry a
+    // sidecar before anything scans the tree (an empty folder would reconcile
+    // as a collection first and stick that way).
+    @file_put_contents($targetDir . '/' . $name . '/.gallery.json', json_encode(['layout' => 'fullscreen']));
     if ($isTopGallery) {
         $taken = array_map(fn($c) => $c['slug'], portfolioTree(true)['categories']);
         portfolioReconcileGallery($targetDir . '/' . $name, $name, $taken);

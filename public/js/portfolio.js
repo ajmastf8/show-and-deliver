@@ -184,11 +184,11 @@ const VIEW_ICONS = {
 // one-per-screen. The configured layout seeds it when the option is the default.
 function immersiveLayout(g) {
   const configured = LAYOUTS[g.layout] ? g.layout : 'justified';
-  if (configured === 'slideshow') return 'slideshow';
+  // An immersive layout chosen directly (Horizontal row / Full screen /
+  // Slideshow) wins; a grid style falls back to the Scrolling option.
+  if (PF_IMMERSIVE.includes(configured)) return configured;
   const scroll = g.options && g.options.scroll;
-  if (scroll === 'horizontal') return 'horizontal';
-  if (scroll === 'vertical') return 'fullscreen';
-  return configured === 'horizontal' ? 'horizontal' : 'fullscreen';
+  return scroll === 'horizontal' ? 'horizontal' : 'fullscreen';
 }
 
 function viewModes(g) {

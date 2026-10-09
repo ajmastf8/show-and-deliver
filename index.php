@@ -71,6 +71,11 @@ define('PORTFOLIO_HOME_FOLDER', '_home');
 //   password the link works once the visitor types the password
 //   hidden   not served at all — a draft
 define('PORTFOLIO_ACCESS', ['public', 'unlisted', 'password', 'hidden']);
+// How a gallery's pictures, or a collection's galleries, are ordered. `custom`
+// is the saved drag-and-drop order; anything else is worked out on read, so new
+// arrivals slot in by themselves and the custom order is never overwritten.
+define('PORTFOLIO_ITEM_SORTS', ['custom', 'name', 'captured', 'added']);
+define('PORTFOLIO_NODE_SORTS', ['custom', 'name', 'shoot', 'created']);
 
 // Cap for a portfolio item's caption box. Long enough for a paragraph of
 // credits, short enough that the field can never bloat a gallery's videos.json.
@@ -4448,6 +4453,98 @@ function portfolioNormalizeOptions($o) {
     return $out;
 }
 
+
+function portfolioNormalizeSort($s, array $allowed) {
+    $by = is_array($s) ? (string)($s['by'] ?? 'custom') : 'custom';
+    if (!in_array($by, $allowed, true)) $by = 'custom';
+    return ['by' => $by, 'dir' => (is_array($s) && ($s['dir'] ?? '') === 'desc') ? 'desc' : 'asc'];
+}
+
+// When a photo was taken, from its EXIF, as a unix time. 0 means the file
+// does not say, and sorting falls back to the file's own date.
+function portfolioItemCaptureTime($path) {
+    if (!function_exists('exif_read_data') || !preg_match('/\.(jpe?g|tiff?)$/i', $path)) return 0;
+    $e = @exif_read_data($path);
+    if (!is_array($e)) return 0;
+    foreach (['DateTimeOriginal', 'DateTimeDigitized', 'DateTime'] as $k) {
+        if (empty($e[$k])) continue;
+        $d = DateTime::createFromFormat('Y:m:d H:i:s', trim((string)$e[$k]));
+        if ($d) return $d->getTimestamp();
+    }
+    return 0;
+}
+
+// The order a gallery's keys are shown in: the saved order, or that order
+// sorted. Section headers hold their place and pictures sort within a section.
+function portfolioEffectiveOrder($gal) {
+    $g = $gal['sidecar'];
+    $order = array_map('strval', $g['order'] ?? []);
+    $sort = portfolioNormalizeSort($g['sort'] ?? null, PORTFOLIO_ITEM_SORTS);
+    if ($sort['by'] === 'custom') return $order;
+    $headers = $g['headers'] ?? [];
+    $value = function ($key) use ($gal, $sort) {
+        $r = portfolioResolveKey($gal, $key);
+        if (!$r || !in_array($r['kind'], ['item', 'ref'], true)) return null;
+        $it = $r['item'];
+        $mtime = (int)($it['mtime'] ?? 0);
+        if ($sort['by'] === 'name') return strtolower((string)$r['file']);
+        if ($sort['by'] === 'captured') return (int)($it['capturedAt'] ?? 0) ?: $mtime;
+        return (int)strtotime((string)($it['addedAt'] ?? '')) ?: $mtime;
+    };
+    $sortSegment = function (array $seg) use ($value, $sort) {
+        $rows = [];
+        foreach ($seg as $i => $key) $rows[] = [$key, $value($key), $i];
+        usort($rows, function ($a, $b) use ($sort) {
+            // Files that can't be resolved sink to the end whatever the direction.
+            if ($a[1] === null || $b[1] === null) return ($a[1] === null) <=> ($b[1] === null) ?: $a[2] <=> $b[2];
+            $c = $sort['by'] === 'name' ? strnatcmp($a[1], $b[1]) : $a[1] <=> $b[1];
+            if ($sort['dir'] === 'desc') $c = -$c;
+            return $c ?: $a[2] <=> $b[2];
+        });
+        return array_column($rows, 0);
+    };
+    $out = [];
+    $seg = [];
+    foreach ($order as $key) {
+        if (isset($headers[$key])) {
+            $out = array_merge($out, $sortSegment($seg), [$key]);
+            $seg = [];
+        } else {
+            $seg[] = $key;
+        }
+    }
+    return array_merge($out, $sortSegment($seg));
+}
+
+// Child galleries of a collection (or galleries of a category), sorted by the
+// collection's setting. Name, newest picture taken, or when it was created.
+function portfolioNodeShootTime($node) {
+    $latest = 0;
+    foreach ($node['sidecar']['items'] ?? [] as $it) {
+        $latest = max($latest, (int)($it['capturedAt'] ?? 0) ?: (int)($it['mtime'] ?? 0));
+    }
+    foreach ($node['children'] ?? [] as $ch) $latest = max($latest, portfolioNodeShootTime($ch));
+    return $latest;
+}
+
+function portfolioSortNodes(array $nodes, $sortSetting) {
+    $sort = portfolioNormalizeSort($sortSetting, PORTFOLIO_NODE_SORTS);
+    if ($sort['by'] === 'custom' || count($nodes) < 2) return $nodes;
+    $rows = [];
+    foreach ($nodes as $i => $n) {
+        if ($sort['by'] === 'name') $v = strtolower(portfolioTitle($n));
+        elseif ($sort['by'] === 'created') $v = (int)strtotime((string)($n['sidecar']['createdAt'] ?? ''));
+        else $v = portfolioNodeShootTime($n);
+        $rows[] = [$n, $v, $i];
+    }
+    usort($rows, function ($a, $b) use ($sort) {
+        $c = $sort['by'] === 'name' ? strnatcmp($a[1], $b[1]) : $a[1] <=> $b[1];
+        if ($sort['dir'] === 'desc') $c = -$c;
+        return $c ?: $a[2] <=> $b[2];
+    });
+    return array_column($rows, 0);
+}
+
 function portfolioSlugify($s) {
     if (class_exists('Normalizer')) $s = Normalizer::normalize($s, Normalizer::FORM_D);
     $s = preg_replace('/\p{Mn}+/u', '', $s);
@@ -4583,7 +4680,7 @@ function portfolioScanGallery($dir, array $trusted = []) {
 function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trusted = [], array $slugPrefix = []) {
     $scan = portfolioScanGallery($dir, $trusted);
     $removedIds = [];
-    $g = portfolioSidecarUpdate("$dir/.gallery.json", function ($g) use ($scan, $folder, $takenSlugs, &$removedIds) {
+    $g = portfolioSidecarUpdate("$dir/.gallery.json", function ($g) use ($scan, $folder, $takenSlugs, &$removedIds, $dir) {
         $g['version'] = 1;
         if (empty($g['id'])) $g['id'] = generateId('pg_');
         if (empty($g['slug']) || in_array($g['slug'], $takenSlugs, true)) {
@@ -4645,6 +4742,10 @@ function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trus
             if (!$f['settling']) {
                 $it['size'] = $f['size'];
                 $it['mtime'] = $f['mtime'];
+                // Read once: 0 records "no EXIF date", so it is not re-read.
+                if (!array_key_exists('capturedAt', $it) && $f['type'] === 'photo') {
+                    $it['capturedAt'] = portfolioItemCaptureTime($dir . '/' . $name);
+                }
             }
             if ($f['type'] === 'video') {
                 $it['posterFile'] = $scan['posters'][$name] ?? null;
@@ -4734,7 +4835,7 @@ function portfolioReconcileChildren($dir, array $names, $parentId, array $parent
         $s['childOrder'] = array_column($children, 'id');
         return $s;
     });
-    return $children;
+    return portfolioSortNodes($children, $existing['sort'] ?? null);
 }
 
 // Walks the category folder's galleries in their saved order (new ones after,
@@ -4816,6 +4917,8 @@ function portfolioReconcileCategory($dir, $folder, array $takenSlugs) {
         $c['order'] = $ids;
         return $c;
     });
+    // The saved order above stays the custom one; a sort only changes what is shown.
+    $galleries = portfolioSortNodes($galleries, $c['sort'] ?? null);
     return ['kind' => 'collection', 'sidecar' => $c, 'galleries' => $galleries, 'items' => [], 'children' => [], 'warnings' => $warnings];
 }
 
@@ -5248,7 +5351,7 @@ function portfolioItemPayload($gal, $name, array $it) {
 function portfolioGalleryItems($cat, $gal, $admin = false) {
     $g = $gal['sidecar'];
     $out = [];
-    foreach ($g['order'] as $key) {
+    foreach (portfolioEffectiveOrder($gal) as $key) {
         $key = (string)$key;
         $r = portfolioResolveKey($gal, $key);
         if (!$r) continue;
@@ -5298,7 +5401,7 @@ function portfolioGalleryItems($cat, $gal, $admin = false) {
 
 function portfolioGalleryCover($cat, $gal) {
     $g = $gal['sidecar'];
-    $candidates = $g['cover'] !== null ? array_merge([$g['cover']], $g['order']) : $g['order'];
+    $candidates = $g['cover'] !== null ? array_merge([$g['cover']], portfolioEffectiveOrder($gal)) : portfolioEffectiveOrder($gal);
     foreach ($candidates as $key) {
         $r = portfolioResolveKey($gal, (string)$key);
         if (!$r || !in_array($r['kind'], ['item', 'ref'], true)) continue;
@@ -5450,6 +5553,7 @@ function portfolioGalleryPayload($cat, $gal) {
         'description' => (string)($g['description'] ?? ''),
         'layout' => $g['layout'],
         'options' => portfolioNormalizeOptions($g['options'] ?? []),
+        'sort' => portfolioNormalizeSort($g['sort'] ?? null, !empty($gal['children']) && empty($g['items']) ? PORTFOLIO_NODE_SORTS : PORTFOLIO_ITEM_SORTS),
         'watermark' => portfolioWatermarkFor($cat, $gal),
         'url' => portfolioGalleryUrl($cat, $gal),
         'category' => ['slug' => $cat['slug'], 'title' => portfolioTitle($cat), 'url' => portfolioCategoryUrl($cat)],
@@ -5632,6 +5736,7 @@ if ($method === 'GET' && $uri === '/api/admin/portfolio') {
             'kind' => 'collection',
             'description' => (string)($cat['sidecar']['description'] ?? ''),
             'view' => ($cat['sidecar']['view'] ?? 'cards') === 'page' ? 'page' : 'cards',
+            'sort' => portfolioNormalizeSort($cat['sidecar']['sort'] ?? null, PORTFOLIO_NODE_SORTS),
             'galleries' => $galleries,
             'warnings' => $cat['warnings'],
         ];
@@ -6085,6 +6190,9 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/categories/{cid}', $ur
         }
         if (array_key_exists('visible', $input)) $c['visible'] = (bool)$input['visible'];
         if (array_key_exists('view', $input)) $c['view'] = $input['view'] === 'page' ? 'page' : 'cards';
+        if (isset($input['sort']) && is_array($input['sort'])) {
+            $c['sort'] = portfolioNormalizeSort(array_merge(is_array($c['sort'] ?? null) ? $c['sort'] : [], $input['sort']), PORTFOLIO_NODE_SORTS);
+        }
         if (!empty($input['slug'])) {
             $c['slug'] = portfolioUniqueSlug(portfolioSlugify($input['slug']), $taken, 'c-' . substr($c['id'], 3, 6));
         }
@@ -6300,6 +6408,9 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
         }
         if (isset($input['options']) && is_array($input['options'])) {
             $g['options'] = portfolioNormalizeOptions(array_merge($g['options'] ?? [], $input['options']));
+        }
+        if (isset($input['sort']) && is_array($input['sort'])) {
+            $g['sort'] = portfolioNormalizeSort(array_merge(is_array($g['sort'] ?? null) ? $g['sort'] : [], $input['sort']), array_merge(PORTFOLIO_ITEM_SORTS, PORTFOLIO_NODE_SORTS));
         }
         if (array_key_exists('cover', $input)) {
             $cover = $input['cover'] === null ? null : (string)$input['cover'];

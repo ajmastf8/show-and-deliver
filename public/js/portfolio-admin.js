@@ -426,7 +426,7 @@
   // top-level collections.
   function railMarkup(inner) {
     return `
-      <aside class="pfa-rail" id="pfa-rail" aria-label="Settings">
+      <aside class="pfa-rail" id="pfa-settings-rail" aria-label="Settings">
         <div class="pfa-rail-head">
           <span>Settings</span>
           <button type="button" class="pfa-rail-close" id="pfa-rail-close" aria-label="Close settings">&times;</button>
@@ -445,6 +445,44 @@
     };
     $('pfa-settings-toggle').addEventListener('click', () => setRail(!$('pfa-editor').classList.contains('with-rail')));
     $('pfa-rail-close').addEventListener('click', () => setRail(false));
+  }
+
+  // How pictures (or a collection's galleries) are ordered. Custom is the
+  // drag-and-drop order; the rest are worked out on the fly and leave it alone.
+  const ITEM_SORTS = [['custom', 'Custom — drag to arrange'], ['name', 'Name'], ['captured', 'Date captured'], ['added', 'Date added']];
+  const NODE_SORTS = [['custom', 'Custom — drag to arrange'], ['name', 'Name'], ['shoot', 'Shoot date'], ['created', 'Date created']];
+
+  function sortGroup(sort, choices) {
+    const by = (sort && sort.by) || 'custom';
+    const dir = (sort && sort.dir) === 'desc' ? 'desc' : 'asc';
+    const dirs = by === 'name' ? [['asc', 'A to Z'], ['desc', 'Z to A']] : [['asc', 'Oldest first'], ['desc', 'Newest first']];
+    return `
+      <section class="pfa-group">
+        <h3>Order</h3>
+        <div class="pfa-group-body stack">
+          <select class="setting-input" data-sort-by>
+            ${choices.map(([v, l]) => `<option value="${v}" ${by === v ? 'selected' : ''}>${l}</option>`).join('')}
+          </select>
+          ${by === 'custom' ? '' : `
+          <div class="pfa-seg">
+            ${dirs.map(([v, l]) => `<button type="button" class="${dir === v ? 'active' : ''}" data-sort-dir="${v}">${l}</button>`).join('')}
+          </div>
+          <button type="button" class="ctrl" data-sort-keep>Keep this order as custom</button>`}
+          <span class="pfa-hint">${by === 'custom'
+            ? 'The order you drag things into.'
+            : 'New arrivals slot in by themselves. Dragging is off while a sort is on; your custom order is kept underneath.'}</span>
+        </div>
+      </section>`;
+  }
+
+  // Wires a sortGroup: `save` sends a partial sort, `keep` bakes the order shown
+  // into the custom one.
+  function wireSort(root, save, keep) {
+    const by = root.querySelector('[data-sort-by]');
+    if (by) by.addEventListener('change', e => save({ by: e.target.value }));
+    root.querySelectorAll('[data-sort-dir]').forEach(b => b.addEventListener('click', () => save({ dir: b.dataset.sortDir })));
+    const k = root.querySelector('[data-sort-keep]');
+    if (k) k.addEventListener('click', async () => { await keep(); await save({ by: 'custom' }); });
   }
 
   // Cover cards or one page: how a visitor meets a collection.
@@ -512,6 +550,7 @@
       ${cat ? railMarkup(`
         <div class="pfa-settings">
           ${viewGroup(cat.view, 'data-cat-view')}
+          ${sortGroup(cat.sort, NODE_SORTS)}
           <section class="pfa-group">
             <h3>Access</h3>
             <div class="pfa-group-body stack">
@@ -557,6 +596,8 @@
       const putCat = body => act(() => send('/api/admin/portfolio/categories/' + encodeURIComponent(cat.id), 'PUT', body));
       $('pfa-centre').querySelectorAll('[data-cat-view]').forEach(b => b.addEventListener('click', () => putCat({ view: b.dataset.val })));
       $('pfa-centre').querySelectorAll('[data-cat-access]').forEach(b => b.addEventListener('click', () => putCat({ visible: b.dataset.catAccess === '1' })));
+      wireSort($('pfa-settings-rail'), body => putCat({ sort: body }),
+        () => send(`/api/admin/portfolio/categories/${encodeURIComponent(cat.id)}/order`, 'PUT', { galleries: cat.galleries.map(g => g.id) }));
       $('pfa-cat-slug').addEventListener('change', e => putCat({ slug: e.target.value }));
       $('pfa-cat-desc').addEventListener('change', e => putCat({ description: e.target.value }));
       $('pfa-cat-delete').addEventListener('click', () => deleteCategory(cat));
@@ -572,6 +613,7 @@
     if (cards && cat && galleries.length > 1) {
       Sortable.create(cards, {
         animation: 140,
+        disabled: ((cat.sort || {}).by || 'custom') !== 'custom',
         onEnd: () => {
           const ids = [...cards.querySelectorAll('.pfa-card')].map(c => c.dataset.gid);
           act(() => send(`/api/admin/portfolio/categories/${encodeURIComponent(cat.id)}/order`, 'PUT', { galleries: ids }));
@@ -775,7 +817,7 @@
             ${g.warnings.map(w => `<div>${esc(w)}</div>`).join('')}
           </div>` : ''}
 
-        ${g.items.length ? `<div class="pfa-items" id="pfa-items">${g.items.map(itemTile).join('')}</div>`
+        ${g.items.length ? `<div class="pfa-items ${(g.sort || {}).by && g.sort.by !== 'custom' ? 'pfa-sorted' : ''}" id="pfa-items">${g.items.map(itemTile).join('')}</div>`
           : '<div class="pfa-empty"><p>This gallery is empty.</p></div>'}
       </div>
       ${railMarkup(`
@@ -799,6 +841,8 @@
             </div>
           </section>
           `}
+
+          ${sortGroup(g.sort, isCollection ? NODE_SORTS : ITEM_SORTS)}
 
           ${isHome ? `
           <section class="pfa-group">
@@ -1020,10 +1064,31 @@
       });
     });
 
+    // Sorting: the rail's Order group. Keeping a sort writes the order shown
+    // into the custom one first, so nothing is lost by switching back.
+    const isColl = !!(g.children && g.children.length);
+    wireSort($('pfa-settings-rail'), body => put({ sort: body }), () => isColl
+      ? send(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/children/order`, 'PUT', { children: g.children.map(c => c.id) })
+      : send(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/order`, 'PUT', {
+          order: g.items.map(i => (i.type === 'header' || i.type === 'broken') ? i.id : i.file),
+        }));
+    const subcards = $('pfa-subcards');
+    if (subcards && g.children.length > 1) {
+      Sortable.create(subcards, {
+        animation: 140,
+        disabled: ((g.sort || {}).by || 'custom') !== 'custom',
+        onEnd: () => {
+          const ids = [...subcards.querySelectorAll('.pfa-card')].map(c => c.dataset.gid);
+          act(() => send(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/children/order`, 'PUT', { children: ids }));
+        },
+      });
+    }
+
     const items = $('pfa-items');
     if (items && g.items.length > 1) {
       Sortable.create(items, {
         animation: 140,
+        disabled: ((g.sort || {}).by || 'custom') !== 'custom',
         draggable: '.pfa-item, .pfa-section',
         onEnd: () => {
           const order = [...items.querySelectorAll('[data-key]')].map(n => n.dataset.key);

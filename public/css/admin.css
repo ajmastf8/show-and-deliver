@@ -1623,6 +1623,7 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 .pfa-item-actions button:hover { color: var(--accent); }
 
 /* Per-item actions stay out of the way until the tile is hovered or focused. */
+.pfa-sorted .pfa-item-frame { cursor: default; }
 .pfa-item .pfa-item-actions { opacity: 0; transition: opacity .12s; min-height: 18px; }
 .pfa-item:hover .pfa-item-actions,
 .pfa-item:focus-within .pfa-item-actions { opacity: 1; }

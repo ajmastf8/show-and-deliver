@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/admin.css?v=24">
+  <link rel="stylesheet" href="/css/admin.css?v=25">
 </head>
 <body>
 
@@ -246,8 +246,10 @@
           <div class="setting-group"><label>Tagline</label><input type="text" id="header-tagline" class="setting-input" placeholder="e.g. Based in Indianapolis"></div>
           <hr class="settings-divider">
           <h4>Navigation Links</h4>
-          <p class="setting-hint" style="margin-bottom:12px;">Add links or dropdown menus. Drag to reorder.</p>
+          <p class="setting-hint" style="margin-bottom:12px;">Add links or dropdown menus. Drag to reorder. Each link can be typed by hand, or picked from an existing page or gallery/collection below it — start typing to narrow the list.</p>
           <div id="header-nav-list"></div>
+          <datalist id="nav-pages-datalist"></datalist>
+          <datalist id="nav-galleries-datalist"></datalist>
           <div style="display:flex;gap:8px;margin-top:12px;">
             <button id="header-add-link" class="btn-ghost">+ Link</button>
             <button id="header-add-dropdown" class="btn-ghost">+ Dropdown</button>
@@ -567,7 +569,7 @@
   <div id="toast" class="toast"></div>
 
   <script src="/vendor/sortablejs/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=125"></script>
+  <script src="/js/admin.js?v=126"></script>
   <script src="/js/portfolio-admin.js?v=31"></script>
 </body>
 </html>

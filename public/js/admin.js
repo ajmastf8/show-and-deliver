@@ -2822,6 +2822,30 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadHeaderConfig() {
     try { headerConfig = await (await fetch('/api/header')).json(); populateHeaderForm(); }
     catch (e) { $('header-status').textContent = 'Failed to load header config.'; }
+    loadNavLinkSources();
+  }
+
+  // Lets the nav-link pickers below each URL field offer every existing
+  // page and gallery/collection, so a link can be chosen instead of typed.
+  let navPickOptions = { pages: [], galleries: [] };
+  async function loadNavLinkSources() {
+    try {
+      const [pagesData, tree] = await Promise.all([
+        fetch('/api/admin/pages').then(r => r.json()),
+        fetch('/api/admin/portfolio').then(r => r.json()),
+      ]);
+      const pages = (pagesData.pages || []).map(p => ({ title: p.title, url: p.url }));
+      const galleries = [];
+      const walk = (node) => { if (node.url) galleries.push({ title: node.title, url: node.url }); (node.children || []).forEach(walk); };
+      (tree.categories || []).forEach(cat => { if (cat.url) galleries.push({ title: cat.title, url: cat.url }); (cat.galleries || []).forEach(walk); });
+      navPickOptions = { pages, galleries };
+      renderNavPickDatalists();
+    } catch (e) { /* pickers just stay empty; typing a URL by hand still works */ }
+  }
+  function renderNavPickDatalists() {
+    const toOptions = list => list.map(o => `<option value="${escapeHtml(o.title + ' — ' + o.url)}">`).join('');
+    const pd = $('nav-pages-datalist'); if (pd) pd.innerHTML = toOptions(navPickOptions.pages);
+    const gd = $('nav-galleries-datalist'); if (gd) gd.innerHTML = toOptions(navPickOptions.galleries);
   }
   function populateHeaderForm() {
     if (!headerConfig) return;
@@ -2853,10 +2877,12 @@ document.addEventListener('DOMContentLoaded', () => {
           <span class="drag-handle">≡</span>
           <input type="text" class="setting-input nav-label" value="${escapeHtml(item.label || '')}" placeholder="Label" style="width:150px;">
           <input type="text" class="setting-input nav-url" value="${escapeHtml(item.url || '')}" placeholder="URL" style="flex:1;">
+          <input type="text" class="setting-input nav-pick-page" list="nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off">
+          <input type="text" class="setting-input nav-pick-gallery" list="nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off">
           <label class="toggle-label" style="font-size:12px;white-space:nowrap;"><input type="checkbox" class="nav-external" ${item.external ? 'checked' : ''}> New tab</label>
           <button class="btn-icon nav-delete">×</button></div>`;
       } else {
-        const children = (item.children || []).map(ch => `<div class="header-nav-child-row"><span style="width:24px;"></span><input type="text" class="setting-input child-label" value="${escapeHtml(ch.label || '')}" placeholder="Label" style="width:150px;"><input type="text" class="setting-input child-url" value="${escapeHtml(ch.url || '')}" placeholder="URL" style="flex:1;"><button class="btn-icon child-delete">×</button></div>`).join('');
+        const children = (item.children || []).map(ch => `<div class="header-nav-child-row"><span style="width:24px;"></span><input type="text" class="setting-input child-label" value="${escapeHtml(ch.label || '')}" placeholder="Label" style="width:150px;"><input type="text" class="setting-input child-url" value="${escapeHtml(ch.url || '')}" placeholder="URL" style="flex:1;"><input type="text" class="setting-input nav-pick-page" list="nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off"><input type="text" class="setting-input nav-pick-gallery" list="nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off"><button class="btn-icon child-delete">×</button></div>`).join('');
         el.innerHTML = `<div class="header-nav-item-row">
           <span class="drag-handle">≡</span>
           <input type="text" class="setting-input nav-label" value="${escapeHtml(item.label || '')}" placeholder="Dropdown label" style="width:150px;">
@@ -2890,9 +2916,23 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (e.target.closest('.nav-add-child')) {
       const c = e.target.closest('.header-nav-item').querySelector('.header-nav-children');
       const row = document.createElement('div'); row.className = 'header-nav-child-row';
-      row.innerHTML = `<span style="width:24px;"></span><input type="text" class="setting-input child-label" placeholder="Label" style="width:150px;"><input type="text" class="setting-input child-url" placeholder="URL" style="flex:1;"><button class="btn-icon child-delete">×</button>`;
+      row.innerHTML = `<span style="width:24px;"></span><input type="text" class="setting-input child-label" placeholder="Label" style="width:150px;"><input type="text" class="setting-input child-url" placeholder="URL" style="flex:1;"><input type="text" class="setting-input nav-pick-page" list="nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off"><input type="text" class="setting-input nav-pick-gallery" list="nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off"><button class="btn-icon child-delete">×</button>`;
       c.appendChild(row);
     }
+  });
+  $('header-nav-list').addEventListener('change', (e) => {
+    const picker = e.target.closest('.nav-pick-page, .nav-pick-gallery');
+    if (!picker) return;
+    const sep = picker.value.lastIndexOf(' — ');
+    if (sep === -1) { picker.value = ''; return; }
+    const title = picker.value.slice(0, sep);
+    const url = picker.value.slice(sep + 3);
+    const row = picker.closest('.header-nav-item-row, .header-nav-child-row');
+    const urlInput = row.querySelector('.nav-url, .child-url');
+    const labelInput = row.querySelector('.nav-label, .child-label');
+    if (urlInput) urlInput.value = url;
+    if (labelInput && !labelInput.value.trim()) labelInput.value = title;
+    picker.value = '';
   });
   $('header-logo-file').addEventListener('change', async (e) => {
     const file = e.target.files[0]; if (!file) return;

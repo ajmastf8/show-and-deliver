@@ -1827,3 +1827,18 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 .pfa-dup-frame { flex: 0 0 auto; width: 72px; height: 54px; overflow: hidden; border-radius: 6px; background: var(--raised); }
 .pfa-dup-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .pfa-dup-meta { flex: 1; min-width: 0; }
+
+/* Image Library rail: public/private split, open-in-new-window affordances. */
+.rail-sublabel { padding: 10px 14px 3px; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-6); }
+.rail-empty-row { padding: 4px 14px 8px; font-size: 12px; color: var(--text-6); font-style: italic; }
+.rail-row .rail-open { margin-left: 8px; color: var(--text-6); text-decoration: none; opacity: 0; }
+.rail-row:hover .rail-open { opacity: 1; }
+.rail-row .rail-open:hover { color: var(--text); }
+.pfa-card-frame { position: relative; }
+.pfa-open {
+  position: absolute; top: 8px; right: 8px;
+  width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+  border-radius: 6px; background: rgba(0, 0, 0, 0.55); color: #fff;
+  text-decoration: none; font-size: 13px; line-height: 1; opacity: 0; transition: opacity .15s;
+}
+.pfa-card:hover .pfa-open { opacity: 1; }

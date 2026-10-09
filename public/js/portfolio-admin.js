@@ -250,20 +250,27 @@
           <span class="rail-name">Duplicates</span>
         </div>
       </details>
-      <div class="rail-section-label">Categories</div>
+      <div class="rail-section-label">Image Library</div>
       <div class="rail-row ${state.categoryId ? '' : 'active'}" data-cat="">
-        <span class="rail-name">All galleries</span>
+        <span class="rail-name">Everything</span>
         <span class="rail-count">${cats.reduce((n, c) => n + c.galleries.length, 0)}</span>
       </div>
       <div id="pfa-cat-list">
-        ${cats.map(c => `
-          <div class="rail-row ${state.categoryId === c.id ? 'active' : ''} ${c.visible ? '' : 'inactive'}" data-cat="${esc(c.id)}">
-            <span class="rail-name">${esc(c.title)}</span>
-            <span class="rail-count">${c.galleries.length}</span>
-          </div>`).join('')}
+        <div class="rail-sublabel">Public</div>
+        ${cats.filter(c => c.visible).map(catRow).join('') || '<div class="rail-empty-row">Nothing public yet</div>'}
+        <div class="rail-sublabel">Private</div>
+        ${cats.filter(c => !c.visible).map(catRow).join('') || '<div class="rail-empty-row">Nothing private</div>'}
       </div>
-      <div class="rail-row new-collection" id="pfa-new-cat"><span class="rail-name">+ New category</span></div>
+      <div class="rail-row new-collection" id="pfa-new-cat"><span class="rail-name">+ New collection</span></div>
     `;
+    function catRow(c) {
+      return `
+        <div class="rail-row ${state.categoryId === c.id ? 'active' : ''} ${c.visible ? '' : 'inactive'}" data-cat="${esc(c.id)}">
+          <span class="rail-name">${esc(c.title)}</span>
+          <span class="rail-count">${c.galleries.length}</span>
+          <a class="rail-open" href="${esc(c.url)}" target="_blank" rel="noopener" title="Open in a new window" aria-label="Open in a new window">↗</a>
+        </div>`;
+    }
     rail.querySelectorAll('[data-cat]').forEach(row => {
       row.addEventListener('click', () => {
         state.categoryId = row.dataset.cat || null;
@@ -289,6 +296,8 @@
     if (list && cats.length > 1) {
       Sortable.create(list, {
         animation: 140,
+        draggable: '.rail-row[data-cat]',
+        filter: '.rail-sublabel, .rail-empty-row',
         onEnd: () => {
           const ids = [...list.querySelectorAll('[data-cat]')].map(r => r.dataset.cat);
           act(() => send('/api/admin/portfolio/order', 'PUT', { categories: ids }));
@@ -328,11 +337,11 @@
     $('pfa-centre').innerHTML = `
       <div class="centre-header">
         <div>
-          <h1>${esc(cat ? cat.title : 'All galleries')}</h1>
+          <h1>${esc(cat ? cat.title : 'Image Library')}</h1>
           <p class="centre-sub">
             ${galleries.length} ${galleries.length === 1 ? 'gallery' : 'galleries'}
-            ${cat ? `· <a href="${esc(cat.url)}" target="_blank" rel="noopener">${esc(cat.url)}</a>` : ''}
-            ${cat && !cat.visible ? '· <span class="pfa-badge">Hidden</span>' : ''}
+            ${cat ? `· <a href="${esc(cat.url)}" target="_blank" rel="noopener">${esc(cat.url)} ↗</a>` : ''}
+            ${cat && !cat.visible ? '· <span class="pfa-badge">Private</span>' : ''}
           </p>
         </div>
         <div class="centre-controls">
@@ -340,9 +349,9 @@
           <button class="ctrl" id="pfa-readiness-btn">${readinessChip()}</button>
           <button class="ctrl" id="pfa-rescan">Rescan folders</button>
           ${cat ? '<button class="ctrl" id="pfa-cat-rename">Rename</button>' : ''}
-          ${cat ? `<button class="ctrl" id="pfa-cat-visible">${cat.visible ? 'Hide' : 'Show'}</button>` : ''}
+          ${cat ? `<button class="ctrl" id="pfa-cat-visible">${cat.visible ? 'Make private' : 'Make public'}</button>` : ''}
           ${cat ? '<button class="ctrl" id="pfa-cat-delete">Delete</button>' : ''}
-          <button class="btn-primary small" id="pfa-new-gallery">New gallery</button>
+          <button class="btn-primary small" id="pfa-new-gallery">${cat ? 'New gallery' : 'New collection'}</button>
         </div>
       </div>
       <div class="pfa-scroll">
@@ -371,6 +380,8 @@
     }
     document.querySelectorAll('#pfa-cards .pfa-card').forEach(card => {
       card.addEventListener('click', () => openGallery(card.dataset.gid));
+      const open = card.querySelector('[data-open]');
+      if (open) open.addEventListener('click', e => e.stopPropagation());
     });
 
     // Reordering galleries only makes sense inside one category.
@@ -440,7 +451,7 @@
     ].filter(Boolean).join('');
     return `
       <div class="pfa-card" data-gid="${esc(g.id)}">
-        <div class="pfa-card-frame">${g.cover ? `<img src="${esc(g.cover)}" alt="" loading="lazy">` : '<span class="pfa-card-empty"></span>'}</div>
+        <div class="pfa-card-frame">${g.cover ? `<img src="${esc(g.cover)}" alt="" loading="lazy">` : '<span class="pfa-card-empty"></span>'}<a class="pfa-open" href="${esc(g.url)}" target="_blank" rel="noopener" title="Open in a new window" aria-label="Open in a new window" data-open>↗</a></div>
         <div class="pfa-card-body">
           <div class="pfa-card-title">${esc(g.title)}</div>
           <div class="pfa-card-meta">${g.childCount ? `${g.childCount} ${g.childCount === 1 ? 'gallery' : 'galleries'}` : `${g.publicCount} of ${g.itemCount} live`}${state.categoryId || !g.category ? '' : ' · ' + esc(g.category.title)}</div>
@@ -541,13 +552,13 @@
             <summary class="ctrl" aria-label="More actions">More &#9662;</summary>
             <div class="pfa-menu-list">
               <button type="button" id="pfa-add-section">Add section</button>
-              <button type="button" id="pfa-add-picks">Add from a gallery</button>
+              <button type="button" id="pfa-add-picks">Add from the library</button>
               ${isHome ? '' : '<button type="button" id="pfa-new-subgallery">New sub-gallery</button>'}
               ${isHome ? '' : '<button type="button" id="pfa-g-rename">Rename</button>'}
               ${isHome ? '' : '<button type="button" class="danger" id="pfa-g-delete">Delete gallery</button>'}
             </div>
           </details>
-          <button class="btn-primary small" id="pfa-add-files">Add files</button>
+          <button class="btn-primary small" id="pfa-add-files">Add media</button>
         </div>
       </div>
       <div class="pfa-scroll">
@@ -1447,7 +1458,7 @@
     wrap.innerHTML = `
       <div class="pfa-modal-backdrop"></div>
       <div class="pfa-modal-card">
-        <h3>Add from a gallery</h3>
+        <h3>Add from the library</h3>
         <p class="pfa-hint">The file stays where it is. Edits to the original show up everywhere it appears.</p>
         <select class="setting-input" id="pfa-pick-gallery">
           ${galleries.map(g => `<option value="${esc(g.id)}">${esc(g.category ? g.category.title + ' — ' : '')}${esc(g.title)}</option>`).join('')}
@@ -1532,7 +1543,7 @@
 
   async function newCategory() {
     const name = await S().prompt({
-      title: 'New category', okText: 'Create',
+      title: 'New collection', okText: 'Create',
       field: { label: 'Folder name, e.g. Weddings', type: 'text', placeholder: 'Weddings' },
     });
     if (name && name.trim()) act(() => send('/api/admin/portfolio/categories', 'POST', { name }));

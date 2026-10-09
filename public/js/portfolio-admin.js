@@ -23,6 +23,7 @@
     duplicatesView: false, // the Duplicates panel
     duplicates: null,   // its payload
     item: null,         // the open item's metadata view
+    railOpen: (() => { try { return new Set(JSON.parse(localStorage.getItem('pfa-rail-open') || '[]')); } catch (_) { return new Set(); } })(),
     settingsOpen: (() => { try { const v = localStorage.getItem('pfa-settings-open'); return v == null ? null : v === '1'; } catch (_) { return null; } })(),
     pages: [],
     pageId: null,
@@ -224,6 +225,29 @@
       : 'Making video posters…';
   }
 
+  const RAIL_ICON_COLLECTION = '<svg class="rail-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4.5a1 1 0 0 1 1-1h3.2l1.3 1.6H13a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z"/></svg>';
+  const RAIL_ICON_GALLERY = '<svg class="rail-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="1"/><circle cx="6" cy="6.8" r="1"/><path d="M3 12l3.4-3 2.4 2 2-1.6L13 12"/></svg>';
+
+  function saveRailOpen() {
+    try { localStorage.setItem('pfa-rail-open', JSON.stringify([...state.railOpen])); } catch (_) {}
+  }
+
+  // Open the collections above a gallery so the left rail shows where it is.
+  function revealInRail(gid) {
+    const walk = (nodes, trail) => {
+      for (const n of nodes) {
+        if (n.id === gid) return trail;
+        const r = walk(n.children || [], [...trail, n.id]);
+        if (r) return r;
+      }
+      return null;
+    };
+    for (const c of state.tree?.categories || []) {
+      const r = walk(c.kind === 'gallery' ? [c.self || {}] : c.galleries, [c.id]);
+      if (r) { r.forEach(id => state.railOpen.add(id)); saveRailOpen(); return; }
+    }
+  }
+
   function renderRail() {
     const cats = state.tree?.categories || [];
     const rail = $('pfa-rail');
@@ -267,20 +291,63 @@
       </div>
       <div class="rail-row new-collection" id="pfa-new-cat"><span class="rail-name">+ New collection</span></div>
     `;
-    function catRow(c) {
-      const isGal = c.kind === 'gallery';
-      const active = isGal ? state.galleryId === c.id : state.categoryId === c.id;
-      const count = isGal ? (c.self ? c.self.itemCount : 0) : c.galleries.length;
-      const attrs = isGal ? `data-topgid="${esc(c.id)}"` : `data-cat="${esc(c.id)}"`;
+    // Collections and galleries read differently at a glance: a folder icon
+    // for a collection, a picture icon for a gallery. A collection with
+    // galleries inside opens in place, and what it holds is indented under it.
+    function railEntry(e) {
+      const kids = e.kids || [];
+      const open = kids.length > 0 && state.railOpen.has(e.id);
+      const pad = (e.active ? 24 : 26) + (e.depth || 0) * 16;
       return `
-        <div class="rail-row ${active ? 'active' : ''} ${c.visible ? '' : 'inactive'}" ${attrs}>
-          <span class="rail-name">${esc(c.title)}</span>
-          <span class="rail-count">${count}</span>
-          <a class="rail-open" href="${esc(c.url)}" target="_blank" rel="noopener" title="Open in a new window" aria-label="Open in a new window">↗</a>
+        <div class="rail-node" ${e.nodeAttr || ''}>
+          <div class="rail-row ${e.active ? 'active' : ''} ${e.inactive ? 'inactive' : ''}" ${e.attr} style="padding-left:${pad}px">
+            ${kids.length
+              ? `<button type="button" class="rail-twist ${open ? 'open' : ''}" data-twist="${esc(e.id)}" aria-label="${open ? 'Collapse' : 'Expand'}" aria-expanded="${open}"></button>`
+              : '<span class="rail-twist-space"></span>'}
+            ${e.coll ? RAIL_ICON_COLLECTION : RAIL_ICON_GALLERY}
+            <span class="rail-name">${esc(e.title)}</span>
+            <span class="rail-count">${e.count}</span>
+            <a class="rail-open" href="${esc(e.url)}" target="_blank" rel="noopener" title="Open in a new window" aria-label="Open in a new window">↗</a>
+          </div>
+          ${open ? `<div class="rail-children">${kids.map(k => galNode(k, (e.depth || 0) + 1)).join('')}</div>` : ''}
         </div>`;
+    }
+    function galNode(g, depth) {
+      const coll = g.kind === 'collection' || !!(g.children && g.children.length);
+      return railEntry({
+        id: g.id, title: g.title, url: g.url, coll, depth,
+        count: coll ? (g.childCount || (g.children || []).length) : g.itemCount,
+        kids: coll ? (g.children || []) : [],
+        attr: `data-gid="${esc(g.id)}"`,
+        active: state.galleryId === g.id,
+        inactive: g.visible === false || (g.access && g.access !== 'public'),
+      });
+    }
+    function catRow(c) {
+      if (c.kind === 'gallery') {
+        const g = c.self || {};
+        const coll = g.kind === 'collection' || !!(g.children && g.children.length);
+        return railEntry({
+          id: c.id, title: c.title, url: c.url, coll, depth: 0,
+          count: coll ? (g.childCount || (g.children || []).length) : (g.itemCount || 0),
+          kids: coll ? (g.children || []) : [],
+          attr: `data-topgid="${esc(c.id)}"`,
+          active: state.galleryId === c.id,
+          inactive: !c.visible,
+        });
+      }
+      return railEntry({
+        id: c.id, title: c.title, url: c.url, coll: true, depth: 0,
+        count: c.galleries.length, kids: c.galleries,
+        attr: `data-cat="${esc(c.id)}"`,
+        nodeAttr: `data-cat-node="${esc(c.id)}"`,
+        active: state.categoryId === c.id && !state.galleryId,
+        inactive: !c.visible,
+      });
     }
     rail.querySelectorAll('[data-cat]').forEach(row => {
       row.addEventListener('click', () => {
+        if (row.dataset.cat) { state.railOpen.add(row.dataset.cat); saveRailOpen(); }
         state.categoryId = row.dataset.cat || null;
         state.galleryId = null;
         state.gallery = null;
@@ -295,6 +362,19 @@
     rail.querySelectorAll('[data-topgid]').forEach(row => {
       row.addEventListener('click', () => openGallery(row.dataset.topgid));
     });
+    rail.querySelectorAll('[data-gid]').forEach(row => {
+      row.addEventListener('click', () => openGallery(row.dataset.gid));
+    });
+    rail.querySelectorAll('[data-twist]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        const id = btn.dataset.twist;
+        if (state.railOpen.has(id)) state.railOpen.delete(id); else state.railOpen.add(id);
+        saveRailOpen();
+        renderRail();
+      });
+    });
+    rail.querySelectorAll('.rail-open').forEach(a => a.addEventListener('click', e => e.stopPropagation()));
     $('pfa-new-cat').addEventListener('click', newCategory);
     $('pfa-home-row').addEventListener('click', openHome);
     $('pfa-design-row').addEventListener('click', openDesign);
@@ -307,10 +387,10 @@
     if (list && cats.length > 1) {
       Sortable.create(list, {
         animation: 140,
-        draggable: '.rail-row[data-cat]',
+        draggable: '.rail-node[data-cat-node]',
         filter: '.rail-sublabel, .rail-empty-row',
         onEnd: () => {
-          const ids = [...list.querySelectorAll('[data-cat]')].map(r => r.dataset.cat);
+          const ids = [...list.querySelectorAll('[data-cat-node]')].map(n => n.dataset.catNode);
           act(() => send('/api/admin/portfolio/order', 'PUT', { categories: ids }));
         },
       });
@@ -342,11 +422,59 @@
     return 'Readiness · all set';
   }
 
+  // The settings rail beside a page's content: shared by galleries and by
+  // top-level collections.
+  function railMarkup(inner) {
+    return `
+      <aside class="pfa-rail" id="pfa-rail" aria-label="Settings">
+        <div class="pfa-rail-head">
+          <span>Settings</span>
+          <button type="button" class="pfa-rail-close" id="pfa-rail-close" aria-label="Close settings">&times;</button>
+        </div>
+        <div class="pfa-rail-body" id="pfa-rail-body">${inner}</div>
+      </aside>`;
+  }
+
+  function wireRail() {
+    const setRail = (on) => {
+      state.settingsOpen = on;
+      try { localStorage.setItem('pfa-settings-open', on ? '1' : '0'); } catch (_) {}
+      $('pfa-editor').classList.toggle('with-rail', on);
+      $('pfa-settings-toggle').classList.toggle('active', on);
+      $('pfa-settings-toggle').setAttribute('aria-pressed', String(on));
+    };
+    $('pfa-settings-toggle').addEventListener('click', () => setRail(!$('pfa-editor').classList.contains('with-rail')));
+    $('pfa-rail-close').addEventListener('click', () => setRail(false));
+  }
+
+  // Cover cards or one page: how a visitor meets a collection.
+  const VIEW_HINTS = {
+    cards: 'Visitors see one cover per gallery and choose where to go.',
+    page: 'Every gallery is shown on one page, a section for each, in its own layout.',
+  };
+
+  function viewGroup(current, attr) {
+    const view = current === 'page' ? 'page' : 'cards';
+    return `
+      <section class="pfa-group">
+        <h3>How visitors see it</h3>
+        <div class="pfa-group-body stack">
+          <div class="pfa-seg">
+            ${[['cards', 'Cover cards'], ['page', 'One page']].map(([v, l]) =>
+              `<button type="button" class="${view === v ? 'active' : ''}" ${attr} data-val="${v}">${l}</button>`).join('')}
+          </div>
+          <span class="pfa-hint">${VIEW_HINTS[view]}</span>
+        </div>
+      </section>`;
+  }
+
   function renderBrowse() {
     const cats = state.tree?.categories || [];
     const cat = cats.find(c => c.id === state.categoryId) || null;
     const galleries = galleriesInScope();
     const warnings = (state.tree?.warnings || []).concat(cat ? cat.warnings : cats.flatMap(c => c.warnings));
+    const open = !!cat && !!state.settingsOpen;
+    const keepRailScroll = ($('pfa-rail-body') || {}).scrollTop || 0;
 
     $('pfa-centre').innerHTML = `
       <div class="centre-header">
@@ -363,13 +491,14 @@
           <button class="ctrl" id="pfa-readiness-btn">${readinessChip()}</button>
           <button class="ctrl" id="pfa-rescan">Rescan folders</button>
           ${cat ? '<button class="ctrl" id="pfa-cat-rename">Rename</button>' : ''}
-          ${cat ? `<button class="ctrl" id="pfa-cat-visible">${cat.visible ? 'Make private' : 'Make public'}</button>` : ''}
           ${cat ? '<button class="ctrl" id="pfa-cat-delete">Delete</button>' : ''}
+          ${cat ? `<button class="ctrl pfa-settings-toggle ${open ? 'active' : ''}" id="pfa-settings-toggle" aria-pressed="${open}">Settings</button>` : ''}
           ${cat
             ? '<button class="btn-primary small" id="pfa-new-gallery">New gallery</button>'
             : '<button class="ctrl" id="pfa-new-coll">New collection</button><button class="btn-primary small" id="pfa-new-topgallery">New gallery</button>'}
         </div>
       </div>
+      <div class="pfa-editor ${open ? 'with-rail' : ''}" id="pfa-editor">
       <div class="pfa-scroll">
         ${migrationBanner()}
         ${warnings.length ? `<div class="pfa-warnings">${warnings.map(w => `<div>${esc(w)}</div>`).join('')}</div>` : ''}
@@ -380,7 +509,39 @@
                  <code>site-data/portfolio/${esc(cat ? cat.folder : '&lt;Category&gt;')}/</code> over FTP — it shows up on its own.</p>
              </div>`}
       </div>
+      ${cat ? railMarkup(`
+        <div class="pfa-settings">
+          ${viewGroup(cat.view, 'data-cat-view')}
+          <section class="pfa-group">
+            <h3>Access</h3>
+            <div class="pfa-group-body stack">
+              <div class="pfa-seg">
+                <button type="button" class="${cat.visible ? 'active' : ''}" data-cat-access="1">Public</button>
+                <button type="button" class="${cat.visible ? '' : 'active'}" data-cat-access="0">Private</button>
+              </div>
+              <span class="pfa-hint">${cat.visible ? 'Listed in the menu and on the index.' : 'Private. Not served at all, like a draft.'}</span>
+            </div>
+          </section>
+          <section class="pfa-group">
+            <h3>Address</h3>
+            <div class="pfa-group-body">
+              <label class="pfa-field">
+                <span>Web address</span>
+                <input class="setting-input" id="pfa-cat-slug" value="${esc(cat.slug)}">
+              </label>
+            </div>
+          </section>
+          <section class="pfa-group">
+            <h3>Description</h3>
+            <div class="pfa-group-body stack">
+              <textarea class="setting-input" id="pfa-cat-desc" rows="3" maxlength="2000">${esc(cat.description || '')}</textarea>
+            </div>
+          </section>
+        </div>`) : ''}
+      </div>
     `;
+    const railBody = $('pfa-rail-body');
+    if (railBody) railBody.scrollTop = keepRailScroll;
     renderProgress();
 
     $('pfa-rescan').addEventListener('click', () => act(async () => { S().toast('Rescanned'); }));
@@ -392,8 +553,12 @@
     if ($('pfa-new-topgallery')) $('pfa-new-topgallery').addEventListener('click', newTopGallery);
     if (cat) {
       $('pfa-cat-rename').addEventListener('click', () => renameCategory(cat));
-      $('pfa-cat-visible').addEventListener('click', () =>
-        act(() => send('/api/admin/portfolio/categories/' + encodeURIComponent(cat.id), 'PUT', { visible: !cat.visible })));
+      wireRail();
+      const putCat = body => act(() => send('/api/admin/portfolio/categories/' + encodeURIComponent(cat.id), 'PUT', body));
+      $('pfa-centre').querySelectorAll('[data-cat-view]').forEach(b => b.addEventListener('click', () => putCat({ view: b.dataset.val })));
+      $('pfa-centre').querySelectorAll('[data-cat-access]').forEach(b => b.addEventListener('click', () => putCat({ visible: b.dataset.catAccess === '1' })));
+      $('pfa-cat-slug').addEventListener('change', e => putCat({ slug: e.target.value }));
+      $('pfa-cat-desc').addEventListener('change', e => putCat({ description: e.target.value }));
       $('pfa-cat-delete').addEventListener('click', () => deleteCategory(cat));
     }
     document.querySelectorAll('#pfa-cards .pfa-card').forEach(card => {
@@ -539,6 +704,7 @@
       state.item = null;
       await loadGallery(gid);
       state.categoryId = state.gallery.categoryId;
+      revealInRail(gid);
       render();
       scheduleProcessing();
     } catch (err) {
@@ -580,7 +746,7 @@
               ${isCollection ? '' : '<button type="button" id="pfa-add-picks">Add from the library</button>'}
               ${isHome || isCollection || g.itemCount ? '' : '<button type="button" id="pfa-new-subgallery">New gallery (make it a collection)</button>'}
               ${isHome ? '' : '<button type="button" id="pfa-g-rename">Rename</button>'}
-              ${isHome ? '' : '<button type="button" class="danger" id="pfa-g-delete">Delete gallery</button>'}
+              ${isHome ? '' : `<button type="button" class="danger" id="pfa-g-delete">${isCollection ? 'Delete collection' : 'Delete gallery'}</button>`}
             </div>
           </details>
           <button class="ctrl pfa-settings-toggle ${open ? 'active' : ''}" id="pfa-settings-toggle" aria-pressed="${open}" title="${esc(settingsSummary(g, isHome))}">Settings</button>
@@ -612,13 +778,9 @@
         ${g.items.length ? `<div class="pfa-items" id="pfa-items">${g.items.map(itemTile).join('')}</div>`
           : '<div class="pfa-empty"><p>This gallery is empty.</p></div>'}
       </div>
-      <aside class="pfa-rail" id="pfa-rail" aria-label="Settings">
-        <div class="pfa-rail-head">
-          <span>Settings</span>
-          <button type="button" class="pfa-rail-close" id="pfa-rail-close" aria-label="Close settings">&times;</button>
-        </div>
-        <div class="pfa-rail-body" id="pfa-rail-body">
+      ${railMarkup(`
         <div class="pfa-settings">
+          ${isCollection ? viewGroup((g.options || {}).view, 'data-opt="view"') : `
           <section class="pfa-group">
             <h3>Layout</h3>
             <div class="pfa-group-body">${layoutPicker(g.layout)}</div>
@@ -636,6 +798,7 @@
                 <label class="pfa-check"><input type="checkbox" id="pfa-autoplay" ${(g.options || {}).autoplay ? 'checked' : ''}> Play automatically</label>` : ''}
             </div>
           </section>
+          `}
 
           ${isHome ? `
           <section class="pfa-group">
@@ -708,8 +871,7 @@
             </div>
           </section>
         </div>
-        </div>
-      </aside>
+`)}
       </div>
     `;
     const railBody = $('pfa-rail-body');
@@ -825,15 +987,7 @@
       $('pfa-g-rename').addEventListener('click', () => renameGallery(g));
       $('pfa-g-delete').addEventListener('click', () => deleteGallery(g));
     }
-    const setRail = (on) => {
-      state.settingsOpen = on;
-      try { localStorage.setItem('pfa-settings-open', on ? '1' : '0'); } catch (_) {}
-      $('pfa-editor').classList.toggle('with-rail', on);
-      $('pfa-settings-toggle').classList.toggle('active', on);
-      $('pfa-settings-toggle').setAttribute('aria-pressed', String(on));
-    };
-    $('pfa-settings-toggle').addEventListener('click', () => setRail(!$('pfa-editor').classList.contains('with-rail')));
-    $('pfa-rail-close').addEventListener('click', () => setRail(false));
+    wireRail();
     const more = $('pfa-more');
     more.addEventListener('click', e => { if (e.target.closest('.pfa-menu-list button')) more.open = false; });
     if (!moreMenuWired) {
@@ -1725,7 +1879,7 @@
   async function deleteCategory(cat) {
     const count = cat.galleries.length;
     const ok = await S().confirm({
-      title: 'Delete this category?',
+      title: 'Delete this collection?',
       message: count
         ? `"${cat.folder}" and its ${count} ${count === 1 ? 'gallery' : 'galleries'} move to site-data/portfolio-trash/, where you can still recover them.`
         : `"${cat.folder}" moves to site-data/portfolio-trash/.`,
@@ -1793,9 +1947,12 @@
 
   async function deleteGallery(g) {
     const n = g.items.filter(i => i.type !== 'header').length;
+    const kids = (g.children || []).length;
     const ok = await S().confirm({
-      title: 'Delete this gallery?',
-      message: `"${g.folder}" and its ${n} file${n === 1 ? '' : 's'} move to site-data/portfolio-trash/, where you can still recover them.`,
+      title: kids ? 'Delete this collection?' : 'Delete this gallery?',
+      message: kids
+        ? `"${g.folder}" and its ${kids} ${kids === 1 ? 'gallery' : 'galleries'} move to site-data/portfolio-trash/, where you can still recover them.`
+        : `"${g.folder}" and its ${n} file${n === 1 ? '' : 's'} move to site-data/portfolio-trash/, where you can still recover them.`,
       okText: 'Delete', danger: true,
     });
     if (!ok) return;

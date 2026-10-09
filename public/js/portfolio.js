@@ -65,6 +65,60 @@ function renderGalleryCards(container, galleries, index = {}) {
   return grid;
 }
 
+// A collection shown as one page: a heading per gallery, each laid out the
+// way that gallery is set up (immersive layouts fall back to a scanning one,
+// since they would each take over the screen). Galleries load as they come
+// into view so a big collection is not fetched all at once.
+function renderCollectionPage(container, galleries) {
+  const wrap = el('div', 'pf-collection-page');
+  container.appendChild(wrap);
+  const cleanups = [];
+  const apiPath = url => {
+    const parts = new URL(url, location.href).pathname.replace(/^\/portfolio\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+    return parts.length >= 2
+      ? `/api/portfolio/g/${encodeURIComponent(parts[0])}/${parts.slice(1).map(encodeURIComponent).join('/')}`
+      : `/api/portfolio/c/${encodeURIComponent(parts[0])}`;
+  };
+  galleries.forEach(g => {
+    const section = el('section', 'pf-collection-section');
+    const heading = el('h2', 'pf-section');
+    const link = el('a', null, g.title);
+    link.href = g.url;
+    heading.appendChild(link);
+    const body = el('div', 'pf-gallery-body');
+    body.style.minHeight = '40vh';
+    section.append(heading, body);
+    wrap.appendChild(section);
+    const asCard = () => {
+      body.style.minHeight = '';
+      body.replaceChildren(coverCard(g.url, g.cover, g.title, g.count === 1 ? '1 item' : `${g.count || 0} items`));
+    };
+    const paint = async () => {
+      try {
+        const data = await load(apiPath(g.url));
+        const gal = data.gallery;
+        if (data.locked || !gal) return asCard();
+        body.style.minHeight = '';
+        const hasPictures = gal.items.some(i => i.type !== 'header');
+        if (!hasPictures && gal.children && gal.children.length) {
+          cleanups.push(renderCollectionPage(body, gal.children));
+        } else {
+          cleanups.push(renderGalleryBody(body, gal, galleryViews(gal).grid));
+        }
+      } catch (_) { asCard(); }
+    };
+    if ('IntersectionObserver' in window) {
+      const io = new IntersectionObserver(entries => {
+        if (entries.some(e => e.isIntersecting)) { io.disconnect(); paint(); }
+      }, { rootMargin: '600px' });
+      io.observe(section);
+    } else {
+      paint();
+    }
+  });
+  return () => cleanups.forEach(c => { try { c(); } catch (_) {} });
+}
+
 // A category list beside the covers, as an alternative to the top menu.
 function renderSidebar(categories, active, side) {
   const nav = el('nav', 'pf-catnav pf-catnav-' + side);
@@ -327,7 +381,8 @@ function renderGallery(gallery, opts = {}) {
   // A collection lists its child galleries as cover cards, above any pictures
   // the node itself holds.
   if (gallery.children && gallery.children.length) {
-    renderGalleryCards(root, gallery.children, {});
+    if ((gallery.options || {}).view === 'page') renderCollectionPage(root, gallery.children);
+    else renderGalleryCards(root, gallery.children, {});
   }
 
   const views = galleryViews(gallery);
@@ -535,7 +590,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       head.appendChild(el('h1', 'pf-title', category.title));
       if (category.description) head.appendChild(el('p', 'pf-description', category.description));
       body.appendChild(head);
-      renderGalleryCards(body, category.galleries, index);
+      if (category.view === 'page') renderCollectionPage(body, category.galleries);
+      else renderGalleryCards(body, category.galleries, index);
     } else {
       const { categories, index = {} } = await load('/api/portfolio');
       if (!categories.length) {

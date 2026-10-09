@@ -55,6 +55,9 @@ define('PORTFOLIO_OPTION_VALUES', [
     'crop' => ['fit', 'fill'],
     // Per-gallery watermark override: inherit the site setting, or off.
     'watermark' => ['off', 'inherit'],
+    // How a collection shows its galleries: as cover cards, or all of them
+    // on one page with a section per gallery. Only collections read it.
+    'view' => ['page', 'cards'],
 ]);
 // How much room a single picture takes in the "featured tiles" layout. Called
 // `tile`, not `size`: an item's `size` is already its file size in bytes.
@@ -5390,6 +5393,7 @@ function portfolioCategoryPayload($cat) {
         'description' => (string)($cat['sidecar']['description'] ?? ''),
         'url' => portfolioCategoryUrl($cat),
         'kind' => 'collection',
+        'view' => ($cat['sidecar']['view'] ?? 'cards') === 'page' ? 'page' : 'cards',
         'galleries' => $galleries,
     ];
 }
@@ -5626,6 +5630,8 @@ if ($method === 'GET' && $uri === '/api/admin/portfolio') {
             'visible' => ($cat['sidecar']['visible'] ?? true) !== false,
             'url' => portfolioCategoryUrl($cat),
             'kind' => 'collection',
+            'description' => (string)($cat['sidecar']['description'] ?? ''),
+            'view' => ($cat['sidecar']['view'] ?? 'cards') === 'page' ? 'page' : 'cards',
             'galleries' => $galleries,
             'warnings' => $cat['warnings'],
         ];
@@ -6078,6 +6084,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/categories/{cid}', $ur
             if (array_key_exists($k, $input)) $c[$k] = $input[$k] === null ? null : (string)$input[$k];
         }
         if (array_key_exists('visible', $input)) $c['visible'] = (bool)$input['visible'];
+        if (array_key_exists('view', $input)) $c['view'] = $input['view'] === 'page' ? 'page' : 'cards';
         if (!empty($input['slug'])) {
             $c['slug'] = portfolioUniqueSlug(portfolioSlugify($input['slug']), $taken, 'c-' . substr($c['id'], 3, 6));
         }

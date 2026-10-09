@@ -56,6 +56,10 @@ define('PORTFOLIO_OPTION_VALUES', [
     // Immersive view axis. Listed horizontal-first so the default (the entry at
     // index 1, per portfolioNormalizeOptions) is vertical.
     'scroll' => ['horizontal', 'vertical'],
+    // The view a gallery opens in. Listed immersive-first so the default (index
+    // 1) is grid — existing galleries stay as they were; new ones are created
+    // with `immersive` set explicitly.
+    'view' => ['immersive', 'grid'],
 ]);
 // How much room a single picture takes in the "featured tiles" layout. Called
 // `tile`, not `size`: an item's `size` is already its file size in bytes.
@@ -6123,10 +6127,11 @@ if ($method === 'POST' && $uri === '/api/admin/portfolio/galleries') {
     if ($name === '') respondError('Name is required', 400);
     $name = portfolioUniqueChildName($targetDir, $name);
     if (!@mkdir($targetDir . '/' . $name, 0755)) respondError('Could not create the folder', 500);
+    // New galleries open full-screen by default, and carry a sidecar before
+    // anything scans the tree (an empty folder would reconcile as a collection
+    // first and stick that way).
+    @file_put_contents($targetDir . '/' . $name . '/.gallery.json', json_encode(['options' => ['view' => 'immersive']]));
     if ($isTopGallery) {
-        // Mark it as a gallery before anything scans the tree, or an empty
-        // folder would reconcile as a collection first and stick that way.
-        @file_put_contents($targetDir . '/' . $name . '/.gallery.json', '{}');
         $taken = array_map(fn($c) => $c['slug'], portfolioTree(true)['categories']);
         portfolioReconcileGallery($targetDir . '/' . $name, $name, $taken);
         portfolioTree(true);

@@ -203,7 +203,8 @@ function viewModes(g) {
 // The view a gallery opens in, so its own layout is the default.
 function defaultView(g) {
   const configured = LAYOUTS[g.layout] ? g.layout : 'justified';
-  return PF_IMMERSIVE.includes(configured) ? 'fullscreen' : 'grid';
+  if (PF_IMMERSIVE.includes(configured)) return 'fullscreen';
+  return (g.options && g.options.view === 'immersive') ? 'fullscreen' : 'grid';
 }
 
 // A shared link can name a view; otherwise remember the visitor's last choice.

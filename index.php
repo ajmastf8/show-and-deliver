@@ -61,6 +61,10 @@ define('PORTFOLIO_OPTION_VALUES', [
     // How a collection shows its galleries: as cover cards, or all of them
     // on one page with a section per gallery. Only collections read it.
     'view' => ['page', 'cards'],
+    // What the binary Grid toggle falls back to for a gallery whose own
+    // Layout isn't already a plain grid (horizontal row, full screen,
+    // slideshow, featured tiles) — see galleryViews() in portfolio.js.
+    'gridStyle' => ['justified', 'masonry'],
 ]);
 // How much room a single picture takes in the "featured tiles" layout. Called
 // `tile`, not `size`: an item's `size` is already its file size in bytes.
@@ -4497,6 +4501,7 @@ function portfolioNormalizeOptions($o) {
     }
     $out['gap'] = in_array($o['gap'] ?? '', ['tight', 'normal', 'wide'], true) ? $o['gap'] : 'normal';
     $out['crop'] = in_array($o['crop'] ?? '', ['fit', 'fill'], true) ? $o['crop'] : 'fit';
+    $out['gridStyle'] = in_array($o['gridStyle'] ?? '', ['justified', 'masonry'], true) ? $o['gridStyle'] : 'justified';
     $out['autoplay'] = !empty($o['autoplay']);
     $out['interval'] = min(30, max(2, (int)($o['interval'] ?? 5)));
     return $out;
@@ -6083,6 +6088,7 @@ if ($method === 'GET' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
     $p['children'] = array_map(fn($ch) => portfolioAdminGalleryNode($cat, $ch), $gal['children'] ?? []);
     $p['childCount'] = count($gal['children'] ?? []);
     $p['parentId'] = $gal['parent'] ?? null;
+    $p['categoryId'] = $cat['id'];
     respond(['gallery' => $p]);
 }
 
@@ -6171,12 +6177,15 @@ function portfolioGalleryResponse($gid) {
     $p['items'] = portfolioGalleryItems($cat, $gal, true);
     $p['folder'] = $gal['folder'];
     $p['categoryId'] = $cat['id'];
+    $p['parentId'] = $gal['parent'] ?? null;
     $p['visible'] = ($gal['sidecar']['visible'] ?? true) !== false;
     $p['access'] = portfolioAccess($gal);
     $p['hasPassword'] = !empty($gal['sidecar']['passwordHash']);
     $p['cover'] = $gal['sidecar']['cover'];
     $p['pending'] = $gal['pending'];
     $p['warnings'] = $gal['warnings'];
+    $p['children'] = array_map(fn($ch) => portfolioAdminGalleryNode($cat, $ch), $gal['children'] ?? []);
+    $p['childCount'] = count($gal['children'] ?? []);
     return $p;
 }
 

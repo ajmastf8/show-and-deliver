@@ -226,19 +226,22 @@ function renderHero(hero) {
 // it belongs to, so the default view is exactly what the admin chose and no
 // second layout system exists.
 const PF_IMMERSIVE = ['horizontal', 'fullscreen', 'slideshow'];
-const PF_SCANNING = ['justified', 'masonry', 'grid', 'featured'];
 const VIEW_ICONS = {
   grid: '<rect x="1" y="2" width="12" height="10"/><rect x="15" y="2" width="12" height="10"/><rect x="29" y="2" width="12" height="10"/><rect x="1" y="14" width="12" height="10"/><rect x="15" y="14" width="12" height="10"/><rect x="29" y="14" width="12" height="10"/>',
   fullscreen: '<rect x="4" y="2" width="36" height="22"/>',
 };
 
 // A gallery has two presentations: `default` is its configured layout, `grid`
-// is a flat grid — the configured style when it is already one, else justified.
+// is a flat grid. Justified and masonry are already a flat grid, so toggling
+// shows the same thing either way; grid (fixed squares) is left as itself too.
+// Horizontal row, full screen, slideshow and featured tiles aren't a flat
+// grid, so toggling falls back to the gallery's own Grid style choice.
 function galleryViews(g) {
   const configured = LAYOUTS[g.layout] ? g.layout : 'justified';
+  const gridStyle = (g.options || {}).gridStyle === 'masonry' ? 'masonry' : 'justified';
   return {
     default: configured,
-    grid: PF_SCANNING.includes(configured) ? configured : 'justified',
+    grid: (configured === 'justified' || configured === 'masonry' || configured === 'grid') ? configured : gridStyle,
   };
 }
 

@@ -986,7 +986,18 @@
           ${isCollection ? viewGroup((g.options || {}).view, 'data-opt="view"') : `
           <section class="pfa-group">
             <h3>Layout</h3>
-            <div class="pfa-group-body">${layoutPicker(g.layout)}</div>
+            <div class="pfa-group-body">
+              ${layoutPicker(g.layout)}
+              ${['horizontal', 'fullscreen', 'slideshow', 'featured'].includes(g.layout) ? `
+              <div class="pfa-field">
+                <span>Grid style</span>
+                <div class="pfa-seg">
+                  ${[['justified', 'Justified rows'], ['masonry', 'Masonry']].map(([v, l]) =>
+                    `<button type="button" class="${((g.options || {}).gridStyle || 'justified') === v ? 'active' : ''}" data-opt="gridStyle" data-val="${v}">${l}</button>`).join('')}
+                </div>
+                <span class="pfa-hint">What the Grid/Full screen toggle shows for this layout.</span>
+              </div>` : ''}
+            </div>
           </section>
 
           <section class="pfa-group">

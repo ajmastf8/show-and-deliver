@@ -7549,6 +7549,126 @@ if ($method === 'POST' && $uri === '/api/settings/watermark') {
 }
 
 // ============================================================
+// SITE EXPORT — a full backup, for moving to a new server
+// ============================================================
+// Walks every directory this installation's own data actually lives in,
+// building one flat list of (absolute path on disk -> path inside the zip)
+// pairs. Zip paths mirror the real site-data/... layout, so restoring is
+// just unzipping over a fresh checkout — every setting, gallery, and
+// already-generated thumbnail/proxy comes back exactly as it was, with
+// nothing to regenerate.
+//
+// Deliberately left out: site-data/portfolio-trash (deleted content —
+// restoring it would undelete things the admin chose to remove),
+// site-data/imports (FTP staging, not part of the site itself),
+// site-data/packages (delivery links, which expire in 7 days anyway), and
+// uploads/.tmp (in-flight chunked uploads, not a finished file yet).
+//
+// This is a deliberate, infrequent, admin-only action — not the hot
+// client-download path the CRC cache above exists for — so each file's
+// CRC32 is computed here directly rather than through fileCrc32(): that
+// cache is keyed by basename() alone, which collides constantly across
+// portfolio galleries (many "01.jpg"s), and reusing it here would corrupt
+// it for the delivery path this whole cache exists to keep fast.
+function exportFileList() {
+    $roots = [
+        ['dir' => PORTFOLIO_DIR, 'prefix' => 'site-data/portfolio'],
+        ['dir' => DATA_DIR, 'prefix' => 'site-data/data'],
+        ['dir' => UPLOADS_DIR, 'prefix' => 'site-data/uploads', 'excludeDir' => UPLOAD_TMP_DIR],
+        ['dir' => THUMBS_DIR, 'prefix' => 'site-data/thumbnails'],
+        ['dir' => PROXY_DIR, 'prefix' => 'site-data/proxies'],
+        ['dir' => CAPTIONS_DIR, 'prefix' => 'site-data/captions'],
+        ['dir' => LOGO_DIR, 'prefix' => 'site-data/logo'],
+    ];
+    $entries = [];
+    foreach ($roots as $root) {
+        if (!is_dir($root['dir'])) continue;
+        $iter = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($root['dir'], FilesystemIterator::SKIP_DOTS)
+        );
+        foreach ($iter as $fileInfo) {
+            if (!$fileInfo->isFile()) continue;
+            $full = $fileInfo->getPathname();
+            if (isset($root['excludeDir']) && strpos($full, $root['excludeDir'] . DIRECTORY_SEPARATOR) === 0) continue;
+            $rel = substr($full, strlen($root['dir']) + 1);
+            $entries[] = [
+                'path' => $full,
+                'name' => $root['prefix'] . '/' . str_replace(DIRECTORY_SEPARATOR, '/', $rel),
+                'size' => (int)$fileInfo->getSize(),
+                'mtime' => (int)$fileInfo->getMTime(),
+            ];
+        }
+    }
+    $envPath = __DIR__ . '/.env';
+    if (is_file($envPath)) {
+        $entries[] = ['path' => $envPath, 'name' => '.env', 'size' => (int)filesize($envPath), 'mtime' => (int)filemtime($envPath)];
+    }
+    return $entries;
+}
+
+// A quick summary for the admin UI: file count and total size, without
+// hashing anything — so this is cheap enough to show before committing to
+// the (potentially very long) actual export.
+if ($method === 'GET' && $uri === '/api/admin/export') {
+    requireAuth();
+    $entries = exportFileList();
+    $total = 0;
+    foreach ($entries as $e) $total += $e['size'];
+    respond(['fileCount' => count($entries), 'totalBytes' => $total]);
+}
+
+// The export itself: one streamed zip, Zip64 throughout, CRC32 computed
+// per file as it's added (see exportFileList() above for why this doesn't
+// go through the shared CRC cache). No Content-Length up front — unlike a
+// delivery package's plan, nothing here is a stable, pre-committed manifest
+// generated ahead of time, and hashing gigabytes of media before the first
+// byte goes out would mean a very long wait with nothing visibly
+// happening; the size is announced incrementally via chunked transfer
+// instead. Subject to the same LiteSpeed dynamic-response cap as
+// everything else PHP streams (see the packages section above) — for an
+// install too large for one part, download over FTP/SFTP directly instead.
+if (($method === 'GET' || $method === 'HEAD') && $uri === '/api/admin/export/download') {
+    requireAuth();
+    $entries = exportFileList();
+    if (!$entries) respondError('Nothing to export', 404);
+
+    beginBinaryResponse('site-export-' . date('Y-m-d') . '.zip', 'application/zip', null);
+    ignore_user_abort(false);
+
+    $offset = 0;
+    $central = [];
+    $out = fopen('php://output', 'wb');
+    foreach ($entries as $e) {
+        $crcHex = @hash_file('crc32b', $e['path']);
+        if ($crcHex === false) continue;
+        $crc = (int)hexdec($crcHex);
+
+        $header = zipStreamLocalHeader($e['name'], $e['mtime'], $crc, $e['size']);
+        echo $header;
+        $entryOffset = $offset;
+        $offset += strlen($header);
+
+        $fp = fopen($e['path'], 'rb');
+        if ($fp === false) continue;
+        $written = stream_copy_to_stream($fp, $out, $e['size']);
+        fclose($fp);
+        $offset += $written;
+
+        $central[] = ['name' => $e['name'], 'crc' => $crc, 'size' => $written,
+                      'offset' => $entryOffset, 'mtime' => $e['mtime']];
+    }
+
+    $cdOffset = $offset;
+    $cd = '';
+    foreach ($central as $e) $cd .= zipCentralEntry($e);
+    echo $cd;
+    echo zipEndOfCentralDirectory(count($central), strlen($cd), $cdOffset);
+    fclose($out);
+    flush();
+    exit;
+}
+
+// ============================================================
 // 404 — No route matched
 // ============================================================
 

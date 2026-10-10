@@ -2288,6 +2288,18 @@
     render();
     checkForUpdates();
     loadVideoToolsStatus();
+    loadExportSize();
+  }
+
+  async function loadExportSize() {
+    const el = $('pfa-export-size');
+    if (!el) return;
+    try {
+      const data = await req('/api/admin/export');
+      el.textContent = `${data.fileCount.toLocaleString()} files, ${bytes(data.totalBytes)} total.`;
+    } catch (err) {
+      el.textContent = err.message || 'Could not check the export size.';
+    }
   }
 
   function renderUpdate() {
@@ -2323,6 +2335,14 @@
             <p id="pfa-video-tools-status" class="pfa-hint">Checking…</p>
             <div class="settings-actions"><button class="ctrl" id="pfa-install-ffmpeg-btn" disabled>Install Video Tools</button></div>
             <div id="pfa-video-tools-result" class="pfa-hint"></div>
+          </div>
+        </section>
+        <section class="pfa-group">
+          <h3>Export everything</h3>
+          <div class="pfa-group-body">
+            <p class="pfa-hint">One zip of every gallery, thumbnail, proxy, and setting — unzip it over a fresh install on a new server and it comes back exactly as it is here. Includes .env, so handle and store the download like you would any other backup with live credentials in it.</p>
+            <p id="pfa-export-size" class="pfa-hint">Checking size…</p>
+            <div class="settings-actions"><a class="ctrl" id="pfa-export-btn" href="/api/admin/export/download">Download export</a></div>
           </div>
         </section>
       </div>`;

@@ -3024,6 +3024,7 @@ document.addEventListener('DOMContentLoaded', () => {
   window.SDAdmin = {
     api,
     toast,
+    copy: copyText,
     prompt: promptModal,
     confirm: confirmModal,
     escapeHtml,

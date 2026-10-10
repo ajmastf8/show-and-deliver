@@ -520,7 +520,7 @@
           <h1>${esc(cat ? cat.title : 'Image Library')}</h1>
           <p class="centre-sub">
             ${galleries.length} ${galleries.length === 1 ? 'gallery' : 'galleries'}
-            ${cat ? `· <a href="${esc(cat.url)}" target="_blank" rel="noopener">${esc(cat.url)} ↗</a>` : ''}
+            ${cat ? `· ${urlRow(cat.url)}` : ''}
             ${cat && !cat.visible ? '· <span class="pfa-badge">Private</span>' : ''}
           </p>
         </div>
@@ -708,6 +708,17 @@
   }
 
   // Editorial nudges for the open gallery — the readiness advice, in place.
+  // A public URL as a clickable link, a Copy button and an explicit "open in
+  // a new window" arrow — used anywhere a gallery/collection/category shows
+  // its address, so the one is never just plain-looking coloured text.
+  function urlRow(url) {
+    return `<span class="pfa-url-row">
+      <a class="pfa-url-link" href="${esc(url)}" target="_blank" rel="noopener">${esc(url)}</a>
+      <button type="button" class="pfa-url-copy" data-copy-url="${esc(url)}" title="Copy link">Copy</button>
+      <a class="pfa-url-open" href="${esc(url)}" target="_blank" rel="noopener" title="Open in a new window" aria-label="Open in a new window">↗</a>
+    </span>`;
+  }
+
   function galleryNudges(g) {
     const out = [];
     if (g.itemCount > 40) out.push(`${g.itemCount} pictures — the edit reads best at ~20–40.`);
@@ -773,7 +784,7 @@
           <button class="back-link" id="pfa-back">&larr; ${esc(isHome ? 'All galleries' : g.category.title)}</button>
           <h1>${esc(isHome ? 'Home page' : g.title)}</h1>
           <p class="centre-sub">
-            <a href="${esc(g.url)}" target="_blank" rel="noopener">${esc(g.url)}</a>
+            ${urlRow(g.url)}
             ${isHome ? '· what visitors see first' : ''}
             ${isHome || g.visible ? '' : '· <span class="pfa-badge">Private</span>'}
           </p>
@@ -2046,9 +2057,24 @@
 
   // ---------- Entry point ----------
 
+  let urlRowWired = false;
+  function wireUrlRows() {
+    if (urlRowWired) return;
+    urlRowWired = true;
+    // Delegated once: pfa-centre's own innerHTML is replaced on every
+    // render, but the element itself never is.
+    $('pfa-centre').addEventListener('click', e => {
+      const btn = e.target.closest('.pfa-url-copy');
+      if (!btn) return;
+      const url = btn.dataset.copyUrl;
+      S().copy(location.origin + url, 'Link copied');
+    });
+  }
+
   window.SDPortfolio = {
     async open() {
       try {
+        wireUrlRows();
         await loadTree();
         if (state.galleryId) await loadGallery(state.galleryId).catch(() => { state.galleryId = null; });
         render();

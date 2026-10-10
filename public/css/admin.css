@@ -335,7 +335,7 @@ code, kbd, samp { font-family: inherit; font-size: inherit; }
   align-items: flex-end;
   justify-content: space-between;
   gap: 20px;
-  padding: 30px 32px 20px;
+  padding: 26px 32px 14px;
 }
 .centre-header h1 {
   margin: 0;
@@ -349,6 +349,23 @@ code, kbd, samp { font-family: inherit; font-size: inherit; }
 /* Orange is for what you can act on; a page address is reference. */
 .centre-sub a { color: var(--text-4); }
 .centre-sub a:hover { color: var(--accent); }
+
+.pfa-url-row { display: inline-flex; align-items: center; gap: 6px; }
+/* Underlined so it reads as a link regardless of its (deliberately muted)
+   colour — the colour alone wasn't enough of a hint that it's clickable. */
+.pfa-url-link { text-decoration: underline; text-underline-offset: 2px; }
+.pfa-url-copy {
+  border: 0;
+  background: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-4);
+  cursor: pointer;
+}
+.pfa-url-copy:hover { color: var(--accent); background: var(--panel); }
+.pfa-url-open { color: var(--text-4); font-size: 13px; }
+.pfa-url-open:hover { color: var(--accent); }
 .centre-controls { display: flex; align-items: center; gap: 22px; }
 .ctrl {
   background: none;
@@ -1373,7 +1390,7 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
   height: calc(100vh - var(--topbar-h));
 }
 
-.pfa-scroll { flex: 1; overflow-y: auto; padding: 22px 28px 60px; }
+.pfa-scroll { flex: 1; overflow-y: auto; padding: 14px 28px 60px; }
 
 .pfa-pill {
   padding: 4px 10px;

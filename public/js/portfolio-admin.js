@@ -978,6 +978,7 @@
         <div class="pfa-item-frame">
           ${item.thumb ? `<img src="${esc(item.thumb)}" alt="" loading="lazy">` : '<span class="pfa-item-empty"></span>'}
           ${item.type === 'video' ? '<span class="pfa-video-mark">▶</span>' : ''}
+          ${item.visible ? '' : '<span class="pfa-item-hidden-mark" title="Hidden from visitors">Hidden</span>'}
         </div>
         <figcaption>
           <div class="pfa-item-name" title="${esc(item.source ? item.source.file : item.file)}">${esc(item.title || (item.source ? item.source.file : item.file))}</div>

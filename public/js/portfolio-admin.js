@@ -1495,20 +1495,37 @@
     const gd = $('pfa-nav-galleries-datalist'); if (gd) gd.innerHTML = toOptions(navPickOptions.galleries);
   }
 
+  // Shared row markup, also used to convert a row dragged between the
+  // top-level list and a dropdown's children list (see wireNavSortable).
+  function navChildRowHtml(label, url) {
+    return `
+      <span class="drag-handle">≡</span>
+      <input type="text" class="setting-input child-label" value="${esc(label || '')}" placeholder="Label" style="width:150px;">
+      <input type="text" class="setting-input child-url" value="${esc(url || '')}" placeholder="URL" style="flex:1;">
+      <input type="text" class="setting-input nav-pick-page" list="pfa-nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off">
+      <input type="text" class="setting-input nav-pick-gallery" list="pfa-nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off">
+      <button type="button" class="btn-icon child-delete">×</button>`;
+  }
+
+  function navLinkItemHtml(label, url, external) {
+    return `
+      <span class="drag-handle">≡</span>
+      <input type="text" class="setting-input nav-label" value="${esc(label || '')}" placeholder="Label" style="width:150px;">
+      <input type="text" class="setting-input nav-url" value="${esc(url || '')}" placeholder="URL" style="flex:1;">
+      <input type="text" class="setting-input nav-pick-page" list="pfa-nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off">
+      <input type="text" class="setting-input nav-pick-gallery" list="pfa-nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off">
+      <label class="toggle-label" style="font-size:12px;white-space:nowrap;"><input type="checkbox" class="nav-external" ${external ? 'checked' : ''}> New tab</label>
+      <button type="button" class="btn-icon nav-delete">×</button>`;
+  }
+
   function navItemsHtml(nav) {
     return nav.map(item => {
       if (item.type !== 'link') {
         const children = (item.children || []).map(ch => `
-          <div class="header-nav-child-row">
-            <span style="width:24px;"></span>
-            <input type="text" class="setting-input child-label" value="${esc(ch.label || '')}" placeholder="Label" style="width:150px;">
-            <input type="text" class="setting-input child-url" value="${esc(ch.url || '')}" placeholder="URL" style="flex:1;">
-            <input type="text" class="setting-input nav-pick-page" list="pfa-nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off">
-            <input type="text" class="setting-input nav-pick-gallery" list="pfa-nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off">
-            <button type="button" class="btn-icon child-delete">×</button>
-          </div>`).join('');
+          <div class="header-nav-child-row">${navChildRowHtml(ch.label, ch.url)}</div>`).join('');
         return `<div class="header-nav-item">
           <div class="header-nav-item-row">
+            <span class="drag-handle">≡</span>
             <input type="text" class="setting-input nav-label" value="${esc(item.label || '')}" placeholder="Dropdown label" style="width:150px;">
             <span class="setting-hint" style="flex:1;">Dropdown menu</span>
             <button type="button" class="btn-icon nav-add-child">+</button>
@@ -1518,14 +1535,7 @@
         </div>`;
       }
       return `<div class="header-nav-item">
-        <div class="header-nav-item-row">
-          <input type="text" class="setting-input nav-label" value="${esc(item.label || '')}" placeholder="Label" style="width:150px;">
-          <input type="text" class="setting-input nav-url" value="${esc(item.url || '')}" placeholder="URL" style="flex:1;">
-          <input type="text" class="setting-input nav-pick-page" list="pfa-nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off">
-          <input type="text" class="setting-input nav-pick-gallery" list="pfa-nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off">
-          <label class="toggle-label" style="font-size:12px;white-space:nowrap;"><input type="checkbox" class="nav-external" ${item.external ? 'checked' : ''}> New tab</label>
-          <button type="button" class="btn-icon nav-delete">×</button>
-        </div>
+        <div class="header-nav-item-row">${navLinkItemHtml(item.label, item.url, item.external)}</div>
       </div>`;
     }).join('');
   }
@@ -1870,7 +1880,7 @@
     // Navigation links
     const navList = $('pfa-nav-list');
     const saveNav = () => saveHeader({ nav: collectNav() });
-    const rerenderNav = (nav) => { navList.innerHTML = navItemsHtml(nav); renderNavPickDatalists(); };
+    const rerenderNav = (nav) => { navList.innerHTML = navItemsHtml(nav); renderNavPickDatalists(); wireNavSortable(); };
     $('pfa-nav-add-link').addEventListener('click', () => {
       rerenderNav([...collectNav(), { type: 'link', label: '', url: '', external: false }]);
     });
@@ -1884,10 +1894,60 @@
         const c = e.target.closest('.header-nav-item').querySelector('.header-nav-children');
         const row = document.createElement('div');
         row.className = 'header-nav-child-row';
-        row.innerHTML = `<span style="width:24px;"></span><input type="text" class="setting-input child-label" placeholder="Label" style="width:150px;"><input type="text" class="setting-input child-url" placeholder="URL" style="flex:1;"><input type="text" class="setting-input nav-pick-page" list="pfa-nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off"><input type="text" class="setting-input nav-pick-gallery" list="pfa-nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off"><button type="button" class="btn-icon child-delete">×</button>`;
+        row.innerHTML = navChildRowHtml('', '');
         c.appendChild(row);
       }
     });
+
+    // Drag to reorder nav items, drag a link into a dropdown's children to
+    // make it a submenu entry, or drag a child out to make it a top-level
+    // link again. Both kinds of list share one Sortable group so items can
+    // move between them; onAdd converts the moved row's markup to match
+    // whichever kind of list it landed in, since collectNav() (and the
+    // public menu) tell link rows and submenu rows apart by shape, not just
+    // position. A dropdown can't become a submenu entry itself — nesting
+    // only ever goes one level deep.
+    const navItemIsDropdown = el => !!el.querySelector(':scope > .header-nav-children');
+    const navRejectNesting = evt => !(evt.dragged.classList.contains('header-nav-item') && navItemIsDropdown(evt.dragged) && evt.to !== navList);
+    function wireNavSortable() {
+      Sortable.create(navList, {
+        animation: 150, group: 'nav', handle: '.drag-handle', draggable: '.header-nav-item',
+        ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
+        onMove: navRejectNesting,
+        onAdd: evt => {
+          const el = evt.item;
+          if (el.classList.contains('header-nav-child-row')) {
+            const label = el.querySelector('.child-label')?.value || '';
+            const url = el.querySelector('.child-url')?.value || '';
+            const item = document.createElement('div');
+            item.className = 'header-nav-item';
+            item.innerHTML = `<div class="header-nav-item-row">${navLinkItemHtml(label, url, false)}</div>`;
+            el.replaceWith(item);
+          }
+        },
+        onEnd: saveNav,
+      });
+      navList.querySelectorAll('.header-nav-children').forEach(box => {
+        Sortable.create(box, {
+          animation: 150, group: 'nav', handle: '.drag-handle', draggable: '.header-nav-child-row',
+          ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
+          onMove: navRejectNesting,
+          onAdd: evt => {
+            const el = evt.item;
+            if (el.classList.contains('header-nav-item')) {
+              const label = el.querySelector('.nav-label')?.value || '';
+              const url = el.querySelector('.nav-url')?.value || '';
+              const row = document.createElement('div');
+              row.className = 'header-nav-child-row';
+              row.innerHTML = navChildRowHtml(label, url);
+              el.replaceWith(row);
+            }
+          },
+          onEnd: saveNav,
+        });
+      });
+    }
+    wireNavSortable();
     navList.addEventListener('change', e => {
       const picker = e.target.closest('.nav-pick-page, .nav-pick-gallery');
       if (picker) {

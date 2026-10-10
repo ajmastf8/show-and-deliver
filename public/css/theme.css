@@ -15,9 +15,13 @@
 [data-header="stacked"] .header-nav { justify-content: center; flex-wrap: wrap; }
 [data-header="stacked"] .header-contact { margin: 0; }
 
-/* --- Sidebar: a fixed column down the left, gallery fills the rest --- */
+/* --- Sidebar: a fixed column down the left, gallery fills the rest ---
+   Starts just past the 1100px breakpoint where style.css's generic
+   responsive rules hide .header-nav/.header-contact and switch to the
+   hamburger menu — a lower threshold here would leave both rules active
+   at once, reserving space for a column whose links had just vanished. */
 
-@media (min-width: 900px) {
+@media (min-width: 1101px) {
   [data-header="sidebar"] .site-header {
     position: fixed;
     top: 0;
@@ -39,13 +43,18 @@
   }
 
   [data-header="sidebar"] .header-nav { flex-direction: column; align-items: flex-start; gap: 12px; }
-  [data-header="sidebar"] .header-contact { flex-direction: column; align-items: flex-start; gap: 4px; }
+  [data-header="sidebar"] .header-contact { flex-direction: column; align-items: flex-start; gap: 4px; margin-left: 0; white-space: normal; }
   [data-header="sidebar"] .header-contact .contact-sep { display: none; }
   [data-header="sidebar"] .header-social { justify-content: flex-start; }
   [data-header="sidebar"] .logo-text { font-size: 30px; white-space: normal; }
+  [data-header="sidebar"] .logo-img { max-width: 100%; width: auto; height: auto !important; max-height: 74px; }
   [data-header="sidebar"] body { padding-left: 232px; }
-  /* The dropdown opens beside the column rather than under it. */
-  [data-header="sidebar"] .nav-dropdown-menu { top: 0; left: 100%; }
+  /* The dropdown opens beside the column rather than under it. left:100%
+     would open beside the trigger word itself (nav-dropdown-menu's
+     containing block is .nav-dropdown, not the column) and overlap the
+     nav links below it, so this is offset to the column's own right edge:
+     232px sidebar width minus .header-inner's 24px padding. */
+  [data-header="sidebar"] .nav-dropdown-menu { top: 0; left: 208px; }
 }
 
 /* --- Social links --- */

@@ -1778,7 +1778,12 @@ if ($method === 'POST' && $uri === '/api/admin/uploads') {
     if ($totalSize <= 0) respondError('totalSize must be a positive integer', 400);
 
     $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
-    if (!in_array($ext, MEDIA_EXTS)) respondError('Unsupported file type', 400);
+    // A PhotoShelter migration sidecar isn't media, but it's a real upload
+    // target — see portfolioAcceptUpload(), which is what actually handles
+    // it once chunking finishes.
+    if (!in_array($ext, MEDIA_EXTS) && strtolower($filename) !== PORTFOLIO_PHOTOSHELTER_SIDECAR) {
+        respondError('Unsupported file type', 400);
+    }
 
     $uploadId = bin2hex(random_bytes(16));
     $partPath = UPLOAD_TMP_DIR . '/' . $uploadId . '.part';

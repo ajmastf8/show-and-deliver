@@ -1870,9 +1870,9 @@ if ($method === 'POST' && matchRoute('/api/admin/uploads/{uploadId}/finalize', $
         [, $pgal] = portfolioRequireGallery($pgid);
         $partPath = UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.part';
         if (!file_exists($partPath)) respondError('Upload payload missing on disk', 500);
-        $name = portfolioAcceptUpload($pgal, $partPath, $meta['filename']);
+        $result = portfolioAcceptUpload($pgal, $partPath, $meta['filename']);
         @unlink(UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.json');
-        respond(['ok' => true, 'file' => $name, 'gallery' => portfolioGalleryResponse($pgid)]);
+        respond(['ok' => true, 'file' => $result['file'], 'photoshelter' => $result['photoshelter'], 'gallery' => portfolioGalleryResponse($pgid)]);
     }
 
     $galleries = readGalleries();
@@ -6174,7 +6174,23 @@ function portfolioRenameItem($gal, $old, $new) {
 // Takes an assembled upload into a gallery folder and processes it right away,
 // so a file uploaded through the admin has its thumbnail before the response
 // returns — the same contract as registerGalleryItem() for delivery galleries.
+// Returns ['file' => name, 'photoshelter' => null] for an ordinary photo or
+// video. A PhotoShelter migration sidecar uploaded alongside the pictures it
+// describes (see portfolioApplyPhotoshelterSidecar()) isn't media — it's
+// saved as-is and applied to whatever's already in the gallery, and the
+// result rides back as ['photoshelter' => ['matched' => N, 'total' => M]]
+// instead of being scanned as an item.
 function portfolioAcceptUpload($gal, $sourcePath, $originalName) {
+    if (strtolower($originalName) === PORTFOLIO_PHOTOSHELTER_SIDECAR) {
+        if (!@rename($sourcePath, $gal['dir'] . '/' . PORTFOLIO_PHOTOSHELTER_SIDECAR)) {
+            respondError('Could not save ' . PORTFOLIO_PHOTOSHELTER_SIDECAR, 500);
+        }
+        @chmod($gal['dir'] . '/' . PORTFOLIO_PHOTOSHELTER_SIDECAR, 0644);
+        [, $fresh] = portfolioRequireGallery($gal['id']);
+        $result = portfolioApplyPhotoshelterSidecar($fresh) ?? ['matched' => 0, 'total' => 0];
+        portfolioTree(true);
+        return ['file' => PORTFOLIO_PHOTOSHELTER_SIDECAR, 'photoshelter' => $result];
+    }
     $ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
     if (!in_array($ext, MEDIA_EXTS, true)) respondError('Unsupported file type: .' . $ext, 400);
     $name = portfolioUniqueChildName($gal['dir'], portfolioSafeFileName($originalName));
@@ -6192,7 +6208,7 @@ function portfolioAcceptUpload($gal, $sourcePath, $originalName) {
         portfolioPatchItem($fresh['dir'], $name, $patch);
         portfolioTree(true);
     }
-    return $name;
+    return ['file' => $name, 'photoshelter' => null];
 }
 
 // Categories
@@ -6516,14 +6532,14 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/order'
 // Re-applies a gallery's _photoshelter.json to items already in the
 // gallery — not just newly discovered ones. portfolioReconcileGallery()'s
 // automatic pass only ever looks at a file the first time it's scanned, so
-// if the sidecar is copied in after that (or the gallery was imported before
-// this feature existed), its visible/display_order never took effect. This
-// is the explicit, deliberate fix: run it once the sidecar is in place.
-if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/photoshelter-sync', $uri, $params)) {
-    requireAuth();
-    [, $gal] = portfolioRequireGallery($params['gid']);
+// if the sidecar lands after that (dropped in later, or — see
+// portfolioAcceptUpload() — uploaded in the same batch as the pictures it
+// describes, in whatever order the browser happened to send them), its
+// visible/display_order never took effect on its own. This re-applies it to
+// every item currently in the gallery that the sidecar mentions.
+function portfolioApplyPhotoshelterSidecar($gal) {
     $psMeta = portfolioPhotoshelterMeta($gal['dir']);
-    if (!$psMeta) respondError('No ' . PORTFOLIO_PHOTOSHELTER_SIDECAR . ' found in this gallery\'s folder.', 404);
+    if (!$psMeta) return null;
     $matched = 0;
     portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($psMeta, &$matched) {
         foreach ($g['items'] as $name => &$it) {
@@ -6543,7 +6559,15 @@ if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/photo
         $g['order'] = array_keys($kept);
         return $g;
     });
-    respond(['ok' => true, 'matched' => $matched, 'total' => count($psMeta), 'gallery' => portfolioGalleryResponse($params['gid'])]);
+    return ['matched' => $matched, 'total' => count($psMeta)];
+}
+
+if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/photoshelter-sync', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    $result = portfolioApplyPhotoshelterSidecar($gal);
+    if ($result === null) respondError('No ' . PORTFOLIO_PHOTOSHELTER_SIDECAR . ' found in this gallery\'s folder.', 404);
+    respond(['ok' => true, 'matched' => $result['matched'], 'total' => $result['total'], 'gallery' => portfolioGalleryResponse($params['gid'])]);
 }
 
 // Items
@@ -6784,8 +6808,8 @@ if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/files
     if (empty($_FILES['file']) || $_FILES['file']['error'] !== UPLOAD_ERR_OK) respondError('No file uploaded', 400);
     $tmp = UPLOAD_TMP_DIR . '/' . bin2hex(random_bytes(8)) . '.part';
     if (!move_uploaded_file($_FILES['file']['tmp_name'], $tmp)) respondError('Could not read the upload', 500);
-    $name = portfolioAcceptUpload($gal, $tmp, $_FILES['file']['name']);
-    respond(['ok' => true, 'file' => $name, 'gallery' => portfolioGalleryResponse($params['gid'])]);
+    $result = portfolioAcceptUpload($gal, $tmp, $_FILES['file']['name']);
+    respond(['ok' => true, 'file' => $result['file'], 'photoshelter' => $result['photoshelter'], 'gallery' => portfolioGalleryResponse($params['gid'])]);
 }
 
 // One slice of derivative work; the admin calls it again while `remaining` > 0.

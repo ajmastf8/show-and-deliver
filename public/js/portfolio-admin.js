@@ -808,7 +808,7 @@
         <div class="pfa-drop ${g.items.length ? 'compact' : ''}" id="pfa-drop" title="Copied into ${esc(g.folder)}. Files dropped into that folder over FTP appear here too.">
           <p>Drop photos and videos here, or <button class="linkish" id="pfa-browse">choose files</button>.</p>
           ${g.items.length ? '' : `<p class="pfa-hint">They are copied into <code>${esc(g.folder)}</code>. Files dropped into that folder over FTP appear here too.</p>`}
-          <input type="file" id="pfa-file-input" multiple accept="image/*,video/*" hidden>
+          <input type="file" id="pfa-file-input" multiple accept="image/*,video/*,application/json,.json" hidden>
           <div id="pfa-upload-status"></div>
         </div>
 
@@ -1912,9 +1912,11 @@
       row.textContent = `${file.name} — 0%`;
       status.appendChild(row);
       try {
-        await S().uploadToPortfolio(file, gid, pct => { row.textContent = `${file.name} — ${pct}%`; });
-        row.textContent = `${file.name} — done`;
-        setTimeout(() => row.remove(), 2000);
+        const r = await S().uploadToPortfolio(file, gid, pct => { row.textContent = `${file.name} — ${pct}%`; });
+        row.textContent = r.photoshelter
+          ? `${file.name} — matched ${r.photoshelter.matched} of ${r.photoshelter.total} file${r.photoshelter.total === 1 ? '' : 's'}`
+          : `${file.name} — done`;
+        setTimeout(() => row.remove(), r.photoshelter ? 6000 : 2000);
       } catch (err) {
         row.textContent = `${file.name} — ${err.message || 'failed'}`;
         row.classList.add('bad');

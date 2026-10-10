@@ -1544,6 +1544,7 @@
     const logo = h.logo || {};
     const social = h.social || [];
     const networks = NETWORKS;
+    const keepDesignScroll = (document.querySelector('.pfa-design') || {}).scrollTop || 0;
 
     $('pfa-centre').innerHTML = `
       <div class="centre-header">
@@ -1731,6 +1732,8 @@
     `;
     renderNavPickDatalists();
     wireDesign();
+    const designScroll = document.querySelector('.pfa-design');
+    if (designScroll) designScroll.scrollTop = keepDesignScroll;
   }
 
   function wireDesign() {

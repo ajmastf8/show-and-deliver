@@ -29,6 +29,8 @@
     selected: new Set(), // selected file names, while selectMode is on
     railOpen: (() => { try { return new Set(JSON.parse(localStorage.getItem('pfa-rail-open') || '[]')); } catch (_) { return new Set(); } })(),
     settingsOpen: (() => { try { const v = localStorage.getItem('pfa-settings-open'); return v == null ? null : v === '1'; } catch (_) { return null; } })(),
+    // The rail's "Options" drawer — collapsed by default, remembered after that.
+    optionsOpen: (() => { try { return localStorage.getItem('pfa-options-open') === '1'; } catch (_) { return false; } })(),
     pages: [],
     pageId: null,
     migration: null,    // reels galleries still waiting to move into folders
@@ -259,40 +261,40 @@
     const home = state.tree?.home;
     const checkIssues = (state.readiness && (state.readiness.summary.warn + state.readiness.summary.fail)) || 0;
     rail.innerHTML = `
-      <div class="rail-section-label">Site</div>
-      <div class="rail-row ${state.galleryId && home && state.galleryId === home.id ? 'active' : ''}" id="pfa-home-row">
-        <span class="rail-name">${home ? 'Home page' : '+ Set up home page'}</span>
-        ${home ? `<span class="rail-count">${home.publicCount}</span>` : ''}
-      </div>
-      <div class="rail-row ${state.pagesView ? 'active' : ''}" id="pfa-pages-row">
-        <span class="rail-name">Pages</span>
-      </div>
-      <div class="rail-row ${state.design ? 'active' : ''}" id="pfa-design-row">
-        <span class="rail-name">Site design</span>
-      </div>
-      <div class="rail-row ${state.trashView ? 'active' : ''}" id="pfa-trash-row">
-        <span class="rail-name">Trash</span>
-      </div>
-      <div class="rail-row" id="pfa-settings-email-row">
-        <span class="rail-name">Email</span>
-      </div>
-      <div class="rail-row" id="pfa-settings-update-row">
-        <span class="rail-name">Update</span>
-      </div>
-      <div class="rail-row" id="pfa-settings-api-row">
-        <span class="rail-name">API</span>
-      </div>
-      <details class="rail-group" id="pfa-checks" ${state.readinessView || state.duplicatesView || state.checksOpen ? 'open' : ''}>
+      <details class="rail-group" id="pfa-options" ${state.design || state.pagesView || state.trashView || state.readinessView || state.duplicatesView || state.optionsOpen ? 'open' : ''}>
         <summary class="rail-row">
-          <span class="rail-name">Checks</span>
-          ${checkIssues ? `<span class="rail-count">${checkIssues}</span>` : ''}
+          <span class="rail-name">Options</span>
         </summary>
-        <div class="rail-row sub ${state.readinessView ? 'active' : ''}" id="pfa-readiness-row">
-          <span class="rail-name">Readiness</span>
-          ${checkIssues ? `<span class="rail-count">${checkIssues}</span>` : ''}
+        <div class="rail-row sub ${state.design ? 'active' : ''}" id="pfa-design-row">
+          <span class="rail-name">Site design</span>
         </div>
-        <div class="rail-row sub ${state.duplicatesView ? 'active' : ''}" id="pfa-duplicates-row">
-          <span class="rail-name">Duplicates</span>
+        <div class="rail-row sub ${state.pagesView ? 'active' : ''}" id="pfa-pages-row">
+          <span class="rail-name">Pages</span>
+        </div>
+        <div class="rail-row sub" id="pfa-settings-update-row">
+          <span class="rail-name">Update</span>
+        </div>
+        <div class="rail-row sub" id="pfa-settings-email-row">
+          <span class="rail-name">Email</span>
+        </div>
+        <div class="rail-row sub" id="pfa-settings-api-row">
+          <span class="rail-name">API</span>
+        </div>
+        <details class="rail-group sub" id="pfa-checks" ${state.readinessView || state.duplicatesView || state.checksOpen ? 'open' : ''}>
+          <summary class="rail-row sub">
+            <span class="rail-name">Checks</span>
+            ${checkIssues ? `<span class="rail-count">${checkIssues}</span>` : ''}
+          </summary>
+          <div class="rail-row sub ${state.readinessView ? 'active' : ''}" id="pfa-readiness-row">
+            <span class="rail-name">Readiness</span>
+            ${checkIssues ? `<span class="rail-count">${checkIssues}</span>` : ''}
+          </div>
+          <div class="rail-row sub ${state.duplicatesView ? 'active' : ''}" id="pfa-duplicates-row">
+            <span class="rail-name">Duplicates</span>
+          </div>
+        </details>
+        <div class="rail-row sub ${state.trashView ? 'active' : ''}" id="pfa-trash-row">
+          <span class="rail-name">Trash</span>
         </div>
       </details>
       <div class="rail-section-label">Image Library</div>
@@ -302,7 +304,11 @@
       </div>
       <div id="pfa-cat-list">
         <div class="rail-sublabel">Public</div>
-        ${cats.filter(c => c.visible).map(catRow).join('') || '<div class="rail-empty-row">Nothing public yet</div>'}
+        <div class="rail-row ${state.galleryId && home && state.galleryId === home.id ? 'active' : ''}" id="pfa-home-row">
+          <span class="rail-name">${home ? 'Home page' : '+ Set up home page'}</span>
+          ${home ? `<span class="rail-count">${home.publicCount}</span>` : ''}
+        </div>
+        ${cats.filter(c => c.visible).map(catRow).join('') || '<div class="rail-empty-row">Nothing else public yet</div>'}
         <div class="rail-sublabel">Private</div>
         ${cats.filter(c => !c.visible).map(catRow).join('') || '<div class="rail-empty-row">Nothing private</div>'}
       </div>
@@ -377,6 +383,10 @@
       });
     });
     $('pfa-checks').addEventListener('toggle', e => { state.checksOpen = e.target.open; });
+    $('pfa-options').addEventListener('toggle', e => {
+      state.optionsOpen = e.target.open;
+      try { localStorage.setItem('pfa-options-open', e.target.open ? '1' : '0'); } catch (_) {}
+    });
     rail.querySelectorAll('[data-topgid]').forEach(row => {
       row.addEventListener('click', () => openGallery(row.dataset.topgid));
     });
@@ -1118,7 +1128,7 @@
         <div class="pfa-item-frame">
           ${item.thumb ? `<img src="${esc(item.thumb)}" alt="" loading="lazy">` : '<span class="pfa-item-empty"></span>'}
           ${item.type === 'video' ? '<span class="pfa-video-mark">▶</span>' : ''}
-          ${item.visible ? '' : '<span class="pfa-item-hidden-mark" title="Hidden from visitors">Hidden</span>'}
+          ${item.visible ? '' : `<button type="button" class="pfa-item-hidden-mark" data-act="${item.ref ? 'ref-visible' : 'visible'}" data-file="${esc(item.file)}" title="Hidden from visitors — click to show">Hidden</button>`}
           ${state.selectMode ? `<input type="checkbox" class="pfa-item-check" ${selected ? 'checked' : ''} tabindex="-1">` : ''}
         </div>
         <figcaption>

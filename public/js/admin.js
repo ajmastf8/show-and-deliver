@@ -299,7 +299,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================================================
   $('brand-home').addEventListener('click', () => { state.rail = 'all'; state.centreGalleryId = null; contentGid = null; closeDrawerForce(); setScreen('library'); renderAll(); });
   $('nav-uploads').addEventListener('click', () => setScreen('upload'));
-  $('nav-settings').addEventListener('click', () => setScreen('settings'));
   $('account-theme').addEventListener('click', () => toggleTheme());
   $('account-logout').addEventListener('click', () => logout());
 
@@ -325,7 +324,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('click', closeAllMenus);
 
   $('upload-back').addEventListener('click', () => setScreen('library'));
-  $('settings-back').addEventListener('click', () => setScreen('library'));
+  $('settings-back').addEventListener('click', () => setScreen('portfolio'));
 
   setupMenu('new-btn', 'new-menu', (v) => {
     if (v === 'gallery') openNewGallery();
@@ -2712,7 +2711,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================================================
   // Settings screen (ported panels)
   // ==========================================================================
-  let settingsLoaded = { email: false, header: false };
+  let settingsLoaded = { email: false };
   function openSettings() {
     switchSettingsTab('email');
   }
@@ -2722,7 +2721,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.settings-tab-content').forEach(c => c.hidden = c.id !== 'settings-tab-' + name);
     if (name === 'email' && !settingsLoaded.email) { loadEmailSettings(); settingsLoaded.email = true; }
     if (name === 'update') { checkForUpdates(); loadVideoToolsStatus(); }
-    if (name === 'header' && !settingsLoaded.header) { loadHeaderConfig(); settingsLoaded.header = true; }
     if (name === 'api') loadApiTokenState();
   }
 
@@ -2818,151 +2816,25 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // --- Header config ---
-  let headerConfig = null;
+  // Full editing (logo, contact info, nav links) lives in the Portfolio
+  // screen's Site design panel now; this just keeps the top-left brand
+  // wordmark and the document title in sync with it.
   async function loadHeaderConfig() {
-    try { headerConfig = await (await fetch('/api/header')).json(); populateHeaderForm(); }
-    catch (e) { $('header-status').textContent = 'Failed to load header config.'; }
-    loadNavLinkSources();
-  }
-
-  // Lets the nav-link pickers below each URL field offer every existing
-  // page and gallery/collection, so a link can be chosen instead of typed.
-  let navPickOptions = { pages: [], galleries: [] };
-  async function loadNavLinkSources() {
     try {
-      const [pagesData, tree] = await Promise.all([
-        fetch('/api/admin/pages').then(r => r.json()),
-        fetch('/api/admin/portfolio').then(r => r.json()),
-      ]);
-      const pages = (pagesData.pages || []).map(p => ({ title: p.title, url: p.url }));
-      const galleries = [];
-      const walk = (node) => { if (node.url) galleries.push({ title: node.title, url: node.url }); (node.children || []).forEach(walk); };
-      (tree.categories || []).forEach(cat => { if (cat.url) galleries.push({ title: cat.title, url: cat.url }); (cat.galleries || []).forEach(walk); });
-      navPickOptions = { pages, galleries };
-      renderNavPickDatalists();
-    } catch (e) { /* pickers just stay empty; typing a URL by hand still works */ }
-  }
-  function renderNavPickDatalists() {
-    const toOptions = list => list.map(o => `<option value="${escapeHtml(o.title + ' — ' + o.url)}">`).join('');
-    const pd = $('nav-pages-datalist'); if (pd) pd.innerHTML = toOptions(navPickOptions.pages);
-    const gd = $('nav-galleries-datalist'); if (gd) gd.innerHTML = toOptions(navPickOptions.galleries);
-  }
-  function populateHeaderForm() {
-    if (!headerConfig) return;
-    const logo = headerConfig.logo || {};
-    const brandEl = $('brand-mast');
-    brandEl.classList.toggle('is-link', !logo.text);
-    if (logo.text) {
-      brandEl.textContent = logo.text;
-      brandEl.onclick = null;
-    } else {
-      brandEl.textContent = 'Set in Settings';
-      brandEl.onclick = (e) => { e.stopPropagation(); setScreen('settings'); switchSettingsTab('header'); };
-    }
-    document.title = (headerConfig.siteName || logo.text || 'Show & Deliver') + ' — Admin';
-    $('header-site-name').value = headerConfig.siteName || '';
-    $('header-logo-text').value = logo.text || '';
-    if (logo.src) { const p = $('header-logo-preview'); p.src = logo.src; p.style.display = ''; $('header-logo-none').style.display = 'none'; $('header-logo-remove').style.display = ''; }
-    if (logo.srcDark) { const p = $('header-logo-dark-preview'); p.src = logo.srcDark; p.style.display = ''; $('header-logo-dark-none').style.display = 'none'; $('header-logo-dark-remove').style.display = ''; }
-    $('header-logo-alt').value = logo.alt || ''; $('header-logo-link').value = logo.link || '';
-    $('header-email').value = headerConfig.email || ''; $('header-phone').value = headerConfig.phone || ''; $('header-tagline').value = headerConfig.tagline || '';
-    renderNavItems(headerConfig.nav || []);
-  }
-  function renderNavItems(nav) {
-    const list = $('header-nav-list'); list.innerHTML = '';
-    nav.forEach((item) => {
-      const el = document.createElement('div'); el.className = 'header-nav-item';
-      if (item.type === 'link') {
-        el.innerHTML = `<div class="header-nav-item-row">
-          <span class="drag-handle">≡</span>
-          <input type="text" class="setting-input nav-label" value="${escapeHtml(item.label || '')}" placeholder="Label" style="width:150px;">
-          <input type="text" class="setting-input nav-url" value="${escapeHtml(item.url || '')}" placeholder="URL" style="flex:1;">
-          <input type="text" class="setting-input nav-pick-page" list="nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off">
-          <input type="text" class="setting-input nav-pick-gallery" list="nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off">
-          <label class="toggle-label" style="font-size:12px;white-space:nowrap;"><input type="checkbox" class="nav-external" ${item.external ? 'checked' : ''}> New tab</label>
-          <button class="btn-icon nav-delete">×</button></div>`;
+      const headerConfig = await (await fetch('/api/header')).json();
+      const logo = headerConfig.logo || {};
+      const brandEl = $('brand-mast');
+      brandEl.classList.toggle('is-link', !logo.text);
+      if (logo.text) {
+        brandEl.textContent = logo.text;
+        brandEl.onclick = null;
       } else {
-        const children = (item.children || []).map(ch => `<div class="header-nav-child-row"><span style="width:24px;"></span><input type="text" class="setting-input child-label" value="${escapeHtml(ch.label || '')}" placeholder="Label" style="width:150px;"><input type="text" class="setting-input child-url" value="${escapeHtml(ch.url || '')}" placeholder="URL" style="flex:1;"><input type="text" class="setting-input nav-pick-page" list="nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off"><input type="text" class="setting-input nav-pick-gallery" list="nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off"><button class="btn-icon child-delete">×</button></div>`).join('');
-        el.innerHTML = `<div class="header-nav-item-row">
-          <span class="drag-handle">≡</span>
-          <input type="text" class="setting-input nav-label" value="${escapeHtml(item.label || '')}" placeholder="Dropdown label" style="width:150px;">
-          <span class="setting-hint" style="flex:1;">Dropdown menu</span>
-          <button class="btn-icon nav-add-child">+</button>
-          <button class="btn-icon nav-delete">×</button></div>
-          <div class="header-nav-children">${children}</div>`;
+        brandEl.textContent = 'Set in Site design';
+        brandEl.onclick = (e) => { e.stopPropagation(); setScreen('portfolio'); window.SDPortfolio?.openDesign(); };
       }
-      list.appendChild(el);
-    });
+      document.title = (headerConfig.siteName || logo.text || 'Show & Deliver') + ' — Admin';
+    } catch (e) { /* the top-left brand just keeps its default until the next load */ }
   }
-  function collectNav() {
-    const items = [];
-    document.querySelectorAll('.header-nav-item').forEach(el => {
-      const label = el.querySelector('.nav-label').value.trim();
-      const urlInput = el.querySelector('.nav-url');
-      if (urlInput) items.push({ type: 'link', label, url: urlInput.value.trim(), external: el.querySelector('.nav-external')?.checked || false });
-      else {
-        const children = [];
-        el.querySelectorAll('.header-nav-child-row').forEach(r => { const cl = r.querySelector('.child-label').value.trim(); const cu = r.querySelector('.child-url').value.trim(); if (cl || cu) children.push({ label: cl, url: cu }); });
-        items.push({ type: 'dropdown', label, children });
-      }
-    });
-    return items;
-  }
-  $('header-add-link').addEventListener('click', () => { const nav = collectNav(); nav.push({ type: 'link', label: '', url: '', external: false }); renderNavItems(nav); });
-  $('header-add-dropdown').addEventListener('click', () => { const nav = collectNav(); nav.push({ type: 'dropdown', label: '', children: [{ label: '', url: '' }] }); renderNavItems(nav); });
-  $('header-nav-list').addEventListener('click', (e) => {
-    if (e.target.closest('.nav-delete')) e.target.closest('.header-nav-item').remove();
-    else if (e.target.closest('.child-delete')) e.target.closest('.header-nav-child-row').remove();
-    else if (e.target.closest('.nav-add-child')) {
-      const c = e.target.closest('.header-nav-item').querySelector('.header-nav-children');
-      const row = document.createElement('div'); row.className = 'header-nav-child-row';
-      row.innerHTML = `<span style="width:24px;"></span><input type="text" class="setting-input child-label" placeholder="Label" style="width:150px;"><input type="text" class="setting-input child-url" placeholder="URL" style="flex:1;"><input type="text" class="setting-input nav-pick-page" list="nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off"><input type="text" class="setting-input nav-pick-gallery" list="nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off"><button class="btn-icon child-delete">×</button>`;
-      c.appendChild(row);
-    }
-  });
-  $('header-nav-list').addEventListener('change', (e) => {
-    const picker = e.target.closest('.nav-pick-page, .nav-pick-gallery');
-    if (!picker) return;
-    const sep = picker.value.lastIndexOf(' — ');
-    if (sep === -1) { picker.value = ''; return; }
-    const title = picker.value.slice(0, sep);
-    const url = picker.value.slice(sep + 3);
-    const row = picker.closest('.header-nav-item-row, .header-nav-child-row');
-    const urlInput = row.querySelector('.nav-url, .child-url');
-    const labelInput = row.querySelector('.nav-label, .child-label');
-    if (urlInput) urlInput.value = url;
-    if (labelInput && !labelInput.value.trim()) labelInput.value = title;
-    picker.value = '';
-  });
-  $('header-logo-file').addEventListener('change', async (e) => {
-    const file = e.target.files[0]; if (!file) return;
-    const fd = new FormData(); fd.append('logo', file);
-    $('header-status').textContent = 'Uploading logo…';
-    const res = await fetch('/api/settings/header/logo', { method: 'POST', body: fd }); const d = await res.json();
-    if (res.ok) { const p = $('header-logo-preview'); p.src = d.src + '?t=' + Date.now(); p.style.display = ''; $('header-logo-none').style.display = 'none'; $('header-logo-remove').style.display = ''; $('header-status').textContent = 'Logo uploaded.'; }
-    else $('header-status').textContent = d.error || 'Upload failed.';
-  });
-  $('header-logo-remove').addEventListener('click', () => { $('header-logo-preview').src = ''; $('header-logo-preview').style.display = 'none'; $('header-logo-none').style.display = ''; $('header-logo-remove').style.display = 'none'; $('header-logo-file').value = ''; });
-  $('header-logo-dark-file').addEventListener('change', async (e) => {
-    const file = e.target.files[0]; if (!file) return;
-    const fd = new FormData(); fd.append('logo', file); fd.append('variant', 'dark');
-    $('header-status').textContent = 'Uploading dark logo…';
-    const res = await fetch('/api/settings/header/logo', { method: 'POST', body: fd }); const d = await res.json();
-    if (res.ok) { const p = $('header-logo-dark-preview'); p.src = d.src + '?t=' + Date.now(); p.style.display = ''; $('header-logo-dark-none').style.display = 'none'; $('header-logo-dark-remove').style.display = ''; $('header-status').textContent = 'Dark logo uploaded.'; }
-    else $('header-status').textContent = d.error || 'Upload failed.';
-  });
-  $('header-logo-dark-remove').addEventListener('click', () => { $('header-logo-dark-preview').src = ''; $('header-logo-dark-preview').style.display = 'none'; $('header-logo-dark-none').style.display = ''; $('header-logo-dark-remove').style.display = 'none'; $('header-logo-dark-file').value = ''; });
-  $('save-header-btn').addEventListener('click', async () => {
-    const preview = $('header-logo-preview');
-    const logoSrc = (preview.style.display !== 'none' && preview.getAttribute('src')) ? preview.getAttribute('src') : '';
-    const dpreview = $('header-logo-dark-preview');
-    const logoSrcDark = (dpreview.style.display !== 'none' && dpreview.getAttribute('src')) ? dpreview.getAttribute('src') : '';
-    const config = { siteName: $('header-site-name').value.trim(), logo: { src: logoSrc, srcDark: logoSrcDark, text: $('header-logo-text').value.trim(), alt: $('header-logo-alt').value.trim(), link: $('header-logo-link').value.trim(), height: 74 }, email: $('header-email').value.trim(), phone: $('header-phone').value.trim(), tagline: $('header-tagline').value.trim(), nav: collectNav() };
-    $('header-status').textContent = 'Saving…';
-    const res = await fetch('/api/settings/header', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
-    if (res.ok) { $('header-status').textContent = 'Header saved.'; $('header-status').style.color = '#4caf50'; }
-    else { const d = await res.json().catch(() => ({})); $('header-status').textContent = d.error || 'Save failed.'; $('header-status').style.color = 'var(--danger)'; }
-  });
 
   // --- API token ---
   async function loadApiTokenState() {

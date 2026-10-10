@@ -273,6 +273,15 @@
       <div class="rail-row ${state.trashView ? 'active' : ''}" id="pfa-trash-row">
         <span class="rail-name">Trash</span>
       </div>
+      <div class="rail-row" id="pfa-settings-email-row">
+        <span class="rail-name">Email</span>
+      </div>
+      <div class="rail-row" id="pfa-settings-update-row">
+        <span class="rail-name">Update</span>
+      </div>
+      <div class="rail-row" id="pfa-settings-api-row">
+        <span class="rail-name">API</span>
+      </div>
       <details class="rail-group" id="pfa-checks" ${state.readinessView || state.duplicatesView || state.checksOpen ? 'open' : ''}>
         <summary class="rail-row">
           <span class="rail-name">Checks</span>
@@ -391,6 +400,13 @@
     $('pfa-readiness-row').addEventListener('click', openReadiness);
     $('pfa-duplicates-row').addEventListener('click', openDuplicates);
     $('pfa-trash-row').addEventListener('click', openTrash);
+    const jumpToSettings = (tab) => () => {
+      S().setScreen('settings');
+      document.querySelector(`[data-settings-tab="${tab}"]`)?.click();
+    };
+    $('pfa-settings-email-row').addEventListener('click', jumpToSettings('email'));
+    $('pfa-settings-update-row').addEventListener('click', jumpToSettings('update'));
+    $('pfa-settings-api-row').addEventListener('click', jumpToSettings('api'));
 
     // Drag to reorder categories; the order is what the public nav follows.
     const list = $('pfa-cat-list');
@@ -1410,6 +1426,82 @@
     } catch (err) {
       S().toast(err.message || 'Could not load the site settings');
     }
+    loadNavLinkSources();
+  }
+
+  // Lets the nav-link pickers below each URL field offer every existing page
+  // and gallery/collection, so a link can be chosen instead of typed. The
+  // gallery side reuses the already-loaded tree; only pages need a fetch.
+  let navPickOptions = { pages: [], galleries: [] };
+  async function loadNavLinkSources() {
+    try {
+      const pagesData = await req('/api/admin/pages');
+      const pages = (pagesData.pages || []).map(p => ({ title: p.title, url: p.url }));
+      const galleries = [];
+      const walk = (node) => { if (node.url) galleries.push({ title: node.title, url: node.url }); (node.children || []).forEach(walk); };
+      (state.tree?.categories || []).forEach(cat => { if (cat.url) galleries.push({ title: cat.title, url: cat.url }); (cat.galleries || []).forEach(walk); });
+      navPickOptions = { pages, galleries };
+      renderNavPickDatalists();
+    } catch (e) { /* pickers just stay empty; typing a URL by hand still works */ }
+  }
+  function renderNavPickDatalists() {
+    const toOptions = list => list.map(o => `<option value="${esc(o.title + ' — ' + o.url)}">`).join('');
+    const pd = $('pfa-nav-pages-datalist'); if (pd) pd.innerHTML = toOptions(navPickOptions.pages);
+    const gd = $('pfa-nav-galleries-datalist'); if (gd) gd.innerHTML = toOptions(navPickOptions.galleries);
+  }
+
+  function navItemsHtml(nav) {
+    return nav.map(item => {
+      if (item.type !== 'link') {
+        const children = (item.children || []).map(ch => `
+          <div class="header-nav-child-row">
+            <span style="width:24px;"></span>
+            <input type="text" class="setting-input child-label" value="${esc(ch.label || '')}" placeholder="Label" style="width:150px;">
+            <input type="text" class="setting-input child-url" value="${esc(ch.url || '')}" placeholder="URL" style="flex:1;">
+            <input type="text" class="setting-input nav-pick-page" list="pfa-nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off">
+            <input type="text" class="setting-input nav-pick-gallery" list="pfa-nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off">
+            <button type="button" class="btn-icon child-delete">×</button>
+          </div>`).join('');
+        return `<div class="header-nav-item">
+          <div class="header-nav-item-row">
+            <input type="text" class="setting-input nav-label" value="${esc(item.label || '')}" placeholder="Dropdown label" style="width:150px;">
+            <span class="setting-hint" style="flex:1;">Dropdown menu</span>
+            <button type="button" class="btn-icon nav-add-child">+</button>
+            <button type="button" class="btn-icon nav-delete">×</button>
+          </div>
+          <div class="header-nav-children">${children}</div>
+        </div>`;
+      }
+      return `<div class="header-nav-item">
+        <div class="header-nav-item-row">
+          <input type="text" class="setting-input nav-label" value="${esc(item.label || '')}" placeholder="Label" style="width:150px;">
+          <input type="text" class="setting-input nav-url" value="${esc(item.url || '')}" placeholder="URL" style="flex:1;">
+          <input type="text" class="setting-input nav-pick-page" list="pfa-nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off">
+          <input type="text" class="setting-input nav-pick-gallery" list="pfa-nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off">
+          <label class="toggle-label" style="font-size:12px;white-space:nowrap;"><input type="checkbox" class="nav-external" ${item.external ? 'checked' : ''}> New tab</label>
+          <button type="button" class="btn-icon nav-delete">×</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function collectNav() {
+    const items = [];
+    $('pfa-nav-list').querySelectorAll('.header-nav-item').forEach(el => {
+      const label = el.querySelector('.nav-label').value.trim();
+      const urlInput = el.querySelector('.nav-url');
+      if (urlInput) items.push({ type: 'link', label, url: urlInput.value.trim(), external: el.querySelector('.nav-external')?.checked || false });
+      else {
+        const children = [];
+        el.querySelectorAll('.header-nav-child-row').forEach(r => {
+          const cl = r.querySelector('.child-label').value.trim();
+          const cu = r.querySelector('.child-url').value.trim();
+          if (cl || cu) children.push({ label: cl, url: cu });
+        });
+        items.push({ type: 'dropdown', label, children });
+      }
+    });
+    return items;
   }
 
   function renderDesign() {
@@ -1426,11 +1518,19 @@
           <p class="centre-sub">Colours, header and links for every public page</p>
         </div>
         <div class="centre-controls">
-          <button class="ctrl" id="pfa-design-links">Edit menu links</button>
           <a class="ctrl" href="/" target="_blank" rel="noopener">View site</a>
         </div>
       </div>
       <div class="pfa-scroll pfa-design">
+        <section>
+          <h4>Site identity</h4>
+          <label class="pfa-field">
+            <span>Site name</span>
+            <input class="setting-input" id="pfa-site-name" value="${esc(h.siteName || '')}" placeholder="e.g. Riverbend Photography">
+            <span class="pfa-hint">Used in the browser tab title.</span>
+          </label>
+        </section>
+
         <section>
           <h4>Colour</h4>
           <div class="pfa-presets">
@@ -1462,7 +1562,23 @@
           <label class="pfa-field wide">
             <span>Contact line</span>
             <input class="setting-input" id="pfa-contact-text" value="${esc((t.contact || {}).text || '')}" placeholder="e.g. Contact me — hello@studio.com">
-            <span class="pfa-hint">Leave empty to show the email, phone and tagline from Settings.</span>
+            <span class="pfa-hint">Leave empty to show the email, phone and tagline below instead.</span>
+          </label>
+        </section>
+
+        <section>
+          <h4>Contact info</h4>
+          <label class="pfa-field">
+            <span>Email</span>
+            <input type="email" class="setting-input" id="pfa-contact-email" value="${esc(h.email || '')}" placeholder="you@example.com">
+          </label>
+          <label class="pfa-field">
+            <span>Phone</span>
+            <input class="setting-input" id="pfa-contact-phone" value="${esc(h.phone || '')}" placeholder="555.123.4567">
+          </label>
+          <label class="pfa-field">
+            <span>Tagline</span>
+            <input class="setting-input" id="pfa-contact-tagline" value="${esc(h.tagline || '')}" placeholder="e.g. Based in Indianapolis">
           </label>
         </section>
 
@@ -1498,7 +1614,7 @@
               <input class="setting-input" id="pfa-logo-height" type="number" min="24" max="200" value="${Number(logo.height) || 74}">
             </label>
             <div class="pfa-field">
-              <span>Logo image</span>
+              <span>Logo — light background</span>
               <div class="pfa-logo-row">
                 ${logo.src ? `<img src="${esc(logo.src)}" alt="" class="pfa-logo-preview">` : '<span class="pfa-hint">No image — the wordmark is used</span>'}
                 <button class="ctrl" id="pfa-logo-upload">${logo.src ? 'Replace' : 'Upload'}</button>
@@ -1506,6 +1622,37 @@
                 <input type="file" id="pfa-logo-file" accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif" hidden>
               </div>
             </div>
+            <div class="pfa-field">
+              <span>Logo — dark background</span>
+              <div class="pfa-logo-row">
+                ${logo.srcDark ? `<img src="${esc(logo.srcDark)}" alt="" class="pfa-logo-preview">` : '<span class="pfa-hint">No dark logo — the light one shows on every background</span>'}
+                <button class="ctrl" id="pfa-logo-dark-upload">${logo.srcDark ? 'Replace' : 'Upload'}</button>
+                ${logo.srcDark ? '<button class="ctrl" id="pfa-logo-dark-remove">Remove</button>' : ''}
+                <input type="file" id="pfa-logo-dark-file" accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif" hidden>
+              </div>
+              <span class="pfa-hint">Shown when the site theme is dark — use a version of your logo that reads on a dark header.</span>
+            </div>
+            <label class="pfa-field">
+              <span>Logo alt text</span>
+              <input class="setting-input" id="pfa-logo-alt" value="${esc(logo.alt || '')}" placeholder="e.g. Riverbend Photography">
+            </label>
+            <label class="pfa-field">
+              <span>Logo link URL</span>
+              <input class="setting-input" id="pfa-logo-link" value="${esc(logo.link || '')}" placeholder="https://www.yoursite.com">
+              <span class="pfa-hint">Leave empty to link the logo to the home page.</span>
+            </label>
+          </div>
+        </section>
+
+        <section>
+          <h4>Navigation links</h4>
+          <p class="pfa-hint">Add links or dropdown menus. Each link can be typed by hand, or picked from an existing page or gallery/collection below it — start typing to narrow the list.</p>
+          <div id="pfa-nav-list">${navItemsHtml(h.nav || [])}</div>
+          <datalist id="pfa-nav-pages-datalist"></datalist>
+          <datalist id="pfa-nav-galleries-datalist"></datalist>
+          <div class="pfa-nav-add-row">
+            <button class="ctrl" id="pfa-nav-add-link">+ Link</button>
+            <button class="ctrl" id="pfa-nav-add-dropdown">+ Dropdown</button>
           </div>
         </section>
 
@@ -1548,6 +1695,7 @@
         </section>
       </div>
     `;
+    renderNavPickDatalists();
     wireDesign();
   }
 
@@ -1648,11 +1796,65 @@
       });
     });
 
-    // The menu links editor already exists in Settings; don't build it twice.
-    $('pfa-design-links').addEventListener('click', () => {
-      S().setScreen('settings');
-      const tab = document.querySelector('[data-settings-tab="header"]');
-      if (tab) tab.click();
+    $('pfa-site-name').addEventListener('change', e => saveHeader({ siteName: e.target.value.trim() }));
+    $('pfa-contact-email').addEventListener('change', e => saveHeader({ email: e.target.value.trim() }));
+    $('pfa-contact-phone').addEventListener('change', e => saveHeader({ phone: e.target.value.trim() }));
+    $('pfa-contact-tagline').addEventListener('change', e => saveHeader({ tagline: e.target.value.trim() }));
+    $('pfa-logo-alt').addEventListener('change', e => saveHeader({ logo: { alt: e.target.value.trim() } }));
+    $('pfa-logo-link').addEventListener('change', e => saveHeader({ logo: { link: e.target.value.trim() } }));
+
+    const darkFile = $('pfa-logo-dark-file');
+    $('pfa-logo-dark-upload').addEventListener('click', () => darkFile.click());
+    darkFile.addEventListener('change', () => {
+      if (!darkFile.files.length) return;
+      const fd = new FormData();
+      fd.append('logo', darkFile.files[0]);
+      fd.append('variant', 'dark');
+      act(async () => {
+        await req('/api/settings/header/logo', { method: 'POST', body: fd });
+        state.header = await req('/api/header');
+        state.design = true;
+      });
+    });
+    const darkRemove = $('pfa-logo-dark-remove');
+    if (darkRemove) darkRemove.addEventListener('click', () => saveHeader({ logo: { srcDark: '' } }));
+
+    // Navigation links
+    const navList = $('pfa-nav-list');
+    const saveNav = () => saveHeader({ nav: collectNav() });
+    const rerenderNav = (nav) => { navList.innerHTML = navItemsHtml(nav); renderNavPickDatalists(); };
+    $('pfa-nav-add-link').addEventListener('click', () => {
+      rerenderNav([...collectNav(), { type: 'link', label: '', url: '', external: false }]);
+    });
+    $('pfa-nav-add-dropdown').addEventListener('click', () => {
+      rerenderNav([...collectNav(), { type: 'dropdown', label: '', children: [{ label: '', url: '' }] }]);
+    });
+    navList.addEventListener('click', e => {
+      if (e.target.closest('.nav-delete')) { e.target.closest('.header-nav-item').remove(); saveNav(); }
+      else if (e.target.closest('.child-delete')) { e.target.closest('.header-nav-child-row').remove(); saveNav(); }
+      else if (e.target.closest('.nav-add-child')) {
+        const c = e.target.closest('.header-nav-item').querySelector('.header-nav-children');
+        const row = document.createElement('div');
+        row.className = 'header-nav-child-row';
+        row.innerHTML = `<span style="width:24px;"></span><input type="text" class="setting-input child-label" placeholder="Label" style="width:150px;"><input type="text" class="setting-input child-url" placeholder="URL" style="flex:1;"><input type="text" class="setting-input nav-pick-page" list="pfa-nav-pages-datalist" placeholder="Pick a page…" style="width:130px;" autocomplete="off"><input type="text" class="setting-input nav-pick-gallery" list="pfa-nav-galleries-datalist" placeholder="Pick a gallery…" style="width:140px;" autocomplete="off"><button type="button" class="btn-icon child-delete">×</button>`;
+        c.appendChild(row);
+      }
+    });
+    navList.addEventListener('change', e => {
+      const picker = e.target.closest('.nav-pick-page, .nav-pick-gallery');
+      if (picker) {
+        const sep = picker.value.lastIndexOf(' — ');
+        if (sep === -1) { picker.value = ''; return; }
+        const title = picker.value.slice(0, sep);
+        const url = picker.value.slice(sep + 3);
+        const row = picker.closest('.header-nav-item-row, .header-nav-child-row');
+        const urlInput = row.querySelector('.nav-url, .child-url');
+        const labelInput = row.querySelector('.nav-label, .child-label');
+        if (urlInput) urlInput.value = url;
+        if (labelInput && !labelInput.value.trim()) labelInput.value = title;
+        picker.value = '';
+      }
+      saveNav();
     });
   }
 
@@ -2325,5 +2527,7 @@
         $('pfa-centre').innerHTML = `<div class="pfa-empty"><p>Could not load the portfolio.</p><p class="pfa-hint">${esc(err.message || '')}</p></div>`;
       }
     },
+    // Jumped to from the top-left brand wordmark when no logo is set yet.
+    openDesign,
   };
 })();

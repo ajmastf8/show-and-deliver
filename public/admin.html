@@ -56,7 +56,6 @@
       </div>
       <div class="topbar-right">
         <button class="topbar-link" id="nav-uploads" hidden>Uploads <span class="accent" id="uploads-count">0</span></button>
-        <button class="topbar-link" id="nav-settings">Settings</button>
         <div class="menu-wrap">
           <button class="btn-primary" id="new-btn">New &#9662;</button>
           <div class="menu" id="new-menu" hidden>
@@ -144,7 +143,7 @@
     <!-- ---------- Settings screen ---------- -->
     <div id="screen-settings" class="screen" hidden>
       <div class="settings-wrap">
-        <button class="back-link" id="settings-back">&larr; Library</button>
+        <button class="back-link" id="settings-back">&larr; Portfolio</button>
         <div class="settings-title-row">
           <h1>Settings</h1>
           <div class="settings-title-actions">
@@ -155,7 +154,6 @@
         <div class="settings-tabs">
           <button class="settings-tab active" data-settings-tab="email">Email</button>
           <button class="settings-tab" data-settings-tab="update">Update</button>
-          <button class="settings-tab" data-settings-tab="header">Header</button>
           <button class="settings-tab" data-settings-tab="api">API</button>
         </div>
 
@@ -207,55 +205,6 @@
             <div class="settings-actions"><button id="install-ffmpeg-btn" class="btn-ghost" disabled>Install Video Tools</button></div>
             <div id="video-tools-result" class="email-status"></div>
           </div>
-        </div>
-
-        <!-- Header -->
-        <div id="settings-tab-header" class="settings-tab-content" hidden>
-          <p class="setting-hint" style="margin-bottom:16px;">Configure the header that appears on all public pages.</p>
-          <div class="setting-group"><label>Site Name</label><input type="text" id="header-site-name" class="setting-input" placeholder="e.g. Riverbend Photography"><p class="setting-hint">Used in browser tab titles</p></div>
-          <hr class="settings-divider">
-          <h4>Header Branding</h4>
-          <p class="setting-hint" style="margin-bottom:12px;">Use a logo image, text, or both. If no image is uploaded, the header text displays instead.</p>
-          <div class="setting-group"><label>Header Text</label><input type="text" id="header-logo-text" class="setting-input" placeholder="e.g. RIVERBEND"></div>
-          <div class="setting-group">
-            <label>Logo — light background</label>
-            <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px;">
-              <img id="header-logo-preview" src="" alt="Logo preview" style="max-height:60px;max-width:200px;display:none;">
-              <span id="header-logo-none" class="setting-hint">No logo set — header text will be used</span>
-            </div>
-            <input type="file" id="header-logo-file" accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif">
-            <p class="setting-hint">PNG or SVG recommended. Displays at max 74px height. Overrides header text if set.</p>
-            <button type="button" id="header-logo-remove" class="btn-ghost" style="margin-top:8px;display:none;">Remove Logo Image</button>
-          </div>
-          <div class="setting-group">
-            <label>Logo — dark background</label>
-            <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px;">
-              <img id="header-logo-dark-preview" src="" alt="Dark logo preview" style="max-height:60px;max-width:200px;display:none;">
-              <span id="header-logo-dark-none" class="setting-hint">No dark logo — the light one shows on every background</span>
-            </div>
-            <input type="file" id="header-logo-dark-file" accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif">
-            <p class="setting-hint">Shown when the site theme is dark. Use a version of your logo that reads on a dark header.</p>
-            <button type="button" id="header-logo-dark-remove" class="btn-ghost" style="margin-top:8px;display:none;">Remove Dark Logo</button>
-          </div>
-          <div class="setting-group"><label>Logo Alt Text</label><input type="text" id="header-logo-alt" class="setting-input" placeholder="e.g. Riverbend Photography"></div>
-          <div class="setting-group"><label>Logo Link URL</label><input type="text" id="header-logo-link" class="setting-input" placeholder="https://www.yoursite.com"></div>
-          <hr class="settings-divider">
-          <h4>Contact Info</h4>
-          <div class="setting-group"><label>Email</label><input type="email" id="header-email" class="setting-input" placeholder="you@example.com"></div>
-          <div class="setting-group"><label>Phone</label><input type="text" id="header-phone" class="setting-input" placeholder="555.123.4567"></div>
-          <div class="setting-group"><label>Tagline</label><input type="text" id="header-tagline" class="setting-input" placeholder="e.g. Based in Indianapolis"></div>
-          <hr class="settings-divider">
-          <h4>Navigation Links</h4>
-          <p class="setting-hint" style="margin-bottom:12px;">Add links or dropdown menus. Drag to reorder. Each link can be typed by hand, or picked from an existing page or gallery/collection below it — start typing to narrow the list.</p>
-          <div id="header-nav-list"></div>
-          <datalist id="nav-pages-datalist"></datalist>
-          <datalist id="nav-galleries-datalist"></datalist>
-          <div style="display:flex;gap:8px;margin-top:12px;">
-            <button id="header-add-link" class="btn-ghost">+ Link</button>
-            <button id="header-add-dropdown" class="btn-ghost">+ Dropdown</button>
-          </div>
-          <div class="settings-actions"><button id="save-header-btn" class="btn-primary">Save Header</button></div>
-          <div id="header-status" class="email-status"></div>
         </div>
 
         <!-- API -->
@@ -569,7 +518,7 @@
   <div id="toast" class="toast"></div>
 
   <script src="/vendor/sortablejs/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=127"></script>
-  <script src="/js/portfolio-admin.js?v=38"></script>
+  <script src="/js/admin.js?v=128"></script>
+  <script src="/js/portfolio-admin.js?v=39"></script>
 </body>
 </html>

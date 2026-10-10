@@ -173,6 +173,25 @@ export function horizontal(root, items, tile, opts = {}) {
   };
   strip.addEventListener('wheel', onWheel, { passive: false });
 
+  // Left/right steps to the next or previous picture's left edge, rather
+  // than a fixed distance — pictures are different widths, so a plain
+  // scroll-by would drift out of step with where they actually start.
+  // offsetLeft is relative to the nearest *positioned* ancestor, which the
+  // strip may not be, so measure from its own scroll content instead.
+  const tileLeft = t => t.getBoundingClientRect().left - strip.getBoundingClientRect().left + strip.scrollLeft;
+  const onKey = e => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const tiles = [...strip.children];
+    const cur = strip.scrollLeft;
+    const target = e.key === 'ArrowRight'
+      ? tiles.find(t => tileLeft(t) > cur + 2)
+      : [...tiles].reverse().find(t => tileLeft(t) < cur - 2);
+    const left = target ? tileLeft(target) : (e.key === 'ArrowRight' ? strip.scrollWidth : 0);
+    strip.scrollTo({ left, behavior: 'smooth' });
+  };
+  document.addEventListener('keydown', onKey);
+
   const relayout = () => {
     const h = avail();
     strip.style.setProperty('--pf-strip-h', h + 'px');
@@ -182,7 +201,11 @@ export function horizontal(root, items, tile, opts = {}) {
   relayout();
   return {
     relayout,
-    destroy() { strip.removeEventListener('wheel', onWheel); root.replaceChildren(); },
+    destroy() {
+      strip.removeEventListener('wheel', onWheel);
+      document.removeEventListener('keydown', onKey);
+      root.replaceChildren();
+    },
   };
 }
 
@@ -208,7 +231,29 @@ export function fullscreen(root, items, tile, opts = {}) {
   root.append(...frames);
   const size = () => frames.forEach(f => { f.style.height = avail() + 'px'; });
   size();
-  return { relayout: size, destroy() { root.replaceChildren(); } };
+
+  // There's no scroll container here — the page itself scrolls, with
+  // scroll-snap matching it to a frame (see .pf-fullscreen in portfolio.css).
+  // Up/down steps to the next or previous frame's exact position.
+  const onKey = e => {
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    e.preventDefault();
+    const cur = window.scrollY;
+    const tops = frames.map(f => f.getBoundingClientRect().top + window.scrollY);
+    const target = e.key === 'ArrowDown'
+      ? tops.find(t => t > cur + 2)
+      : [...tops].reverse().find(t => t < cur - 2);
+    if (target !== undefined) window.scrollTo({ top: target, behavior: 'smooth' });
+  };
+  document.addEventListener('keydown', onKey);
+
+  return {
+    relayout: size,
+    destroy() {
+      document.removeEventListener('keydown', onKey);
+      root.replaceChildren();
+    },
+  };
 }
 
 // One item at a time, filling the page: arrows, keyboard, swipe and a counter.

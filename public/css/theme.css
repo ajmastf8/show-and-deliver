@@ -49,11 +49,14 @@
   [data-header="sidebar"] .logo-text { font-size: 30px; white-space: normal; }
   [data-header="sidebar"] .logo-img { max-width: 100%; width: auto; height: auto !important; max-height: 74px; }
   [data-header="sidebar"] body { padding-left: 232px; }
-  /* The dropdown opens beside the column rather than under it. left:100%
-     would open beside the trigger word itself (nav-dropdown-menu's
-     containing block is .nav-dropdown, not the column) and overlap the
-     nav links below it, so this is offset to the column's own right edge:
-     232px sidebar width minus .header-inner's 24px padding. */
+  /* The dropdown opens beside the column rather than under it. This
+     absolute/left:208px placement (232px column minus .header-inner's 24px
+     padding) is only the pre-hover fallback: .site-header's overflow-y:auto
+     forces overflow-x to clip too (the CSS overflow spec ties the axes
+     together once either one isn't visible), which would clip a flyout
+     this far outside the column's own box. header.js replaces this with
+     position:fixed and a measured top/left as each dropdown opens, which
+     escapes that clipping entirely. */
   [data-header="sidebar"] .nav-dropdown-menu { top: 0; left: 208px; }
 }
 

@@ -132,6 +132,26 @@
           document.getElementById('mobile-nav').classList.toggle('open');
         });
       }
+
+      // In sidebar mode the column scrolls its own overflow (long nav
+      // lists), which per the CSS overflow spec clips the other axis too —
+      // so a dropdown flyout positioned with plain CSS gets clipped away
+      // the moment it extends past the column's right edge. Escaping that
+      // needs position:fixed, which can't be pre-computed in CSS since each
+      // dropdown sits at a different row; set it from the real layout right
+      // as each one opens.
+      header.querySelectorAll('.nav-dropdown').forEach(dd => {
+        const menu = dd.querySelector('.nav-dropdown-menu');
+        if (!menu) return;
+        dd.addEventListener('mouseenter', () => {
+          if (document.documentElement.getAttribute('data-header') !== 'sidebar') return;
+          const ddRect = dd.getBoundingClientRect();
+          const sidebarRect = document.querySelector('.site-header').getBoundingClientRect();
+          menu.style.position = 'fixed';
+          menu.style.top = ddRect.top + 'px';
+          menu.style.left = sidebarRect.right + 'px';
+        });
+      });
     }
 
     // Inject mobile nav

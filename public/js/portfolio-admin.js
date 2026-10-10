@@ -1002,7 +1002,7 @@
               <div class="pfa-field">
                 <span>Grid style</span>
                 <div class="pfa-seg">
-                  ${[['justified', 'Justified rows'], ['masonry', 'Masonry']].map(([v, l]) =>
+                  ${[['justified', 'Justified rows'], ['masonry', 'Masonry'], ['grid', 'Grid']].map(([v, l]) =>
                     `<button type="button" class="${((g.options || {}).gridStyle || 'justified') === v ? 'active' : ''}" data-opt="gridStyle" data-val="${v}">${l}</button>`).join('')}
                 </div>
                 <span class="pfa-hint">What the Grid/Full screen toggle shows for this layout.</span>

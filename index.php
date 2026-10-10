@@ -64,7 +64,7 @@ define('PORTFOLIO_OPTION_VALUES', [
     // What the binary Grid toggle falls back to for a gallery whose own
     // Layout isn't already a plain grid (horizontal row, full screen,
     // slideshow, featured tiles) — see galleryViews() in portfolio.js.
-    'gridStyle' => ['justified', 'masonry'],
+    'gridStyle' => ['justified', 'masonry', 'grid'],
 ]);
 // How much room a single picture takes in the "featured tiles" layout. Called
 // `tile`, not `size`: an item's `size` is already its file size in bytes.
@@ -4501,7 +4501,7 @@ function portfolioNormalizeOptions($o) {
     }
     $out['gap'] = in_array($o['gap'] ?? '', ['tight', 'normal', 'wide'], true) ? $o['gap'] : 'normal';
     $out['crop'] = in_array($o['crop'] ?? '', ['fit', 'fill'], true) ? $o['crop'] : 'fit';
-    $out['gridStyle'] = in_array($o['gridStyle'] ?? '', ['justified', 'masonry'], true) ? $o['gridStyle'] : 'justified';
+    $out['gridStyle'] = in_array($o['gridStyle'] ?? '', ['justified', 'masonry', 'grid'], true) ? $o['gridStyle'] : 'justified';
     $out['autoplay'] = !empty($o['autoplay']);
     $out['interval'] = min(30, max(2, (int)($o['interval'] ?? 5)));
     return $out;

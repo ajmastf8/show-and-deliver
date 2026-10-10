@@ -238,7 +238,8 @@ const VIEW_ICONS = {
 // grid, so toggling falls back to the gallery's own Grid style choice.
 function galleryViews(g) {
   const configured = LAYOUTS[g.layout] ? g.layout : 'justified';
-  const gridStyle = (g.options || {}).gridStyle === 'masonry' ? 'masonry' : 'justified';
+  const rawGridStyle = (g.options || {}).gridStyle;
+  const gridStyle = (rawGridStyle === 'masonry' || rawGridStyle === 'grid') ? rawGridStyle : 'justified';
   return {
     default: configured,
     grid: (configured === 'justified' || configured === 'masonry' || configured === 'grid') ? configured : gridStyle,

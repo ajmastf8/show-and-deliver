@@ -377,6 +377,7 @@ code, kbd, samp { font-family: inherit; font-size: inherit; }
 }
 .ctrl:hover { color: var(--text); }
 .ctrl.active { color: var(--text); border-bottom-color: var(--accent); }
+.ctrl.danger:hover { color: var(--danger); }
 
 .table-scroll { flex: 1 1 auto; overflow-y: auto; }
 
@@ -1913,6 +1914,19 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 .pfa-dup-frame { flex: 0 0 auto; width: 72px; height: 54px; overflow: hidden; border-radius: 6px; background: var(--raised); }
 .pfa-dup-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .pfa-dup-meta { flex: 1; min-width: 0; }
+
+/* Trash: what's been moved aside, waiting to be reclaimed or deleted for good. */
+.pfa-trash-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border-row);
+}
+.pfa-trash-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.pfa-trash-meta { flex: 0 0 auto; color: var(--text-4); font-size: 12.5px; }
+.pfa-trash-row button.danger { border: 0; background: none; color: var(--text-4); font-size: 13px; cursor: pointer; }
+.pfa-trash-row button.danger:hover { color: var(--danger); }
 
 /* Image Library rail: public/private split, open-in-new-window affordances. */
 .rail-sublabel { padding: 10px 14px 3px; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-6); }

@@ -5936,6 +5936,56 @@ if ($method === 'GET' && $uri === '/api/admin/portfolio/readiness') {
     respond(['checks' => $checks, 'summary' => $summary]);
 }
 
+// Recursive size, for reporting what a trash entry costs before clearing it.
+function pathSize($path) {
+    if (is_file($path)) return filesize($path) ?: 0;
+    if (!is_dir($path)) return 0;
+    $total = 0;
+    $it = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($path, RecursiveDirectoryIterator::SKIP_DOTS));
+    foreach ($it as $f) if ($f->isFile()) $total += $f->getSize();
+    return $total;
+}
+
+// Deleted galleries and files land in site-data/portfolio-trash/ instead of
+// being unlinked (see portfolioTrash()) — nothing the admin ever gets rid of
+// is destroyed outright. This is the only way to actually reclaim that space.
+if ($method === 'GET' && $uri === '/api/admin/portfolio/trash') {
+    requireAuth();
+    $out = [];
+    foreach (@scandir(PORTFOLIO_TRASH_DIR) ?: [] as $name) {
+        if (portfolioIgnoredName($name)) continue; // never list .htaccess, the dir's own web-access guard
+        $path = PORTFOLIO_TRASH_DIR . '/' . $name;
+        $out[] = ['name' => $name, 'isDir' => is_dir($path), 'size' => pathSize($path), 'deletedAt' => (int)@filemtime($path)];
+    }
+    usort($out, fn($a, $b) => $b['deletedAt'] <=> $a['deletedAt']);
+    respond(['entries' => $out, 'totalSize' => array_sum(array_column($out, 'size'))]);
+}
+
+if ($method === 'DELETE' && matchRoute('/api/admin/portfolio/trash/{name}', $uri, $params)) {
+    requireAuth();
+    // basename() strips any path component a crafted {name} might carry, so
+    // this can only ever touch a direct child of the trash folder — and
+    // never its own .htaccess, which portfolioIgnoredName() also excludes.
+    $name = basename(rawurldecode($params['name']));
+    if (portfolioIgnoredName($name)) respondError('Not found', 404);
+    $path = PORTFOLIO_TRASH_DIR . '/' . $name;
+    if (!file_exists($path)) respondError('Not found', 404);
+    is_dir($path) ? rrmdirTree($path) : @unlink($path);
+    respond(['ok' => true]);
+}
+
+if ($method === 'POST' && $uri === '/api/admin/portfolio/trash/empty') {
+    requireAuth();
+    $count = 0;
+    foreach (@scandir(PORTFOLIO_TRASH_DIR) ?: [] as $name) {
+        if (portfolioIgnoredName($name)) continue; // never delete .htaccess
+        $path = PORTFOLIO_TRASH_DIR . '/' . $name;
+        is_dir($path) ? rrmdirTree($path) : @unlink($path);
+        $count++;
+    }
+    respond(['ok' => true, 'removed' => $count]);
+}
+
 // Files that exist more than once on disk (same bytes), so a copy can become a
 // pick of one original. Size groups first — identical files share a size — so
 // only genuine candidates are hashed.

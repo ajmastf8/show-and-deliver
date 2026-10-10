@@ -22,6 +22,8 @@
     readiness: null,    // its payload
     duplicatesView: false, // the Duplicates panel
     duplicates: null,   // its payload
+    trashView: false,   // the Trash panel
+    trash: null,        // its payload
     item: null,         // the open item's metadata view
     selectMode: false,  // multi-select in the open gallery's item grid
     selected: new Set(), // selected file names, while selectMode is on
@@ -213,6 +215,7 @@
     else if (state.item) renderItem();
     else if (state.readinessView) renderReadiness();
     else if (state.duplicatesView) renderDuplicates();
+    else if (state.trashView) renderTrash();
     else if (state.galleryId && state.gallery) renderGalleryEditor();
     else renderBrowse();
   }
@@ -266,6 +269,9 @@
       </div>
       <div class="rail-row ${state.design ? 'active' : ''}" id="pfa-design-row">
         <span class="rail-name">Site design</span>
+      </div>
+      <div class="rail-row ${state.trashView ? 'active' : ''}" id="pfa-trash-row">
+        <span class="rail-name">Trash</span>
       </div>
       <details class="rail-group" id="pfa-checks" ${state.readinessView || state.duplicatesView || state.checksOpen ? 'open' : ''}>
         <summary class="rail-row">
@@ -357,6 +363,7 @@
         state.pagesView = false;
         state.readinessView = false;
         state.duplicatesView = false;
+        state.trashView = false;
         render();
       });
     });
@@ -383,6 +390,7 @@
     $('pfa-pages-row').addEventListener('click', openPages);
     $('pfa-readiness-row').addEventListener('click', openReadiness);
     $('pfa-duplicates-row').addEventListener('click', openDuplicates);
+    $('pfa-trash-row').addEventListener('click', openTrash);
 
     // Drag to reorder categories; the order is what the public nav follows.
     const list = $('pfa-cat-list');
@@ -861,6 +869,7 @@
       state.pagesView = false;
       state.readinessView = false;
       state.duplicatesView = false;
+      state.trashView = false;
       state.item = null;
       state.selectMode = false;
       state.selected = new Set();
@@ -1391,6 +1400,7 @@
     state.pagesView = false;
     state.readinessView = false;
     state.duplicatesView = false;
+    state.trashView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -1653,6 +1663,7 @@
     state.design = false;
     state.readinessView = false;
     state.duplicatesView = false;
+    state.trashView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -1670,6 +1681,7 @@
     state.design = false;
     state.pagesView = false;
     state.duplicatesView = false;
+    state.trashView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -1723,6 +1735,7 @@
     state.design = false;
     state.pagesView = false;
     state.readinessView = false;
+    state.trashView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -1731,6 +1744,90 @@
     } catch (err) {
       S().toast(err.message || 'Could not scan for duplicates');
     }
+  }
+
+  function bytes(n) {
+    if (n >= 1e9) return (n / 1e9).toFixed(1) + ' GB';
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + ' MB';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + ' KB';
+    return n + ' B';
+  }
+
+  async function openTrash() {
+    state.trashView = true;
+    state.design = false;
+    state.pagesView = false;
+    state.readinessView = false;
+    state.duplicatesView = false;
+    state.galleryId = null;
+    state.gallery = null;
+    try {
+      state.trash = await req('/api/admin/portfolio/trash');
+      render();
+    } catch (err) {
+      S().toast(err.message || 'Could not load the trash');
+    }
+  }
+
+  // Deleted galleries and files land here instead of being unlinked — this
+  // is the only place that actually reclaims the space.
+  function renderTrash() {
+    const entries = (state.trash && state.trash.entries) || [];
+    const totalSize = (state.trash && state.trash.totalSize) || 0;
+    $('pfa-centre').innerHTML = `
+      <div class="centre-header">
+        <div>
+          <h1>Trash</h1>
+          <p class="centre-sub">${entries.length ? `${entries.length} item${entries.length === 1 ? '' : 's'} · ${bytes(totalSize)}` : 'Deleted galleries and files land here — nothing is ever unlinked outright.'}</p>
+        </div>
+        <div class="centre-controls">
+          ${entries.length ? '<button class="ctrl danger" id="pfa-trash-empty">Empty trash</button>' : ''}
+        </div>
+      </div>
+      <div class="pfa-scroll">
+        ${entries.length ? `<div class="pfa-trash-list">${entries.map(trashRow).join('')}</div>`
+          : '<div class="pfa-empty"><p>Trash is empty.</p></div>'}
+      </div>`;
+    if ($('pfa-trash-empty')) $('pfa-trash-empty').addEventListener('click', emptyTrash);
+    $('pfa-centre').querySelectorAll('[data-trash-delete]').forEach(btn => {
+      btn.addEventListener('click', () => deleteTrashEntry(btn.dataset.trashDelete));
+    });
+  }
+
+  function trashRow(e) {
+    const when = e.deletedAt ? new Date(e.deletedAt * 1000).toLocaleString() : '';
+    return `<div class="pfa-trash-row">
+      <div class="pfa-trash-name" title="${esc(e.name)}">${esc(e.name)}${e.isDir ? '/' : ''}</div>
+      <div class="pfa-trash-meta">${bytes(e.size)} · ${esc(when)}</div>
+      <button type="button" class="danger" data-trash-delete="${esc(e.name)}">Delete</button>
+    </div>`;
+  }
+
+  async function deleteTrashEntry(name) {
+    const ok = await S().confirm({
+      title: 'Delete permanently?',
+      message: `"${name}" is removed for good — there's no further undo.`,
+      okText: 'Delete', danger: true,
+    });
+    if (!ok) return;
+    await act(async () => { await req(`/api/admin/portfolio/trash/${encodeURIComponent(name)}`, { method: 'DELETE' }); });
+    await openTrash();
+  }
+
+  async function emptyTrash() {
+    const entries = (state.trash && state.trash.entries) || [];
+    if (!entries.length) return;
+    const ok = await S().confirm({
+      title: 'Empty trash?',
+      message: `Permanently deletes all ${entries.length} item${entries.length === 1 ? '' : 's'} (${bytes(state.trash.totalSize)}) — there's no further undo.`,
+      okText: 'Empty trash', danger: true,
+    });
+    if (!ok) return;
+    await act(async () => {
+      const r = await send('/api/admin/portfolio/trash/empty', 'POST', {});
+      S().toast(`Removed ${r.removed} item${r.removed === 1 ? '' : 's'}`);
+    });
+    await openTrash();
   }
 
   // Files with identical bytes, grouped. Keep one; the rest become picks of it.

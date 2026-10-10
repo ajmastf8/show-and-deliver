@@ -23,6 +23,8 @@
     duplicatesView: false, // the Duplicates panel
     duplicates: null,   // its payload
     item: null,         // the open item's metadata view
+    selectMode: false,  // multi-select in the open gallery's item grid
+    selected: new Set(), // selected file names, while selectMode is on
     railOpen: (() => { try { return new Set(JSON.parse(localStorage.getItem('pfa-rail-open') || '[]')); } catch (_) { return new Set(); } })(),
     settingsOpen: (() => { try { const v = localStorage.getItem('pfa-settings-open'); return v == null ? null : v === '1'; } catch (_) { return null; } })(),
     pages: [],
@@ -719,6 +721,82 @@
     </span>`;
   }
 
+  // The selectable keys in a gallery: real files only — section headers and
+  // broken/missing refs don't carry a bulk-actionable file.
+  function selectableKeys(g) {
+    return g.items.filter(i => i.type !== 'header' && i.type !== 'broken').map(i => i.file);
+  }
+
+  function selectionBar(g) {
+    const keys = selectableKeys(g);
+    const n = state.selected.size;
+    return `<div class="pfa-select-bar">
+      <span>${n ? `${n} selected` : 'Click pictures to select them'}</span>
+      <span class="pfa-select-bar-actions">
+        <button type="button" id="pfa-select-all">${n === keys.length ? 'Clear' : 'Select all'}</button>
+        <button type="button" id="pfa-select-hide" ${n ? '' : 'disabled'}>Hide</button>
+        <button type="button" id="pfa-select-show" ${n ? '' : 'disabled'}>Show</button>
+        <button type="button" class="danger" id="pfa-select-delete" ${n ? '' : 'disabled'}>Delete</button>
+      </span>
+    </div>`;
+  }
+
+  function toggleSelect(key, fig) {
+    if (state.selected.has(key)) state.selected.delete(key); else state.selected.add(key);
+    const on = state.selected.has(key);
+    fig.classList.toggle('selected', on);
+    const cb = fig.querySelector('.pfa-item-check');
+    if (cb) cb.checked = on;
+    const bar = document.querySelector('.pfa-select-bar');
+    if (!bar) return;
+    const keys = selectableKeys(state.gallery);
+    const n = state.selected.size;
+    bar.querySelector('span').textContent = n ? `${n} selected` : 'Click pictures to select them';
+    const allBtn = $('pfa-select-all'); if (allBtn) allBtn.textContent = n && n === keys.length ? 'Clear' : 'Select all';
+    ['pfa-select-hide', 'pfa-select-show', 'pfa-select-delete'].forEach(id => { const b = $(id); if (b) b.disabled = !n; });
+  }
+
+  // The endpoint for a file depends on whether it's a pick borrowed from
+  // another gallery (refs) or one of the gallery's own items.
+  function itemBase(gid, item) {
+    const base = `/api/admin/portfolio/galleries/${encodeURIComponent(gid)}`;
+    return item.ref ? `${base}/refs/${encodeURIComponent(item.file)}` : `${base}/items/${encodeURIComponent(item.file)}`;
+  }
+
+  async function bulkVisible(gid, visible) {
+    const g = state.gallery;
+    const keys = [...state.selected];
+    if (!keys.length) return;
+    state.selected = new Set();
+    await act(async () => {
+      for (const file of keys) {
+        const item = g.items.find(i => i.file === file);
+        if (item) await send(itemBase(gid, item), 'PUT', { visible });
+      }
+    });
+    S().toast(`${visible ? 'Shown' : 'Hidden'}: ${keys.length}`);
+  }
+
+  async function bulkDelete(gid) {
+    const keys = [...state.selected];
+    if (!keys.length) return;
+    const ok = await S().confirm({
+      title: `Delete ${keys.length} file${keys.length === 1 ? '' : 's'}?`,
+      message: 'They move to site-data/portfolio-trash/, where you can still recover them.',
+      okText: 'Delete', danger: true,
+    });
+    if (!ok) return;
+    const g = state.gallery;
+    state.selected = new Set();
+    await act(async () => {
+      for (const file of keys) {
+        const item = g.items.find(i => i.file === file);
+        if (item) await req(itemBase(gid, item), { method: 'DELETE' });
+      }
+    });
+    S().toast(`Deleted ${keys.length} file${keys.length === 1 ? '' : 's'}`);
+  }
+
   function galleryNudges(g) {
     const out = [];
     if (g.itemCount > 40) out.push(`${g.itemCount} pictures — the edit reads best at ~20–40.`);
@@ -755,6 +833,8 @@
       state.readinessView = false;
       state.duplicatesView = false;
       state.item = null;
+      state.selectMode = false;
+      state.selected = new Set();
       await loadGallery(gid);
       state.categoryId = state.gallery.categoryId;
       revealInRail(gid);
@@ -804,6 +884,7 @@
             </div>
           </details>
           <button class="ctrl pfa-settings-toggle ${open ? 'active' : ''}" id="pfa-settings-toggle" aria-pressed="${open}" title="${esc(settingsSummary(g, isHome))}">Settings</button>
+          ${isCollection || !g.items.length ? '' : `<button class="ctrl ${state.selectMode ? 'active' : ''}" id="pfa-select-toggle" aria-pressed="${!!state.selectMode}">${state.selectMode ? 'Done' : 'Select'}</button>`}
           ${isCollection ? '' : '<button class="btn-primary small" id="pfa-add-files">Add media</button>'}
         </div>
       </div>
@@ -829,7 +910,9 @@
             ${g.warnings.map(w => `<div>${esc(w)}</div>`).join('')}
           </div>` : ''}
 
-        ${g.items.length ? `<div class="pfa-items ${(g.sort || {}).by && g.sort.by !== 'custom' ? 'pfa-sorted' : ''}" id="pfa-items">${g.items.map(itemTile).join('')}</div>`
+        ${state.selectMode ? selectionBar(g) : ''}
+
+        ${g.items.length ? `<div class="pfa-items ${(g.sort || {}).by && g.sort.by !== 'custom' ? 'pfa-sorted' : ''} ${state.selectMode ? 'pfa-select-mode' : ''}" id="pfa-items">${g.items.map(itemTile).join('')}</div>`
           : '<div class="pfa-empty"><p>This gallery is empty.</p></div>'}
       </div>
       ${railMarkup(`
@@ -973,12 +1056,14 @@
       item.failed ? '<span class="pfa-badge bad">Unreadable</span>' : '',
       g.cover === item.file ? '<span class="pfa-badge good">Cover</span>' : '',
     ].filter(Boolean).join('');
+    const selected = state.selectMode && state.selected.has(item.file);
     return `
-      <figure class="pfa-item ${item.visible ? '' : 'dim'}" data-key="${esc(item.file)}">
+      <figure class="pfa-item ${item.visible ? '' : 'dim'} ${selected ? 'selected' : ''}" data-key="${esc(item.file)}">
         <div class="pfa-item-frame">
           ${item.thumb ? `<img src="${esc(item.thumb)}" alt="" loading="lazy">` : '<span class="pfa-item-empty"></span>'}
           ${item.type === 'video' ? '<span class="pfa-video-mark">▶</span>' : ''}
           ${item.visible ? '' : '<span class="pfa-item-hidden-mark" title="Hidden from visitors">Hidden</span>'}
+          ${state.selectMode ? `<input type="checkbox" class="pfa-item-check" ${selected ? 'checked' : ''} tabindex="-1">` : ''}
         </div>
         <figcaption>
           <div class="pfa-item-name" title="${esc(item.source ? item.source.file : item.file)}">${esc(item.title || (item.source ? item.source.file : item.file))}</div>
@@ -1078,6 +1163,32 @@
       });
     });
 
+    // Multi-select: pick several pictures, then hide/show/delete them in one
+    // go. A click toggles the tile without a full re-render — selecting
+    // through a gallery of dozens of pictures should never jump the scroll
+    // position or refetch thumbnails.
+    if ($('pfa-select-toggle')) $('pfa-select-toggle').addEventListener('click', () => {
+      state.selectMode = !state.selectMode;
+      state.selected = new Set();
+      render();
+    });
+    if (state.selectMode) {
+      const itemsEl = $('pfa-items');
+      if (itemsEl) itemsEl.addEventListener('click', e => {
+        const fig = e.target.closest('.pfa-item');
+        if (!fig || !fig.dataset.key || e.target.closest('[data-act]')) return;
+        toggleSelect(fig.dataset.key, fig);
+      });
+      if ($('pfa-select-all')) $('pfa-select-all').addEventListener('click', () => {
+        const keys = selectableKeys(g);
+        state.selected = state.selected.size === keys.length ? new Set() : new Set(keys);
+        render();
+      });
+      if ($('pfa-select-hide')) $('pfa-select-hide').addEventListener('click', () => bulkVisible(gid, false));
+      if ($('pfa-select-show')) $('pfa-select-show').addEventListener('click', () => bulkVisible(gid, true));
+      if ($('pfa-select-delete')) $('pfa-select-delete').addEventListener('click', () => bulkDelete(gid));
+    }
+
     // Sorting: the rail's Order group. Keeping a sort writes the order shown
     // into the custom one first, so nothing is lost by switching back.
     const isColl = !!(g.children && g.children.length);
@@ -1102,7 +1213,7 @@
     if (items && g.items.length > 1) {
       Sortable.create(items, {
         animation: 140,
-        disabled: ((g.sort || {}).by || 'custom') !== 'custom',
+        disabled: state.selectMode || ((g.sort || {}).by || 'custom') !== 'custom',
         draggable: '.pfa-item, .pfa-section',
         onEnd: () => {
           const order = [...items.querySelectorAll('[data-key]')].map(n => n.dataset.key);

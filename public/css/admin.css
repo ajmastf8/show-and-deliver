@@ -1593,6 +1593,40 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 
 .pfa-item { margin: 0; }
 .pfa-item.dim { opacity: 0.55; }
+.pfa-items.pfa-select-mode .pfa-item { cursor: pointer; }
+.pfa-item.selected .pfa-item-frame { outline: 3px solid var(--accent); outline-offset: -3px; }
+.pfa-item-check {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.pfa-select-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--panel);
+  font-size: 13px;
+  color: var(--text-3);
+}
+.pfa-select-bar-actions { display: flex; gap: 14px; }
+.pfa-select-bar-actions button {
+  border: 0;
+  background: none;
+  color: var(--text-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+.pfa-select-bar-actions button:hover:not(:disabled) { color: var(--accent); }
+.pfa-select-bar-actions button:disabled { color: var(--text-4); cursor: default; }
+.pfa-select-bar-actions button.danger:hover:not(:disabled) { color: var(--danger); }
 .pfa-item-frame {
   position: relative;
   aspect-ratio: 1;

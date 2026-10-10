@@ -7549,113 +7549,66 @@ if ($method === 'POST' && $uri === '/api/settings/watermark') {
 }
 
 // ============================================================
-// SITE EXPORT — a full backup, for moving to a new server
+// BACKUP — one zip per gallery, plus a settings zip; an import for both
 // ============================================================
-// Walks every directory this installation's own data actually lives in,
-// building one flat list of (absolute path on disk -> path inside the zip)
-// pairs. Zip paths mirror the real site-data/... layout, so restoring is
-// just unzipping over a fresh checkout — every setting, gallery, and
-// already-generated thumbnail/proxy comes back exactly as it was, with
-// nothing to regenerate.
-//
-// Deliberately left out: site-data/portfolio-trash (deleted content —
-// restoring it would undelete things the admin chose to remove),
-// site-data/imports (FTP staging, not part of the site itself),
-// site-data/packages (delivery links, which expire in 7 days anyway), and
-// uploads/.tmp (in-flight chunked uploads, not a finished file yet).
-//
+// A single all-in-one export was the first approach here, but this
+// install alone is already ~2.6 GB across 3,119 files — comfortably past
+// LiteSpeed's 1 GiB dynamic-response cap (see PACKAGES_DIR above), and
+// every real gallery on it is under 330 MB. So instead: one zip per
+// gallery (its media, plus the same _photoshelter.json order/visibility
+// sidecar the drag-a-folder import already understands, plus a settings
+// file with everything else about it), and a separate small zip for
+// sitewide settings. Each one stays safely under any size cap without
+// needing the delivery system's part-splitting at all. Restoring is an
+// import of each piece, not an unzip-over-the-checkout — see below.
+
 // This is a deliberate, infrequent, admin-only action — not the hot
 // client-download path the CRC cache above exists for — so each file's
 // CRC32 is computed here directly rather than through fileCrc32(): that
 // cache is keyed by basename() alone, which collides constantly across
 // portfolio galleries (many "01.jpg"s), and reusing it here would corrupt
 // it for the delivery path this whole cache exists to keep fast.
-function exportFileList() {
-    $roots = [
-        ['dir' => PORTFOLIO_DIR, 'prefix' => 'site-data/portfolio'],
-        ['dir' => DATA_DIR, 'prefix' => 'site-data/data'],
-        ['dir' => UPLOADS_DIR, 'prefix' => 'site-data/uploads', 'excludeDir' => UPLOAD_TMP_DIR],
-        ['dir' => THUMBS_DIR, 'prefix' => 'site-data/thumbnails'],
-        ['dir' => PROXY_DIR, 'prefix' => 'site-data/proxies'],
-        ['dir' => CAPTIONS_DIR, 'prefix' => 'site-data/captions'],
-        ['dir' => LOGO_DIR, 'prefix' => 'site-data/logo'],
-    ];
-    $entries = [];
-    foreach ($roots as $root) {
-        if (!is_dir($root['dir'])) continue;
-        $iter = new RecursiveIteratorIterator(
-            new RecursiveDirectoryIterator($root['dir'], FilesystemIterator::SKIP_DOTS)
-        );
-        foreach ($iter as $fileInfo) {
-            if (!$fileInfo->isFile()) continue;
-            $full = $fileInfo->getPathname();
-            if (isset($root['excludeDir']) && strpos($full, $root['excludeDir'] . DIRECTORY_SEPARATOR) === 0) continue;
-            $rel = substr($full, strlen($root['dir']) + 1);
-            $entries[] = [
-                'path' => $full,
-                'name' => $root['prefix'] . '/' . str_replace(DIRECTORY_SEPARATOR, '/', $rel),
-                'size' => (int)$fileInfo->getSize(),
-                'mtime' => (int)$fileInfo->getMTime(),
-            ];
-        }
-    }
-    $envPath = __DIR__ . '/.env';
-    if (is_file($envPath)) {
-        $entries[] = ['path' => $envPath, 'name' => '.env', 'size' => (int)filesize($envPath), 'mtime' => (int)filemtime($envPath)];
-    }
-    return $entries;
-}
-
-// A quick summary for the admin UI: file count and total size, without
-// hashing anything — so this is cheap enough to show before committing to
-// the (potentially very long) actual export.
-if ($method === 'GET' && $uri === '/api/admin/export') {
-    requireAuth();
-    $entries = exportFileList();
-    $total = 0;
-    foreach ($entries as $e) $total += $e['size'];
-    respond(['fileCount' => count($entries), 'totalBytes' => $total]);
-}
-
-// The export itself: one streamed zip, Zip64 throughout, CRC32 computed
-// per file as it's added (see exportFileList() above for why this doesn't
-// go through the shared CRC cache). No Content-Length up front — unlike a
-// delivery package's plan, nothing here is a stable, pre-committed manifest
-// generated ahead of time, and hashing gigabytes of media before the first
-// byte goes out would mean a very long wait with nothing visibly
-// happening; the size is announced incrementally via chunked transfer
-// instead. Subject to the same LiteSpeed dynamic-response cap as
-// everything else PHP streams (see the packages section above) — for an
-// install too large for one part, download over FTP/SFTP directly instead.
-if (($method === 'GET' || $method === 'HEAD') && $uri === '/api/admin/export/download') {
-    requireAuth();
-    $entries = exportFileList();
-    if (!$entries) respondError('Nothing to export', 404);
-
-    beginBinaryResponse('site-export-' . date('Y-m-d') . '.zip', 'application/zip', null);
+//
+// Entries carry either 'path' (a file already on disk) or 'content' (a
+// string generated for the zip, e.g. a settings JSON) — never both.
+function streamZipFromEntries(array $entries, string $filename) {
+    beginBinaryResponse($filename, 'application/zip', null);
     ignore_user_abort(false);
 
     $offset = 0;
     $central = [];
     $out = fopen('php://output', 'wb');
     foreach ($entries as $e) {
-        $crcHex = @hash_file('crc32b', $e['path']);
-        if ($crcHex === false) continue;
-        $crc = (int)hexdec($crcHex);
+        if (isset($e['content'])) {
+            $data = $e['content'];
+            $size = strlen($data);
+            $crc = crc32($data);
+        } else {
+            $crcHex = @hash_file('crc32b', $e['path']);
+            if ($crcHex === false) continue;
+            $crc = (int)hexdec($crcHex);
+            $size = (int)filesize($e['path']);
+        }
+        $mtime = $e['mtime'] ?? time();
 
-        $header = zipStreamLocalHeader($e['name'], $e['mtime'], $crc, $e['size']);
+        $header = zipStreamLocalHeader($e['name'], $mtime, $crc, $size);
         echo $header;
         $entryOffset = $offset;
         $offset += strlen($header);
 
-        $fp = fopen($e['path'], 'rb');
-        if ($fp === false) continue;
-        $written = stream_copy_to_stream($fp, $out, $e['size']);
-        fclose($fp);
+        if (isset($e['content'])) {
+            echo $data;
+            $written = $size;
+        } else {
+            $fp = fopen($e['path'], 'rb');
+            if ($fp === false) continue;
+            $written = stream_copy_to_stream($fp, $out, $size);
+            fclose($fp);
+        }
         $offset += $written;
 
         $central[] = ['name' => $e['name'], 'crc' => $crc, 'size' => $written,
-                      'offset' => $entryOffset, 'mtime' => $e['mtime']];
+                      'offset' => $entryOffset, 'mtime' => $mtime];
     }
 
     $cdOffset = $offset;
@@ -7666,6 +7619,389 @@ if (($method === 'GET' || $method === 'HEAD') && $uri === '/api/admin/export/dow
     fclose($out);
     flush();
     exit;
+}
+
+// Every gallery that actually holds media, flattened out of the tree with
+// the path of folder names (category, then any nested collection-gallery)
+// needed to recreate its location on import. Collections themselves —
+// nodes with no media, just child galleries — aren't listed here; they
+// come back via portfolio-structure.json in the settings zip instead, and
+// a gallery zip's own categoryPath recreates one by name if it's missing.
+function portfolioExportableGalleries() {
+    $out = [];
+    $walkChildren = function ($nodes, array $path) use (&$walkChildren, &$out) {
+        foreach ($nodes as $n) {
+            // Unlike portfolioTree()'s own top-level category entries, a
+            // gallery nested inside one (or inside another gallery acting as
+            // a collection) carries its kind in sidecar.kind, not its own.
+            if (($n['sidecar']['kind'] ?? '') === 'gallery') {
+                $out[] = ['node' => $n, 'categoryPath' => $path];
+            }
+            if (!empty($n['children'])) $walkChildren($n['children'], array_merge($path, [$n['folder']]));
+        }
+    };
+    foreach (portfolioTree()['categories'] as $cat) {
+        if ($cat['kind'] === 'gallery') {
+            $out[] = ['node' => $cat, 'categoryPath' => []];
+            if (!empty($cat['children'])) $walkChildren($cat['children'], [$cat['folder']]);
+        } else {
+            $walkChildren($cat['galleries'], [$cat['folder']]);
+        }
+    }
+    $home = portfolioTree()['home'];
+    if ($home) $out[] = ['node' => array_merge($home, ['kind' => 'gallery']), 'categoryPath' => [], 'isHome' => true];
+    return $out;
+}
+
+function portfolioGallerySettingsJson($entry) {
+    $s = $entry['node']['sidecar'];
+    return json_encode([
+        'version' => 1,
+        'folder' => $entry['node']['folder'],
+        'title' => $s['title'] ?? null,
+        'description' => $s['description'] ?? '',
+        'slug' => $s['slug'] ?? null,
+        'visible' => $s['visible'] ?? true,
+        'access' => $s['access'] ?? 'public',
+        'layout' => $s['layout'] ?? 'justified',
+        'options' => $s['options'] ?? [],
+        'cover' => $s['cover'] ?? null,
+        'categoryPath' => $entry['categoryPath'],
+        'isHome' => !empty($entry['isHome']),
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+}
+
+// List every exportable gallery for the admin UI: enough to label and size
+// a "Download" link each, without building any of the zips yet.
+if ($method === 'GET' && $uri === '/api/admin/export/galleries') {
+    requireAuth();
+    $out = [];
+    foreach (portfolioExportableGalleries() as $entry) {
+        $items = $entry['node']['sidecar']['items'] ?? [];
+        $size = 0;
+        foreach ($items as $name => $it) {
+            $path = $entry['node']['dir'] . '/' . $name;
+            if (is_file($path)) $size += filesize($path);
+        }
+        $out[] = [
+            'id' => $entry['node']['id'],
+            'title' => $entry['node']['sidecar']['title'] ?? $entry['node']['folder'],
+            'categoryPath' => $entry['categoryPath'],
+            'isHome' => !empty($entry['isHome']),
+            'fileCount' => count($items),
+            'totalBytes' => $size,
+        ];
+    }
+    respond(['galleries' => $out]);
+}
+
+// One gallery's zip: its media files, flat, plus _photoshelter.json (order
+// and visibility — the same format the drag-a-folder import already reads)
+// and _gallery-settings.json (everything else: layout, options, where it
+// lives). Importing one needs nothing but this file.
+if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/admin/export/gallery/{gid}/download', $uri, $params)) {
+    requireAuth();
+    $match = null;
+    foreach (portfolioExportableGalleries() as $entry) {
+        if ($entry['node']['id'] === $params['gid']) { $match = $entry; break; }
+    }
+    if (!$match) respondError('Gallery not found', 404);
+
+    $dir = $match['node']['dir'];
+    $items = $match['node']['sidecar']['items'] ?? [];
+    $order = $match['node']['sidecar']['order'] ?? array_keys($items);
+    $entries = [];
+    foreach ($order as $name) {
+        if (!isset($items[$name])) continue;
+        $path = $dir . '/' . $name;
+        if (!is_file($path)) continue;
+        $entries[] = ['path' => $path, 'name' => $name, 'mtime' => (int)@filemtime($path)];
+    }
+    $psImages = [];
+    foreach ($order as $name) {
+        if (!isset($items[$name])) continue;
+        $psImages[] = ['file_name' => $name, 'visible' => $items[$name]['visible'] ?? true, 'display_order' => count($psImages) + 1];
+    }
+    $entries[] = ['content' => json_encode(['images' => $psImages], JSON_PRETTY_PRINT), 'name' => PORTFOLIO_PHOTOSHELTER_SIDECAR, 'mtime' => time()];
+    $entries[] = ['content' => portfolioGallerySettingsJson($match), 'name' => '_gallery-settings.json', 'mtime' => time()];
+
+    $label = packageFolderName($match['node']['sidecar']['title'] ?? $match['node']['folder']);
+    streamZipFromEntries($entries, "$label.zip");
+}
+
+// The settings zip: everything about the install that isn't a gallery's
+// own media — sitewide config, pages, logo, watermark, legacy reels
+// uploads, .env, and portfolio-structure.json so empty collections (and
+// their own settings) come back even with no gallery inside to carry them.
+function exportSettingsFileList() {
+    $roots = [
+        ['dir' => DATA_DIR, 'prefix' => 'site-data/data'],
+        ['dir' => UPLOADS_DIR, 'prefix' => 'site-data/uploads', 'excludeDir' => UPLOAD_TMP_DIR],
+        ['dir' => CAPTIONS_DIR, 'prefix' => 'site-data/captions'],
+        ['dir' => LOGO_DIR, 'prefix' => 'site-data/logo'],
+    ];
+    $entries = [];
+    foreach ($roots as $root) {
+        if (!is_dir($root['dir'])) continue;
+        $iter = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($root['dir'], FilesystemIterator::SKIP_DOTS));
+        foreach ($iter as $fileInfo) {
+            if (!$fileInfo->isFile()) continue;
+            $full = $fileInfo->getPathname();
+            if (isset($root['excludeDir']) && strpos($full, $root['excludeDir'] . DIRECTORY_SEPARATOR) === 0) continue;
+            $rel = substr($full, strlen($root['dir']) + 1);
+            $entries[] = ['path' => $full, 'name' => $root['prefix'] . '/' . str_replace(DIRECTORY_SEPARATOR, '/', $rel), 'mtime' => (int)$fileInfo->getMTime()];
+        }
+    }
+    $envPath = __DIR__ . '/.env';
+    if (is_file($envPath)) $entries[] = ['path' => $envPath, 'name' => '.env', 'mtime' => (int)filemtime($envPath)];
+
+    $categories = [];
+    foreach (portfolioTree()['categories'] as $cat) {
+        if ($cat['kind'] === 'gallery') continue;
+        $categories[] = [
+            'folder' => $cat['folder'],
+            'title' => $cat['sidecar']['title'] ?? $cat['folder'],
+            'slug' => $cat['sidecar']['slug'] ?? null,
+            'visible' => $cat['sidecar']['visible'] ?? true,
+            'description' => $cat['sidecar']['description'] ?? '',
+            'view' => $cat['sidecar']['view'] ?? 'cards',
+        ];
+    }
+    $home = portfolioTree()['home'];
+    $structure = [
+        'version' => 1,
+        'categories' => $categories,
+        'home' => $home ? ['layout' => $home['sidecar']['layout'] ?? 'justified', 'options' => $home['sidecar']['options'] ?? []] : null,
+    ];
+    $entries[] = ['content' => json_encode($structure, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES), 'name' => 'portfolio-structure.json', 'mtime' => time()];
+    return $entries;
+}
+
+if ($method === 'GET' && $uri === '/api/admin/export/settings') {
+    requireAuth();
+    $entries = exportSettingsFileList();
+    $total = 0;
+    foreach ($entries as $e) $total += isset($e['content']) ? strlen($e['content']) : (is_file($e['path'] ?? '') ? filesize($e['path']) : 0);
+    respond(['fileCount' => count($entries), 'totalBytes' => $total]);
+}
+
+if (($method === 'GET' || $method === 'HEAD') && $uri === '/api/admin/export/settings/download') {
+    requireAuth();
+    $entries = exportSettingsFileList();
+    streamZipFromEntries($entries, 'site-settings-' . date('Y-m-d') . '.zip');
+}
+
+// --- Import ---
+
+// One gallery zip back in: find-or-create its category (and any nested
+// collection-gallery) by folder name, find-or-create the gallery itself,
+// then run every file in the zip through portfolioAcceptUpload() in the
+// same order a dragged folder would — media first, _photoshelter.json
+// last, so order/visibility apply the instant every file has landed.
+// _gallery-settings.json's other fields (layout, options, description,
+// etc.) are patched on afterward.
+if ($method === 'POST' && $uri === '/api/admin/import/gallery') {
+    requireAuth();
+    if (empty($_FILES['zip']) || $_FILES['zip']['error'] !== UPLOAD_ERR_OK) respondError('No zip uploaded', 400);
+
+    $za = new ZipArchive();
+    if ($za->open($_FILES['zip']['tmp_name']) !== true) respondError('Could not open that zip', 400);
+    $settingsRaw = $za->getFromName('_gallery-settings.json');
+    if ($settingsRaw === false) { $za->close(); respondError('Missing _gallery-settings.json — this doesn\'t look like a gallery export', 400); }
+    $settings = json_decode($settingsRaw, true);
+    if (!is_array($settings)) { $za->close(); respondError('_gallery-settings.json is not valid JSON', 400); }
+
+    // Same filesystem as PORTFOLIO_DIR, not sys_get_temp_dir(): portfolioAcceptUpload()
+    // moves each file into place with rename(), which fails across a mount
+    // boundary — a real risk on hosts where /tmp is a separate device.
+    $importTmpBase = SITE_DATA . '/tmp';
+    if (!is_dir($importTmpBase)) @mkdir($importTmpBase, 0755, true);
+    $tmpDir = $importTmpBase . '/import_' . bin2hex(random_bytes(8));
+    if (!@mkdir($tmpDir, 0755, true)) { $za->close(); respondError('Could not create a staging folder', 500); }
+    $za->extractTo($tmpDir);
+    $za->close();
+
+    // Walk categoryPath, creating each segment that doesn't already exist:
+    // the first as a real category, any further ones as a nested gallery
+    // acting as a collection (the same shape newSubGallery() already makes).
+    $categoryId = null;
+    $parentGalleryId = null;
+    if (!empty($settings['isHome'])) {
+        $dir = PORTFOLIO_DIR . '/' . PORTFOLIO_HOME_FOLDER;
+        if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    } else {
+        foreach (($settings['categoryPath'] ?? []) as $i => $segFolder) {
+            if ($i === 0) {
+                $existing = null;
+                foreach (portfolioTree()['categories'] as $cat) {
+                    if ($cat['kind'] !== 'gallery' && strcasecmp($cat['folder'], $segFolder) === 0) { $existing = $cat; break; }
+                }
+                if ($existing) { $categoryId = $existing['id']; continue; }
+                $name = portfolioUniqueChildName(PORTFOLIO_DIR, portfolioSafeName($segFolder));
+                @mkdir(PORTFOLIO_DIR . '/' . $name, 0755);
+                portfolioTree(true);
+                foreach (portfolioTree()['categories'] as $cat) {
+                    if ($cat['folder'] === $name) { $categoryId = $cat['id']; break; }
+                }
+            } else {
+                // A nested collection-gallery under the category or the
+                // previous segment. Not exercised by this install's own
+                // data today (no gallery currently holds other galleries),
+                // but kept for a site that does.
+                $siblings = $parentGalleryId
+                    ? (portfolioRequireGallery($parentGalleryId)[1]['children'] ?? [])
+                    : (portfolioRequireCategory($categoryId)['galleries'] ?? []);
+                $existing = null;
+                foreach ($siblings as $g) { if (strcasecmp($g['folder'], $segFolder) === 0) { $existing = $g; break; } }
+                if ($existing) { $parentGalleryId = $existing['id']; continue; }
+                $name = portfolioSafeName($segFolder);
+                $body = $parentGalleryId ? ['parentId' => $parentGalleryId, 'name' => $name] : ['categoryId' => $categoryId, 'name' => $name];
+                // Mirrors POST /api/admin/portfolio/galleries directly —
+                // not a self HTTP call, just the same few lines inline.
+                $parentDir = $parentGalleryId ? portfolioRequireGallery($parentGalleryId)[1]['dir'] : portfolioRequireCategory($categoryId)['dir'];
+                $uniqueName = portfolioUniqueChildName($parentDir, $name);
+                @mkdir($parentDir . '/' . $uniqueName, 0755);
+                portfolioTree(true);
+                $siblings = $parentGalleryId
+                    ? (portfolioRequireGallery($parentGalleryId)[1]['children'] ?? [])
+                    : (portfolioRequireCategory($categoryId)['galleries'] ?? []);
+                foreach ($siblings as $g) { if ($g['folder'] === $uniqueName) { $parentGalleryId = $g['id']; break; } }
+            }
+        }
+    }
+
+    // Find-or-create the gallery itself by folder name under wherever the
+    // path above landed.
+    $dir = null;
+    if (!empty($settings['isHome'])) {
+        $dir = PORTFOLIO_DIR . '/' . PORTFOLIO_HOME_FOLDER;
+        [, $gal] = portfolioRequireGallery(portfolioTree()['home']['id']);
+    } else {
+        $siblings = $parentGalleryId
+            ? (portfolioRequireGallery($parentGalleryId)[1]['children'] ?? [])
+            : ($categoryId ? (portfolioRequireCategory($categoryId)['galleries'] ?? []) : array_filter(portfolioTree()['categories'], fn($c) => $c['kind'] === 'gallery'));
+        $folderWanted = (string)($settings['folder'] ?? 'Imported Gallery');
+        $existing = null;
+        foreach ($siblings as $g) { if (strcasecmp($g['folder'] ?? $g['sidecar']['title'] ?? '', $folderWanted) === 0) { $existing = $g; break; } }
+        if ($existing) {
+            $gid = $existing['id'] ?? $existing['sidecar']['id'];
+            [, $gal] = portfolioRequireGallery($gid);
+        } else {
+            $parentDirForNew = $parentGalleryId ? portfolioRequireGallery($parentGalleryId)[1]['dir'] : ($categoryId ? portfolioRequireCategory($categoryId)['dir'] : PORTFOLIO_DIR);
+            $uniqueName = portfolioUniqueChildName($parentDirForNew, portfolioSafeName($folderWanted));
+            @mkdir($parentDirForNew . '/' . $uniqueName, 0755);
+            portfolioTree(true);
+            $gid = null;
+            foreach (portfolioTree()['categories'] as $cat) {
+                foreach ($cat['galleries'] ?? [] as $g) { if ($g['folder'] === $uniqueName) { $gid = $g['id']; break 2; } }
+                if ($cat['kind'] === 'gallery' && $cat['folder'] === $uniqueName) { $gid = $cat['id']; break; }
+            }
+            if (!$gid) { rrmdirTree($tmpDir); respondError('Could not place the imported gallery', 500); }
+            [, $gal] = portfolioRequireGallery($gid);
+        }
+    }
+
+    // Media first, sidecar last — same order the drag-a-folder import uses,
+    // so order/visibility apply once every file has actually landed.
+    $files = array_diff(scandir($tmpDir), ['.', '..', '_gallery-settings.json']);
+    $mediaFiles = array_values(array_filter($files, fn($f) => strtolower($f) !== PORTFOLIO_PHOTOSHELTER_SIDECAR));
+    $sidecarFile = in_array(PORTFOLIO_PHOTOSHELTER_SIDECAR, $files, true) ? PORTFOLIO_PHOTOSHELTER_SIDECAR : null;
+    $uploaded = 0;
+    foreach ($mediaFiles as $f) {
+        if (portfolioIgnoredName($f)) continue;
+        portfolioAcceptUpload($gal, $tmpDir . '/' . $f, $f);
+        $uploaded++;
+    }
+    if ($sidecarFile) portfolioAcceptUpload($gal, $tmpDir . '/' . $sidecarFile, $sidecarFile);
+
+    // Everything _photoshelter.json doesn't cover: layout, options, text.
+    portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($settings) {
+        foreach (['title', 'description', 'slug', 'layout', 'cover'] as $k) {
+            if (array_key_exists($k, $settings)) $g[$k] = $settings[$k];
+        }
+        if (array_key_exists('visible', $settings)) $g['access'] = $settings['visible'] ? 'public' : 'hidden';
+        if (array_key_exists('options', $settings) && is_array($settings['options'])) {
+            $g['options'] = portfolioNormalizeOptions(array_merge($g['options'] ?? [], $settings['options']));
+        }
+        return $g;
+    });
+    portfolioTree(true);
+    rrmdirTree($tmpDir);
+    respond(['ok' => true, 'uploaded' => $uploaded, 'gallery' => portfolioGalleryResponse($gal['id'])]);
+}
+
+// The settings zip back in: overwrites site-data/data, uploads, captions,
+// logo and .env with whatever the zip holds, then applies
+// portfolio-structure.json — creating any category that isn't already
+// there (by folder name) with its own settings, and the home gallery's
+// layout/options. Never touches a gallery's own media; that's each
+// gallery zip's job.
+if ($method === 'POST' && $uri === '/api/admin/import/settings') {
+    requireAuth();
+    if (empty($_FILES['zip']) || $_FILES['zip']['error'] !== UPLOAD_ERR_OK) respondError('No zip uploaded', 400);
+
+    $za = new ZipArchive();
+    if ($za->open($_FILES['zip']['tmp_name']) !== true) respondError('Could not open that zip', 400);
+
+    $destRoots = [
+        'site-data/data/' => DATA_DIR,
+        'site-data/uploads/' => UPLOADS_DIR,
+        'site-data/captions/' => CAPTIONS_DIR,
+        'site-data/logo/' => LOGO_DIR,
+    ];
+    for ($i = 0; $i < $za->numFiles; $i++) {
+        $name = $za->getNameIndex($i);
+        if ($name === false || substr($name, -1) === '/') continue;
+        if ($name === '.env') {
+            $za->extractTo(__DIR__, $name);
+            continue;
+        }
+        if ($name === 'portfolio-structure.json') continue;
+        foreach ($destRoots as $prefix => $destDir) {
+            if (strpos($name, $prefix) === 0) {
+                $rel = substr($name, strlen($prefix));
+                $dest = $destDir . '/' . $rel;
+                @mkdir(dirname($dest), 0755, true);
+                $data = $za->getFromIndex($i);
+                if ($data !== false) file_put_contents($dest, $data);
+                break;
+            }
+        }
+    }
+    $structureRaw = $za->getFromName('portfolio-structure.json');
+    $za->close();
+
+    $structure = $structureRaw !== false ? json_decode($structureRaw, true) : null;
+    if (is_array($structure)) {
+        $existingFolders = array_column(portfolioTree()['categories'], 'folder');
+        foreach (($structure['categories'] ?? []) as $cat) {
+            $folder = (string)($cat['folder'] ?? '');
+            if ($folder === '') continue;
+            if (!in_array($folder, $existingFolders, true)) {
+                $name = portfolioUniqueChildName(PORTFOLIO_DIR, portfolioSafeName($folder));
+                @mkdir(PORTFOLIO_DIR . '/' . $name, 0755);
+            } else {
+                $name = $folder;
+            }
+            portfolioSidecarPatch(PORTFOLIO_DIR . '/' . $name, '.category.json', function ($c) use ($cat) {
+                foreach (['title', 'slug', 'visible', 'description', 'view'] as $k) {
+                    if (array_key_exists($k, $cat)) $c[$k] = $cat[$k];
+                }
+                return $c;
+            });
+        }
+        if (!empty($structure['home']) && is_array($structure['home'])) {
+            $dir = PORTFOLIO_DIR . '/' . PORTFOLIO_HOME_FOLDER;
+            if (!is_dir($dir)) @mkdir($dir, 0755, true);
+            portfolioSidecarPatch($dir, '.gallery.json', function ($g) use ($structure) {
+                if (!empty($structure['home']['layout'])) $g['layout'] = $structure['home']['layout'];
+                if (!empty($structure['home']['options'])) $g['options'] = portfolioNormalizeOptions(array_merge($g['options'] ?? [], $structure['home']['options']));
+                return $g;
+            });
+        }
+    }
+    portfolioTree(true);
+    respond(['ok' => true]);
 }
 
 // ============================================================

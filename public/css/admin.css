@@ -1910,6 +1910,16 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 .pfa-check-row:hover { background: transparent; }
 .pfa-page-title { color: var(--text); font-size: 14px; }
 .pfa-page-meta { color: var(--text-5); font-size: 12px; }
+
+/* Export panel */
+.pfa-export-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border-row);
+}
+.pfa-export-row span:first-child { flex: 1; color: var(--text); font-size: 14px; }
 .pfa-page-body { width: 100%; max-width: 780px; font-family: var(--font); line-height: 1.6; }
 
 /* Home cover row */

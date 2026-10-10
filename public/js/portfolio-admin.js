@@ -2288,17 +2288,37 @@
     render();
     checkForUpdates();
     loadVideoToolsStatus();
-    loadExportSize();
+    loadSettingsExportSize();
+    loadGalleryExportList();
   }
 
-  async function loadExportSize() {
-    const el = $('pfa-export-size');
+  async function loadSettingsExportSize() {
+    const el = $('pfa-export-settings-size');
     if (!el) return;
     try {
-      const data = await req('/api/admin/export');
+      const data = await req('/api/admin/export/settings');
       el.textContent = `${data.fileCount.toLocaleString()} files, ${bytes(data.totalBytes)} total.`;
     } catch (err) {
       el.textContent = err.message || 'Could not check the export size.';
+    }
+  }
+
+  async function loadGalleryExportList() {
+    const el = $('pfa-export-galleries-list');
+    if (!el) return;
+    try {
+      const data = await req('/api/admin/export/galleries');
+      if (!data.galleries.length) { el.textContent = 'No galleries yet.'; return; }
+      el.innerHTML = data.galleries.map(g => {
+        const path = g.isHome ? 'Home page' : (g.categoryPath.length ? g.categoryPath.join(' / ') + ' / ' + g.title : g.title);
+        return `<div class="pfa-export-row">
+          <span>${esc(path)}</span>
+          <span class="pfa-hint">${g.fileCount} file${g.fileCount === 1 ? '' : 's'}, ${bytes(g.totalBytes)}</span>
+          <a class="ctrl" href="/api/admin/export/gallery/${esc(g.id)}/download">Download</a>
+        </div>`;
+      }).join('');
+    } catch (err) {
+      el.textContent = err.message || 'Could not list galleries.';
     }
   }
 
@@ -2338,11 +2358,41 @@
           </div>
         </section>
         <section class="pfa-group">
-          <h3>Export everything</h3>
+          <h3>Export</h3>
           <div class="pfa-group-body">
-            <p class="pfa-hint">One zip of every gallery, thumbnail, proxy, and setting — unzip it over a fresh install on a new server and it comes back exactly as it is here. Includes .env, so handle and store the download like you would any other backup with live credentials in it.</p>
-            <p id="pfa-export-size" class="pfa-hint">Checking size…</p>
-            <div class="settings-actions"><a class="ctrl" id="pfa-export-btn" href="/api/admin/export/download">Download export</a></div>
+            <p class="pfa-hint">A full backup for moving to a new server: one zip per gallery (its photos/videos, plus the same order-and-visibility info the drag-a-folder import reads), and a separate settings zip for everything else — colors, header, pages, logo, watermark, and <code>.env</code>. Handle and store both like any backup with live credentials in them.</p>
+            <div class="pfa-field">
+              <span>Settings</span>
+              <p id="pfa-export-settings-size" class="pfa-hint">Checking size…</p>
+              <div class="settings-actions"><a class="ctrl" href="/api/admin/export/settings/download">Download settings</a></div>
+            </div>
+            <div class="pfa-field">
+              <span>Galleries</span>
+              <div id="pfa-export-galleries-list" class="pfa-hint">Loading…</div>
+            </div>
+          </div>
+        </section>
+        <section class="pfa-group">
+          <h3>Import</h3>
+          <div class="pfa-group-body">
+            <div class="pfa-field">
+              <span>Settings zip</span>
+              <p class="pfa-hint">Overwrites colors, header, pages, logo, watermark and <code>.env</code> with whatever is in the zip, and creates any collection it lists that isn't already here.</p>
+              <div class="settings-actions">
+                <input type="file" id="pfa-import-settings-file" accept=".zip" hidden>
+                <button class="ctrl" id="pfa-import-settings-btn">Choose settings zip…</button>
+              </div>
+              <div id="pfa-import-settings-status" class="pfa-hint"></div>
+            </div>
+            <div class="pfa-field">
+              <span>Gallery zip</span>
+              <p class="pfa-hint">Creates the gallery (and its collection, if needed) if it doesn't already exist here, uploads its photos/videos, and applies its order, visibility, and settings. One at a time.</p>
+              <div class="settings-actions">
+                <input type="file" id="pfa-import-gallery-file" accept=".zip" hidden>
+                <button class="ctrl" id="pfa-import-gallery-btn">Choose a gallery zip…</button>
+              </div>
+              <div id="pfa-import-gallery-status" class="pfa-hint"></div>
+            </div>
           </div>
         </section>
       </div>`;
@@ -2376,6 +2426,47 @@
       }
       btn.textContent = orig;
       loadVideoToolsStatus();
+    });
+
+    const settingsFile = $('pfa-import-settings-file');
+    $('pfa-import-settings-btn')?.addEventListener('click', () => settingsFile.click());
+    settingsFile?.addEventListener('change', async () => {
+      const file = settingsFile.files[0]; if (!file) return;
+      const status = $('pfa-import-settings-status');
+      const ok = await S().confirm({
+        title: 'Import settings',
+        message: `This overwrites colors, header, pages, logo, watermark and .env with "${file.name}". This can't be undone.`,
+        okText: 'Import', danger: true,
+      });
+      settingsFile.value = '';
+      if (!ok) return;
+      status.textContent = 'Importing…'; status.style.color = '';
+      try {
+        const fd = new FormData(); fd.append('zip', file);
+        await req('/api/admin/import/settings', { method: 'POST', body: fd });
+        status.textContent = 'Imported. Reloading…'; status.style.color = '#4caf50';
+        setTimeout(() => location.reload(), 1200);
+      } catch (err) {
+        status.textContent = err.message || 'Import failed.'; status.style.color = 'var(--danger)';
+      }
+    });
+
+    const galleryFile = $('pfa-import-gallery-file');
+    $('pfa-import-gallery-btn')?.addEventListener('click', () => galleryFile.click());
+    galleryFile?.addEventListener('change', async () => {
+      const file = galleryFile.files[0]; if (!file) return;
+      galleryFile.value = '';
+      const status = $('pfa-import-gallery-status');
+      status.textContent = `Importing "${file.name}"…`; status.style.color = '';
+      try {
+        const fd = new FormData(); fd.append('zip', file);
+        const d = await req('/api/admin/import/gallery', { method: 'POST', body: fd });
+        status.textContent = `Imported ${d.uploaded} file${d.uploaded === 1 ? '' : 's'} into "${d.gallery.title || d.gallery.folder}".`;
+        status.style.color = '#4caf50';
+        loadGalleryExportList();
+      } catch (err) {
+        status.textContent = err.message || 'Import failed.'; status.style.color = 'var(--danger)';
+      }
     });
   }
 

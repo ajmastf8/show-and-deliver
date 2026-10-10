@@ -741,6 +741,35 @@
     </div>`;
   }
 
+  // A "pick" borrowed from another gallery whose source file (or whole
+  // source gallery) is gone shows as a broken tile — one click clears all of
+  // them at once instead of hunting down each tile's own Remove button.
+  function brokenBar(g) {
+    const broken = g.items.filter(i => i.type === 'broken');
+    if (!broken.length) return '';
+    return `<div class="pfa-warnings pfa-broken-bar">
+      <div>${broken.length} picture${broken.length === 1 ? '' : 's'} this gallery links to from another gallery ${broken.length === 1 ? 'no longer exists' : 'no longer exist'}.
+        <button type="button" class="linkish" id="pfa-remove-broken">Remove ${broken.length === 1 ? 'it' : 'them'}</button>
+      </div>
+    </div>`;
+  }
+
+  async function removeBrokenRefs(gid) {
+    const broken = state.gallery.items.filter(i => i.type === 'broken');
+    if (!broken.length) return;
+    const ok = await S().confirm({
+      title: `Remove ${broken.length} broken pick${broken.length === 1 ? '' : 's'}?`,
+      message: 'These only point at pictures that no longer exist elsewhere — removing them clears the broken reference. Nothing else is deleted.',
+      okText: 'Remove', danger: true,
+    });
+    if (!ok) return;
+    const base = `/api/admin/portfolio/galleries/${encodeURIComponent(gid)}`;
+    await act(async () => {
+      for (const item of broken) await req(`${base}/refs/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+    });
+    S().toast(`Removed ${broken.length} broken pick${broken.length === 1 ? '' : 's'}`);
+  }
+
   function toggleSelect(key, fig) {
     if (state.selected.has(key)) state.selected.delete(key); else state.selected.add(key);
     const on = state.selected.has(key);
@@ -909,6 +938,8 @@
             ${g.pending.map(p => `<div>${esc(p)} is still uploading — it will appear once it settles.</div>`).join('')}
             ${g.warnings.map(w => `<div>${esc(w)}</div>`).join('')}
           </div>` : ''}
+
+        ${brokenBar(g)}
 
         ${state.selectMode ? selectionBar(g) : ''}
 
@@ -1162,6 +1193,8 @@
         itemAction(btn.dataset.act, btn.dataset.file, btn.dataset.id, gid);
       });
     });
+
+    if ($('pfa-remove-broken')) $('pfa-remove-broken').addEventListener('click', () => removeBrokenRefs(gid));
 
     // Multi-select: pick several pictures, then hide/show/delete them in one
     // go. A click toggles the tile without a full re-render — selecting

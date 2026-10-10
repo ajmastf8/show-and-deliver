@@ -47,8 +47,8 @@ define('PORTFOLIO_PROCESS_SLICE_SECONDS', 8);
 define('PORTFOLIO_SETTLE_SECONDS', 60);
 define('PORTFOLIO_LAYOUTS', ['justified', 'masonry', 'grid', 'slideshow', 'horizontal', 'fullscreen', 'featured']);
 // A gallery folder migrated from PhotoShelter may carry this sidecar beside
-// the media — see portfolioMigrationMeta().
-define('PORTFOLIO_MIGRATION_SIDECAR', '_photoshelter.json');
+// the media — see portfolioPhotoshelterMeta().
+define('PORTFOLIO_PHOTOSHELTER_SIDECAR', '_photoshelter.json');
 // Per-gallery presentation, kept as words rather than pixels so the same
 // setting reads sensibly on a phone and on a 5K display.
 define('PORTFOLIO_OPTION_VALUES', [
@@ -4435,7 +4435,7 @@ function portfolioIgnoredName($name) {
     if ($name === '' || $name[0] === '.') return true;
     $lower = strtolower($name);
     if ($lower === 'thumbs.db' || $lower === 'desktop.ini' || $name === "Icon\r") return true;
-    if ($lower === PORTFOLIO_MIGRATION_SIDECAR) return true;
+    if ($lower === PORTFOLIO_PHOTOSHELTER_SIDECAR) return true;
     return (bool)preg_match('/\.(part|filepart|partial|tmp|crdownload)$/', $lower);
 }
 
@@ -4444,18 +4444,39 @@ function portfolioIgnoredName($name) {
 // Harmless to leave the file in place after import — only a file's very
 // first reconcile (when it becomes a "new" item) ever consults it, so later
 // manual edits in this admin are never overwritten.
-function portfolioMigrationMeta($dir) {
-    $data = jsonRead($dir . '/' . PORTFOLIO_MIGRATION_SIDECAR);
+function portfolioPhotoshelterMeta($dir) {
+    $data = jsonRead($dir . '/' . PORTFOLIO_PHOTOSHELTER_SIDECAR);
     $out = [];
     foreach ((is_array($data) ? ($data['images'] ?? []) : []) as $img) {
         $name = is_array($img) ? ($img['file_name'] ?? null) : null;
         if (!is_string($name) || $name === '') continue;
-        $out[$name] = [
+        // Keyed lowercase: a copy over FTP/rsync can normalize a file's
+        // extension case (seen in practice — PhotoShelter's own JSON said
+        // "_AA17098.JPG", the file arrived as "_AA17098.jpg"), and this
+        // match has to survive that.
+        $out[strtolower($name)] = [
             'visible' => !array_key_exists('visible', $img) || (bool)$img['visible'],
             'order' => isset($img['display_order']) && is_numeric($img['display_order']) ? (float)$img['display_order'] : null,
         ];
     }
     return $out;
+}
+function portfolioPhotoshelterMetaFor(array $psMeta, string $name) {
+    return $psMeta[strtolower($name)] ?? null;
+}
+// Sorts file names by a migration sidecar's display_order (ascending). Names
+// the sidecar doesn't cover sort after the ones it does, keeping their given
+// relative order (usort is stable in PHP 8+).
+function portfolioPhotoshelterSort(array $names, array $psMeta) {
+    usort($names, function ($a, $b) use ($psMeta) {
+        $oa = portfolioPhotoshelterMetaFor($psMeta, $a)['order'] ?? null;
+        $ob = portfolioPhotoshelterMetaFor($psMeta, $b)['order'] ?? null;
+        if ($oa === null && $ob === null) return 0;
+        if ($oa === null) return 1;
+        if ($ob === null) return -1;
+        return $oa <=> $ob;
+    });
+    return $names;
 }
 
 // URL slug from a folder name. Accents fold to ASCII ("Été" → "ete"); a name
@@ -4703,7 +4724,7 @@ function portfolioScanGallery($dir, array $trusted = []) {
 function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trusted = [], array $slugPrefix = []) {
     $scan = portfolioScanGallery($dir, $trusted);
     $removedIds = [];
-    $psMeta = portfolioMigrationMeta($dir);
+    $psMeta = portfolioPhotoshelterMeta($dir);
     $g = portfolioSidecarUpdate("$dir/.gallery.json", function ($g) use ($scan, $folder, $takenSlugs, &$removedIds, $dir, $psMeta) {
         $g['version'] = 1;
         if (empty($g['id'])) $g['id'] = generateId('pg_');
@@ -4756,7 +4777,7 @@ function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trus
             $items[$name] = [
                 'id' => generateId($f['type'] === 'video' ? 'v_' : 'p_'),
                 'title' => '', 'description' => '',
-                'visible' => $psMeta[$name]['visible'] ?? true,
+                'visible' => portfolioPhotoshelterMetaFor($psMeta, $name)['visible'] ?? true,
                 'width' => 0, 'height' => 0, 'thumb' => 0, 'proxy' => 0,
                 'addedAt' => date('c'),
             ];
@@ -4784,20 +4805,12 @@ function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trus
             if (is_string($o) && !isset($kept[$o]) && (isset($items[$o]) || isset($headers[$o]) || isset($refs[$o]))) $kept[$o] = true;
         }
         // Files not already in the saved order are new to this gallery. A
-        // PhotoShelter migration sidecar (see portfolioMigrationMeta()) can
+        // PhotoShelter migration sidecar (see portfolioPhotoshelterMeta()) can
         // say what order they were shown in there; honor it so a migrated
         // gallery arrives in its original sequence instead of alphabetical.
         // Items the sidecar doesn't mention keep their natural scan order and
         // sort after the ones it does.
-        $newNames = array_values(array_filter(array_keys($items), fn($name) => !isset($kept[$name])));
-        usort($newNames, function ($a, $b) use ($psMeta) {
-            $oa = $psMeta[$a]['order'] ?? null;
-            $ob = $psMeta[$b]['order'] ?? null;
-            if ($oa === null && $ob === null) return 0;
-            if ($oa === null) return 1;
-            if ($ob === null) return -1;
-            return $oa <=> $ob;
-        });
+        $newNames = portfolioPhotoshelterSort(array_values(array_filter(array_keys($items), fn($name) => !isset($kept[$name]))), $psMeta);
         foreach ($newNames as $name) { $kept[$name] = true; }
         $g['order'] = array_map('strval', array_keys($kept));
         $g['headers'] = array_intersect_key($headers, $kept);
@@ -6498,6 +6511,39 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/order'
         return $g;
     });
     respond(['ok' => true]);
+}
+
+// Re-applies a gallery's _photoshelter.json to items already in the
+// gallery — not just newly discovered ones. portfolioReconcileGallery()'s
+// automatic pass only ever looks at a file the first time it's scanned, so
+// if the sidecar is copied in after that (or the gallery was imported before
+// this feature existed), its visible/display_order never took effect. This
+// is the explicit, deliberate fix: run it once the sidecar is in place.
+if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/photoshelter-sync', $uri, $params)) {
+    requireAuth();
+    [, $gal] = portfolioRequireGallery($params['gid']);
+    $psMeta = portfolioPhotoshelterMeta($gal['dir']);
+    if (!$psMeta) respondError('No ' . PORTFOLIO_PHOTOSHELTER_SIDECAR . ' found in this gallery\'s folder.', 404);
+    $matched = 0;
+    portfolioSidecarPatch($gal['dir'], '.gallery.json', function ($g) use ($psMeta, &$matched) {
+        foreach ($g['items'] as $name => &$it) {
+            $meta = portfolioPhotoshelterMetaFor($psMeta, $name);
+            if ($meta === null) continue;
+            $matched++;
+            $it['visible'] = $meta['visible'];
+        }
+        unset($it);
+        $kept = [];
+        foreach (portfolioPhotoshelterSort(array_keys($g['items']), $psMeta) as $name) { $kept[$name] = true; }
+        // Section headers and picks aren't part of a PhotoShelter gallery;
+        // keep them, placed after the sorted items, rather than drop them.
+        foreach ($g['order'] as $key) {
+            if (!isset($kept[$key]) && (isset($g['headers'][$key]) || isset($g['refs'][$key]))) $kept[$key] = true;
+        }
+        $g['order'] = array_keys($kept);
+        return $g;
+    });
+    respond(['ok' => true, 'matched' => $matched, 'total' => count($psMeta), 'gallery' => portfolioGalleryResponse($params['gid'])]);
 }
 
 // Items

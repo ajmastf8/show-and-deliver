@@ -787,6 +787,7 @@
               ${isCollection ? '' : '<button type="button" id="pfa-add-section">Add section</button>'}
               ${isCollection ? '' : '<button type="button" id="pfa-add-picks">Add from the library</button>'}
               ${isHome || isCollection || g.itemCount ? '' : '<button type="button" id="pfa-new-subgallery">New gallery (make it a collection)</button>'}
+              ${isHome || isCollection ? '' : '<button type="button" id="pfa-g-photoshelter-sync">Sync from migration file</button>'}
               ${isHome ? '' : '<button type="button" id="pfa-g-rename">Rename</button>'}
               ${isHome ? '' : `<button type="button" class="danger" id="pfa-g-delete">${isCollection ? 'Delete collection' : 'Delete gallery'}</button>`}
             </div>
@@ -1030,6 +1031,7 @@
       $('pfa-slug').addEventListener('change', e => put({ slug: e.target.value }));
       $('pfa-g-rename').addEventListener('click', () => renameGallery(g));
       $('pfa-g-delete').addEventListener('click', () => deleteGallery(g));
+      if ($('pfa-g-photoshelter-sync')) $('pfa-g-photoshelter-sync').addEventListener('click', () => photoshelterSync(g));
     }
     wireRail();
     const more = $('pfa-more');
@@ -2008,6 +2010,19 @@
     if (name && name.trim() && name !== g.folder) {
       act(() => send('/api/admin/portfolio/galleries/' + encodeURIComponent(g.id), 'PUT', { folder: name }));
     }
+  }
+
+  async function photoshelterSync(g) {
+    const ok = await S().confirm({
+      title: 'Sync from migration file?',
+      message: `Reads _photoshelter.json in "${g.folder}" and applies its hidden/shown state and display order to every file it mentions — including ones already imported. Anything you've changed by hand on those files since is overwritten.`,
+      okText: 'Sync', danger: true,
+    });
+    if (!ok) return;
+    await act(async () => {
+      const r = await send('/api/admin/portfolio/galleries/' + encodeURIComponent(g.id) + '/photoshelter-sync', 'POST', {});
+      S().toast(`Matched ${r.matched} of ${r.total} file${r.total === 1 ? '' : 's'} in _photoshelter.json`);
+    });
   }
 
   async function deleteGallery(g) {

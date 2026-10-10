@@ -1740,6 +1740,14 @@
             </div>
           </div>
           <div class="pfa-field">
+            <span>Size — ${(t.watermark || {}).scale ?? 18}% of the picture's width</span>
+            <input type="range" id="pfa-wm-scale" min="5" max="60" value="${(t.watermark || {}).scale ?? 18}">
+          </div>
+          <div class="pfa-field">
+            <span>Dimness — ${(t.watermark || {}).opacity ?? 85}% opaque</span>
+            <input type="range" id="pfa-wm-opacity" min="5" max="100" value="${(t.watermark || {}).opacity ?? 85}">
+          </div>
+          <div class="pfa-field">
             <span>Image</span>
             <div class="pfa-logo-row">
               ${(t.watermark || {}).src ? `<img src="${esc(t.watermark.src)}" alt="" class="pfa-logo-preview">` : '<span class="pfa-hint">No watermark — upload a transparent PNG</span>'}
@@ -1779,6 +1787,16 @@
     if ($('pfa-wm-enabled')) $('pfa-wm-enabled').addEventListener('change', e => wm({ enabled: e.target.checked }));
     $('pfa-centre').querySelectorAll('[data-wm-pos]').forEach(b =>
       b.addEventListener('click', () => wm({ position: b.dataset.wmPos })));
+    const wmScale = $('pfa-wm-scale');
+    if (wmScale) {
+      wmScale.addEventListener('input', () => { wmScale.previousElementSibling.textContent = `Size — ${wmScale.value}% of the picture's width`; });
+      wmScale.addEventListener('change', () => wm({ scale: Number(wmScale.value) }));
+    }
+    const wmOpacity = $('pfa-wm-opacity');
+    if (wmOpacity) {
+      wmOpacity.addEventListener('input', () => { wmOpacity.previousElementSibling.textContent = `Dimness — ${wmOpacity.value}% opaque`; });
+      wmOpacity.addEventListener('change', () => wm({ opacity: Number(wmOpacity.value) }));
+    }
     if ($('pfa-wm-upload')) $('pfa-wm-upload').addEventListener('click', () => $('pfa-wm-file').click());
     if ($('pfa-wm-file')) $('pfa-wm-file').addEventListener('change', async e => {
       const file = e.target.files[0]; if (!file) return;

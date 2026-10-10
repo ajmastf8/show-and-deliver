@@ -5634,7 +5634,12 @@ function portfolioWatermarkFor($cat, $gal) {
     $galOpt = $gal['sidecar']['options']['watermark'] ?? 'inherit';
     $catOpt = $cat['sidecar']['watermark'] ?? 'inherit';
     if ($galOpt === 'off' || $catOpt === 'off') return null;
-    return ['src' => $wm['src'], 'position' => $wm['position']];
+    return [
+        'src' => $wm['src'],
+        'position' => $wm['position'],
+        'scale' => $wm['scale'] ?? 18,
+        'opacity' => $wm['opacity'] ?? 85,
+    ];
 }
 
 // Public categories, each with its public galleries; empty ones are left out.
@@ -7447,10 +7452,17 @@ function readThemeConfig() {
             'sidebar' => in_array($t['index']['sidebar'] ?? '', ['off', 'left', 'right'], true) ? $t['index']['sidebar'] : 'off',
         ],
         // A transparent PNG stamped over portfolio pictures, corner-positioned.
+        // scale is the image's width as a percentage of the tile (CSS also
+        // caps it between 54px and 160px either way); opacity is a percentage
+        // of fully opaque. Defaults match what was hard-coded in CSS before
+        // these existed, so an installation with neither set keeps looking
+        // exactly as it did.
         'watermark' => [
             'enabled' => !empty($t['watermark']['enabled']),
             'position' => in_array($t['watermark']['position'] ?? '', ['tl', 'tr', 'bl', 'br', 'center'], true) ? $t['watermark']['position'] : 'br',
             'src' => (string)($t['watermark']['src'] ?? ''),
+            'scale' => min(60, max(5, (int)($t['watermark']['scale'] ?? 18))),
+            'opacity' => min(100, max(5, (int)($t['watermark']['opacity'] ?? 85))),
         ],
     ];
 }

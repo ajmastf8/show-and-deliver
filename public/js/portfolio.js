@@ -341,6 +341,8 @@ function renderGalleryBody(container, gallery, layoutName) {
       const wm = el('img', `pf-watermark pf-wm-${gallery.watermark.position || 'br'}`);
       wm.src = gallery.watermark.src;
       wm.alt = '';
+      if (gallery.watermark.scale) wm.style.width = gallery.watermark.scale + '%';
+      if (gallery.watermark.opacity != null) wm.style.opacity = gallery.watermark.opacity / 100;
       node.appendChild(wm);
     }
     if (lightbox) node.addEventListener('click', () => lightbox.loadAndOpen(index));

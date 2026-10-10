@@ -282,7 +282,6 @@ function buildViewToggle(onToggleGrid, onFullscreen) {
   g.title = 'Grid view';
   g.setAttribute('aria-label', 'Grid view');
   g.setAttribute('aria-pressed', 'false');
-  g.innerHTML = `<svg viewBox="0 0 42 26" aria-hidden="true">${VIEW_ICONS.grid}</svg>`;
   g.addEventListener('click', onToggleGrid);
   bar.appendChild(g);
   if (onFullscreen) {
@@ -294,9 +293,13 @@ function buildViewToggle(onToggleGrid, onFullscreen) {
     b.addEventListener('click', onFullscreen);
     bar.appendChild(b);
   }
+  // The icon shows what the button switches to, not the current state —
+  // already in the flat grid, it offers the single square of the gallery's
+  // own layout; showing its own layout, it offers the grid.
   bar.setGrid = on => {
     g.classList.toggle('active', on);
     g.setAttribute('aria-pressed', on ? 'true' : 'false');
+    g.innerHTML = `<svg viewBox="0 0 42 26" aria-hidden="true">${on ? VIEW_ICONS.fullscreen : VIEW_ICONS.grid}</svg>`;
   };
   return bar;
 }

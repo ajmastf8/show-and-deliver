@@ -37,14 +37,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   const text = el('div', 'pf-page-text');
-  // The body is plain text with blank lines between paragraphs; links are
-  // detected by caption-box.js's rules, which every other text block uses.
-  page.body.split(/\n{2,}/).forEach(para => {
-    const p = el('p');
-    if (window.renderCaptionBox) window.renderCaptionBox(p, para);
-    else p.textContent = para;
-    text.appendChild(p);
-  });
+  // A page saved with the rich editor carries real HTML (sanitized
+  // server-side on save); one saved before that editor existed is still
+  // plain text with blank lines between paragraphs, which this renders the
+  // same way it always has — auto-linked by caption-box.js's rules.
+  if (/<[a-z][\s\S]*>/i.test(page.body)) {
+    text.innerHTML = page.body;
+  } else {
+    page.body.split(/\n{2,}/).forEach(para => {
+      const p = el('p');
+      if (window.renderCaptionBox) window.renderCaptionBox(p, para);
+      else p.textContent = para;
+      text.appendChild(p);
+    });
+  }
   body.appendChild(text);
   root.appendChild(body);
 

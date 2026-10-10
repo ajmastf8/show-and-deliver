@@ -1058,6 +1058,31 @@ code, kbd, samp { font-family: inherit; font-size: inherit; }
 }
 .setting-input:focus { outline: none; border-color: var(--accent); }
 textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
+
+.pfa-richtoolbar { display: flex; gap: 4px; margin-bottom: 6px; }
+.pfa-richtoolbar button {
+  width: 30px; height: 28px;
+  background: var(--page);
+  border: 1px solid var(--border-input);
+  border-radius: 3px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.pfa-richtoolbar button:hover { border-color: var(--accent); }
+.pfa-richtoolbar button.active { border-color: var(--accent); background: var(--accent-dim); }
+.pfa-richtext {
+  height: auto; min-height: 240px;
+  padding: 10px 12px;
+  overflow-y: auto;
+  line-height: 1.6;
+}
+.pfa-richtext:focus { outline: none; border-color: var(--accent); }
+.pfa-richtext p { margin: 0 0 1em; }
+.pfa-richtext p:last-child { margin-bottom: 0; }
+.pfa-richtext table { border-collapse: collapse; margin: 0 0 1em; }
+.pfa-richtext table td, .pfa-richtext table th { border: 1px solid var(--border-input); padding: 6px 10px; min-width: 60px; }
 .setting-hint { font-size: 12.5px; color: var(--text-5); margin: 6px 0 0; }
 .setting-hint a { color: var(--accent); }
 .settings-actions { display: flex; gap: 14px; align-items: center; margin-top: 20px; }

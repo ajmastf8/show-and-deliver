@@ -477,6 +477,8 @@
 .pf-page-text { max-width: 68ch; color: var(--color-body-text); line-height: 1.75; }
 .pf-page-text p { margin: 0 0 1.1em; white-space: pre-wrap; }
 .pf-page-text a { color: var(--color-primary); text-decoration: underline; text-underline-offset: 2px; }
+.pf-page-text table { border-collapse: collapse; margin: 0 0 1.1em; max-width: 100%; }
+.pf-page-text table td, .pf-page-text table th { border: 1px solid var(--color-gray-mid); padding: 6px 10px; }
 
 .pf-contact-form { display: flex; flex-direction: column; gap: 14px; max-width: 520px; margin-top: 26px; }
 

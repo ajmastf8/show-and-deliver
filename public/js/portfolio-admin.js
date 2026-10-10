@@ -2665,10 +2665,18 @@
           </div>
         </div>
       </div>
-      <label class="pfa-field wide">
-        <span>Text — blank lines start a new paragraph, and links are detected</span>
-        <textarea class="setting-input pfa-page-body" id="pfa-page-body" rows="16" maxlength="20000">${esc(page.body)}</textarea>
-      </label>
+      <div class="pfa-field wide">
+        <span>Text</span>
+        <div class="pfa-richtoolbar" id="pfa-page-toolbar">
+          <button type="button" data-cmd="bold" title="Bold"><b>B</b></button>
+          <button type="button" data-cmd="italic" title="Italic"><i>I</i></button>
+          <button type="button" data-cmd="underline" title="Underline"><u>U</u></button>
+          <button type="button" data-cmd="insertUnorderedList" title="Bullet list">&bull;&equiv;</button>
+          <button type="button" data-cmd="insertOrderedList" title="Numbered list">1.&equiv;</button>
+          <button type="button" data-act="table" title="Insert table">&squf;&squf;</button>
+        </div>
+        <div class="pfa-richtext setting-input" id="pfa-page-body" contenteditable="true"></div>
+      </div>
       ${page.type === 'contact' ? '<p class="pfa-hint">The form appears under this text and emails the address in Settings &rarr; Email.</p>' : ''}`;
   }
 
@@ -2682,7 +2690,33 @@
     $('pfa-page-title').addEventListener('change', e => save({ title: e.target.value }));
     $('pfa-page-slug').addEventListener('change', e => save({ slug: e.target.value }));
     $('pfa-page-visible').addEventListener('change', e => save({ visible: e.target.checked }));
-    $('pfa-page-body').addEventListener('change', e => save({ body: e.target.value }));
+
+    // A page's text used to be plain, blank-line-separated paragraphs with
+    // auto-detected links — pages saved before the rich editor still have
+    // that, so it's converted to the same look in HTML the first time it's
+    // opened here rather than dumped in as one unbroken line. Once saved
+    // again the body is real HTML and this conversion no longer applies.
+    const bodyEl = $('pfa-page-body');
+    const looksLikeHtml = /<[a-z][\s\S]*>/i.test(page.body);
+    bodyEl.innerHTML = looksLikeHtml ? page.body : page.body.split(/\n{2,}/).filter(Boolean)
+      .map(para => `<p>${para.split('\n').map(esc).join('<br>')
+        .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>')}</p>`)
+      .join('');
+    bodyEl.addEventListener('blur', () => save({ body: bodyEl.innerHTML }));
+
+    $('pfa-page-toolbar').addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      bodyEl.focus();
+      if (btn.dataset.cmd) {
+        document.execCommand(btn.dataset.cmd, false, null);
+      } else if (btn.dataset.act === 'table') {
+        const rows = 3, cols = 3;
+        const rowsHtml = Array.from({ length: rows }, () =>
+          `<tr>${'<td>&nbsp;</td>'.repeat(cols)}</tr>`).join('');
+        document.execCommand('insertHTML', false, `<table>${rowsHtml}</table><p><br></p>`);
+      }
+    });
     const file = $('pfa-page-image-file');
     $('pfa-page-image-btn').addEventListener('click', () => file.click());
     file.addEventListener('change', () => {

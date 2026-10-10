@@ -6896,6 +6896,24 @@ if ($method === 'POST' && $uri === '/api/admin/portfolio/process') {
 function readPages() { return jsonRead(PAGES_PATH) ?: []; }
 function writePages($pages) { jsonWrite(PAGES_PATH, array_values($pages)); }
 
+// A page's body comes from the admin's rich-text editor, not the public, but
+// it is rendered straight into the public page — so this strips the handful
+// of constructs that would otherwise let it run script in a visitor's
+// browser. Not a full HTML sanitizer, just the realistic single-admin-author
+// threat model: no <script>/<style>/<iframe>/<object>/<embed>/<form>, no
+// inline event handlers, no javascript:/data: URLs.
+function sanitizePageBody($html) {
+    $html = (string)$html;
+    $html = preg_replace('#<(script|style|iframe|object|embed|form)\b[^>]*>.*?</\1>#is', '', $html);
+    $html = preg_replace('#<(script|style|iframe|object|embed|form|meta|link)\b[^>]*/?>#i', '', $html);
+    $html = preg_replace('#\s+on[a-z]+\s*=\s*"[^"]*"#i', '', $html);
+    $html = preg_replace("#\\s+on[a-z]+\\s*=\\s*'[^']*'#i", '', $html);
+    $html = preg_replace('#\s+on[a-z]+\s*=\s*[^\s>]+#i', '', $html);
+    $html = preg_replace('#(href|src)\s*=\s*"\s*(javascript|data):[^"]*"#i', '$1="#"', $html);
+    $html = preg_replace("#(href|src)\\s*=\\s*'\\s*(javascript|data):[^']*'#i", "\$1='#'", $html);
+    return $html;
+}
+
 function pagePayload($p, $admin = false) {
     $out = [
         'id' => $p['id'],
@@ -7007,7 +7025,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/pages/{id}', $uri, $params)) {
     foreach ($pages as &$p) {
         if ($p['id'] !== $params['id']) continue;
         if (isset($input['title']) && trim($input['title']) !== '') $p['title'] = mb_substr(trim($input['title']), 0, 120);
-        if (isset($input['body'])) $p['body'] = mb_substr((string)$input['body'], 0, 20000);
+        if (isset($input['body'])) $p['body'] = sanitizePageBody(mb_substr((string)$input['body'], 0, 50000));
         if (array_key_exists('image', $input)) $p['image'] = $input['image'] ?: null;
         if (array_key_exists('visible', $input)) $p['visible'] = (bool)$input['visible'];
         if (!empty($input['slug'])) $p['slug'] = pageUniqueSlug((string)$input['slug'], $p['id']);

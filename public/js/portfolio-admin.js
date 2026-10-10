@@ -589,6 +589,11 @@
                <p class="pfa-hint">Create one, or drop a folder of photos into
                  <code>site-data/portfolio/${esc(cat ? cat.folder : '&lt;Category&gt;')}/</code> over FTP — it shows up on its own.</p>
              </div>`}
+        <div class="pfa-drop ${galleries.length ? 'compact' : ''}" id="pfa-browse-drop">
+          <p>Drag folders here — each one becomes a gallery${cat ? '' : ', or a collection'}. A folder holding only
+            subfolders (and maybe a PhotoShelter JSON) becomes a ${cat ? 'nested collection' : 'collection'}, one gallery per subfolder.</p>
+          <div id="pfa-browse-upload-status"></div>
+        </div>
       </div>
       ${cat ? railMarkup(`
         <div class="pfa-settings">
@@ -633,6 +638,12 @@
     if ($('pfa-new-gallery')) $('pfa-new-gallery').addEventListener('click', newGallery);
     if ($('pfa-new-coll')) $('pfa-new-coll').addEventListener('click', newCategory);
     if ($('pfa-new-topgallery')) $('pfa-new-topgallery').addEventListener('click', newTopGallery);
+    const browseDrop = $('pfa-browse-drop');
+    if (browseDrop) {
+      ['dragenter', 'dragover'].forEach(ev => browseDrop.addEventListener(ev, e => { e.preventDefault(); browseDrop.classList.add('over'); }));
+      ['dragleave', 'drop'].forEach(ev => browseDrop.addEventListener(ev, e => { e.preventDefault(); browseDrop.classList.remove('over'); }));
+      browseDrop.addEventListener('drop', e => importDroppedItems([...(e.dataTransfer?.items || [])], { categoryId: cat ? cat.id : null }));
+    }
     if (cat) {
       $('pfa-cat-rename').addEventListener('click', () => renameCategory(cat));
       wireRail();
@@ -2748,6 +2759,143 @@
       }
     }
     await act(async () => {});
+  }
+
+  // ---------- Drag-a-folder import ----------
+  // Dropping a folder onto the Image Library or a collection creates it as a
+  // gallery, uploading whatever photos/videos (and a PhotoShelter sidecar) it
+  // holds directly. A folder holding only subfolders (and maybe that JSON) is
+  // treated as a collection instead — a real top-level category if dropped at
+  // the Image Library root, or a gallery-that-holds-galleries (the same
+  // nesting newSubGallery already uses) if dropped inside one — one new
+  // gallery per subfolder.
+
+  const DROP_MEDIA_EXTS = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'mp4', 'webm', 'mov', 'm4v'];
+  const isDropMediaName = name => DROP_MEDIA_EXTS.includes((name.split('.').pop() || '').toLowerCase());
+  const isDropSidecarName = name => name.toLowerCase() === '_photoshelter.json';
+
+  function readDirectoryEntries(dirEntry) {
+    return new Promise((resolve, reject) => {
+      const reader = dirEntry.createReader();
+      const all = [];
+      const readBatch = () => reader.readEntries(batch => {
+        if (!batch.length) { resolve(all); return; }
+        all.push(...batch);
+        readBatch();
+      }, reject);
+      readBatch();
+    });
+  }
+
+  const fileFromEntry = entry => new Promise((resolve, reject) => entry.file(resolve, reject));
+
+  function dropStatusRow(status, text) {
+    if (!status) return { set() {}, done() {}, fail() {} };
+    const row = document.createElement('div');
+    row.className = 'pfa-upload-row';
+    row.textContent = text;
+    status.appendChild(row);
+    return {
+      set(t) { row.textContent = t; },
+      done(t) { row.textContent = t; setTimeout(() => row.remove(), 4000); },
+      fail(t) { row.textContent = t; row.classList.add('bad'); },
+    };
+  }
+
+  // Entries must come from a synchronous webkitGetAsEntry() call inside the
+  // drop handler itself — the DataTransfer is cleared once that handler
+  // returns, so this must be the first thing done with it, before any await.
+  async function importDroppedItems(items, attach) {
+    const entries = items.map(it => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+    const dirs = entries.filter(e => e.isDirectory);
+    if (!dirs.length) {
+      S().toast(entries.length ? 'Drop a folder, not individual files, to create a gallery' : 'Nothing usable was dropped');
+      return;
+    }
+    const status = $('pfa-browse-upload-status') || $('pfa-upload-status');
+    for (const dir of dirs) {
+      await importFolderEntry(dir, attach, status);
+    }
+    await act(async () => {});
+  }
+
+  async function importFolderEntry(dirEntry, attach, status) {
+    const children = await readDirectoryEntries(dirEntry);
+    const fileChildren = children.filter(c => c.isFile);
+    const subDirs = children.filter(c => c.isDirectory);
+    const mediaEntries = fileChildren.filter(c => isDropMediaName(c.name));
+    const sidecarEntry = fileChildren.find(c => isDropSidecarName(c.name));
+
+    if (mediaEntries.length) {
+      await createGalleryFromDrop(dirEntry.name, mediaEntries, sidecarEntry, attach, status);
+    } else if (subDirs.length) {
+      await createCollectionFromDrop(dirEntry.name, subDirs, attach, status);
+    } else {
+      S().toast(`"${dirEntry.name}" is empty — skipped`);
+    }
+  }
+
+  async function createGalleryFromDrop(folderName, mediaEntries, sidecarEntry, attach, status) {
+    const row = dropStatusRow(status, `${folderName} — creating gallery…`);
+    let gallery;
+    try {
+      const body = attach.parentGalleryId ? { parentId: attach.parentGalleryId, name: folderName }
+        : attach.categoryId ? { categoryId: attach.categoryId, name: folderName }
+        : { name: folderName };
+      const r = await send('/api/admin/portfolio/galleries', 'POST', body);
+      gallery = r.gallery;
+    } catch (err) {
+      row.fail(`${folderName} — ${err.message || 'could not create the gallery'}`);
+      return;
+    }
+    const allEntries = sidecarEntry ? [...mediaEntries, sidecarEntry] : mediaEntries;
+    let done = 0;
+    for (const entry of allEntries) {
+      row.set(`${folderName} — ${done}/${allEntries.length}`);
+      try {
+        const file = await fileFromEntry(entry);
+        await S().uploadToPortfolio(file, gallery.id, () => {});
+      } catch (err) {
+        row.fail(`${folderName} — ${entry.name} failed: ${err.message || 'error'}`);
+        return;
+      }
+      done++;
+    }
+    row.done(`${folderName} — ${done} file${done === 1 ? '' : 's'} uploaded`);
+  }
+
+  async function createCollectionFromDrop(folderName, subDirs, attach, status) {
+    const row = dropStatusRow(status, `${folderName} — creating collection…`);
+    let containerAttach;
+    if (!attach.categoryId && !attach.parentGalleryId) {
+      let created;
+      try {
+        created = await send('/api/admin/portfolio/categories', 'POST', { name: folderName });
+      } catch (err) {
+        row.fail(`${folderName} — ${err.message || 'could not create the collection'}`);
+        return;
+      }
+      const tree = await req('/api/admin/portfolio');
+      const newCat = tree.categories.find(c => c.folder === created.folder);
+      if (!newCat) { row.fail(`${folderName} — created, but couldn't be found again`); return; }
+      containerAttach = { categoryId: newCat.id };
+    } else {
+      let gallery;
+      try {
+        const body = attach.parentGalleryId ? { parentId: attach.parentGalleryId, name: folderName }
+          : { categoryId: attach.categoryId, name: folderName };
+        const r = await send('/api/admin/portfolio/galleries', 'POST', body);
+        gallery = r.gallery;
+      } catch (err) {
+        row.fail(`${folderName} — ${err.message || 'could not create the collection'}`);
+        return;
+      }
+      containerAttach = { parentGalleryId: gallery.id };
+    }
+    row.done(`${folderName} — collection created`);
+    for (const subDir of subDirs) {
+      await importFolderEntry(subDir, containerAttach, status);
+    }
   }
 
   // ---------- Categories and galleries ----------

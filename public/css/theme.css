@@ -70,10 +70,12 @@
 
 /* --- Dark preset touch-ups --- */
 
-/* These two paint themselves white rather than through the palette, because
-   they are normally read against a photograph. */
+/* This one paints itself white rather than through the palette, because it
+   is normally read against a photograph. .pf-tile matches the page itself
+   (see portfolio.css) so a sliver showing past an image's edge blends in
+   instead of reading as a box; .pf-card-frame keeps the lighter grey — cards
+   sit on the page with a gap around them, so a placeholder shade is fine. */
 [data-theme="dark"] .mobile-nav { background: var(--color-white); }
-[data-theme="dark"] .pf-tile,
 [data-theme="dark"] .pf-card-frame { background: var(--color-gray-light); }
 [data-theme="dark"] .pf-tile-placeholder {
   background: repeating-linear-gradient(45deg, #1b1b1b, #1b1b1b 10px, #222 10px, #222 20px);

@@ -93,8 +93,14 @@
   padding: 0;
   border: 0;
   overflow: hidden;
-  border-radius: var(--radius-card);
-  background: var(--color-gray-light);
+  /* Square, not rounded — pictures sit edge-to-edge or butt against each
+     other, and a rounded corner there reads as a notch at every seam. */
+  border-radius: 0;
+  /* Matches the page, not a lighter placeholder grey — most layouts are
+     full-bleed, so any sliver still showing (while an image loads, or
+     letterboxing a "Whole frame" crop) blends in instead of reading as a
+     visible box. */
+  background: var(--color-white);
   cursor: zoom-in;
 }
 
@@ -142,8 +148,10 @@
 /* --- Layouts --- */
 
 /* Justified rows and masonry columns are positioned in JS; these only set the
-   boxes the JS measures. */
-.pf-justified .pf-row { display: flex; margin-bottom: 8px; }
+   boxes the JS measures. Row-to-row spacing is set inline (justified() in
+   layouts.js), so it follows the gallery's own Gap option instead of a fixed
+   number. */
+.pf-justified .pf-row { display: flex; }
 .pf-masonry { display: flex; align-items: flex-start; }
 .pf-masonry .pf-column { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 

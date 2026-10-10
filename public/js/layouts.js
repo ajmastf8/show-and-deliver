@@ -8,7 +8,7 @@
 // A gallery's options arrive as words; these turn them into numbers. Keeping
 // the stored value abstract means one setting reads sensibly on a phone and on
 // a 5K display, and we can retune the numbers without touching saved galleries.
-export const GAPS = { tight: 3, normal: 10, wide: 26 };
+export const GAPS = { tight: 0, normal: 10, wide: 26 };
 export const ROW_HEIGHTS = { compact: 210, normal: 290, roomy: 400 };
 export const COLUMN_WIDTHS = { compact: 240, normal: 330, roomy: 460 };
 
@@ -53,6 +53,7 @@ export function justified(root, items, tile, opts = {}) {
       const el = document.createElement('div');
       el.className = 'pf-row';
       el.style.gap = gap + 'px';
+      el.style.marginBottom = gap + 'px';
       row.forEach(({ node, r }) => {
         node.style.width = Math.floor(h * r) + 'px';
         node.style.height = Math.floor(h) + 'px';

@@ -24,6 +24,11 @@
     duplicates: null,   // its payload
     trashView: false,   // the Trash panel
     trash: null,        // its payload
+    emailView: false,   // the Email panel
+    email: null,        // its payload
+    updateView: false,  // the Update panel
+    apiView: false,     // the API panel
+    apiToken: null,     // its payload
     item: null,         // the open item's metadata view
     selectMode: false,  // multi-select in the open gallery's item grid
     selected: new Set(), // selected file names, while selectMode is on
@@ -218,6 +223,9 @@
     else if (state.readinessView) renderReadiness();
     else if (state.duplicatesView) renderDuplicates();
     else if (state.trashView) renderTrash();
+    else if (state.emailView) renderEmail();
+    else if (state.updateView) renderUpdate();
+    else if (state.apiView) renderApi();
     else if (state.galleryId && state.gallery) renderGalleryEditor();
     else renderBrowse();
   }
@@ -271,13 +279,13 @@
         <div class="rail-row sub ${state.pagesView ? 'active' : ''}" id="pfa-pages-row">
           <span class="rail-name">Pages</span>
         </div>
-        <div class="rail-row sub" id="pfa-settings-update-row">
+        <div class="rail-row sub ${state.updateView ? 'active' : ''}" id="pfa-update-row">
           <span class="rail-name">Update</span>
         </div>
-        <div class="rail-row sub" id="pfa-settings-email-row">
+        <div class="rail-row sub ${state.emailView ? 'active' : ''}" id="pfa-email-row">
           <span class="rail-name">Email</span>
         </div>
-        <div class="rail-row sub" id="pfa-settings-api-row">
+        <div class="rail-row sub ${state.apiView ? 'active' : ''}" id="pfa-api-row">
           <span class="rail-name">API</span>
         </div>
         <details class="rail-group sub" id="pfa-checks" ${state.readinessView || state.duplicatesView || state.checksOpen ? 'open' : ''}>
@@ -379,6 +387,9 @@
         state.readinessView = false;
         state.duplicatesView = false;
         state.trashView = false;
+        state.emailView = false;
+        state.updateView = false;
+        state.apiView = false;
         render();
       });
     });
@@ -410,13 +421,9 @@
     $('pfa-readiness-row').addEventListener('click', openReadiness);
     $('pfa-duplicates-row').addEventListener('click', openDuplicates);
     $('pfa-trash-row').addEventListener('click', openTrash);
-    const jumpToSettings = (tab) => () => {
-      S().setScreen('settings');
-      document.querySelector(`[data-settings-tab="${tab}"]`)?.click();
-    };
-    $('pfa-settings-email-row').addEventListener('click', jumpToSettings('email'));
-    $('pfa-settings-update-row').addEventListener('click', jumpToSettings('update'));
-    $('pfa-settings-api-row').addEventListener('click', jumpToSettings('api'));
+    $('pfa-email-row').addEventListener('click', openEmail);
+    $('pfa-update-row').addEventListener('click', openUpdate);
+    $('pfa-api-row').addEventListener('click', openApi);
 
     // Drag to reorder categories; the order is what the public nav follows.
     const list = $('pfa-cat-list');
@@ -896,6 +903,9 @@
       state.readinessView = false;
       state.duplicatesView = false;
       state.trashView = false;
+      state.emailView = false;
+      state.updateView = false;
+      state.apiView = false;
       state.item = null;
       state.selectMode = false;
       state.selected = new Set();
@@ -1438,6 +1448,9 @@
     state.readinessView = false;
     state.duplicatesView = false;
     state.trashView = false;
+    state.emailView = false;
+    state.updateView = false;
+    state.apiView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -1887,6 +1900,9 @@
     state.readinessView = false;
     state.duplicatesView = false;
     state.trashView = false;
+    state.emailView = false;
+    state.updateView = false;
+    state.apiView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -1905,6 +1921,9 @@
     state.pagesView = false;
     state.duplicatesView = false;
     state.trashView = false;
+    state.emailView = false;
+    state.updateView = false;
+    state.apiView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -1959,6 +1978,9 @@
     state.pagesView = false;
     state.readinessView = false;
     state.trashView = false;
+    state.emailView = false;
+    state.updateView = false;
+    state.apiView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -2051,6 +2073,330 @@
       S().toast(`Removed ${r.removed} item${r.removed === 1 ? '' : 's'}`);
     });
     await openTrash();
+  }
+
+  // ---------- Email ----------
+
+  async function openEmail() {
+    state.emailView = true;
+    state.design = false;
+    state.pagesView = false;
+    state.readinessView = false;
+    state.duplicatesView = false;
+    state.trashView = false;
+    state.updateView = false;
+    state.apiView = false;
+    state.galleryId = null;
+    state.gallery = null;
+    try {
+      state.email = await req('/api/settings/email');
+      render();
+    } catch (err) {
+      S().toast(err.message || 'Could not load email settings');
+    }
+  }
+
+  function renderEmail() {
+    const c = state.email || {};
+    $('pfa-centre').innerHTML = `
+      <div class="centre-header">
+        <div>
+          <h1>Email</h1>
+          <p class="centre-sub">Notifications when clients leave comments. Use Resend (recommended) or SMTP.</p>
+        </div>
+      </div>
+      <div class="pfa-scroll">
+        <section class="pfa-group">
+          <h3>Resend</h3>
+          <div class="pfa-group-body">
+            <label class="pfa-field wide">
+              <span>Resend API key</span>
+              <input type="password" class="setting-input" id="pfa-resend-key" value="${esc(c.resendApiKey || '')}" placeholder="re_xxxxxxxxx">
+              <span class="pfa-hint">Free key at <a href="https://resend.com" target="_blank" rel="noopener">resend.com</a>. If set, SMTP below is ignored — but the sender settings still apply.</span>
+            </label>
+          </div>
+        </section>
+        <section class="pfa-group">
+          <h3>SMTP (alternative to Resend)</h3>
+          <div class="pfa-group-body">
+            <label class="pfa-field"><span>Host</span><input class="setting-input" id="pfa-smtp-host" value="${esc(c.host || '')}" placeholder="e.g. mail.hosting.com"></label>
+            <label class="pfa-field"><span>Port</span><input class="setting-input narrow" type="number" id="pfa-smtp-port" value="${esc(c.port || 587)}"></label>
+            <label class="pfa-check"><input type="checkbox" id="pfa-smtp-secure" ${c.secure ? 'checked' : ''}> Use SSL/TLS (port 465). Leave off for STARTTLS (587).</label>
+            <label class="pfa-field"><span>Username</span><input class="setting-input" id="pfa-smtp-user" value="${esc(c.user || '')}" placeholder="notifications@yourdomain.com"></label>
+            <label class="pfa-field"><span>Password</span><input type="password" class="setting-input" id="pfa-smtp-pass" value="${esc(c.pass || '')}" placeholder="SMTP password"></label>
+          </div>
+        </section>
+        <section class="pfa-group">
+          <h3>Sender &amp; delivery</h3>
+          <div class="pfa-group-body">
+            <label class="pfa-field wide"><span>From address</span><input class="setting-input" id="pfa-smtp-from" value="${esc(c.from || '')}" placeholder='&quot;Your Studio&quot; &lt;hello@example.com&gt;'><span class="pfa-hint">With Resend, the domain must be verified in your Resend account.</span></label>
+            <label class="pfa-field wide"><span>Notification email (to)</span><input type="email" class="setting-input" id="pfa-smtp-admin-email" value="${esc(c.adminEmail || '')}" placeholder="you@example.com"><span class="pfa-hint">Where comment notifications are sent.</span></label>
+            <label class="pfa-field wide"><span>Site base URL</span><input class="setting-input" id="pfa-smtp-base-url" value="${esc(c.baseUrl || '')}" placeholder="https://gallery.example.com"><span class="pfa-hint">Used for links in notification emails.</span></label>
+            <div class="settings-actions">
+              <button class="btn-primary small" id="pfa-email-save">Save Email Settings</button>
+              <button class="ctrl" id="pfa-email-test">Send Test Email</button>
+            </div>
+            <div id="pfa-email-status" class="pfa-hint"></div>
+          </div>
+        </section>
+      </div>`;
+    wireEmail();
+  }
+
+  function wireEmail() {
+    const collect = () => ({
+      resendApiKey: $('pfa-resend-key').value,
+      host: $('pfa-smtp-host').value,
+      port: $('pfa-smtp-port').value,
+      secure: $('pfa-smtp-secure').checked,
+      user: $('pfa-smtp-user').value,
+      pass: $('pfa-smtp-pass').value,
+      from: $('pfa-smtp-from').value,
+      adminEmail: $('pfa-smtp-admin-email').value,
+      baseUrl: $('pfa-smtp-base-url').value,
+    });
+    $('pfa-email-save').addEventListener('click', async () => {
+      const status = $('pfa-email-status');
+      status.textContent = 'Saving…'; status.style.color = '';
+      try {
+        await send('/api/settings/email', 'PUT', collect());
+        status.textContent = 'Settings saved.'; status.style.color = '#4caf50';
+      } catch (err) {
+        status.textContent = err.message || 'Failed to save.'; status.style.color = 'var(--danger)';
+      }
+      setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 4000);
+    });
+    $('pfa-email-test').addEventListener('click', async () => {
+      const status = $('pfa-email-status');
+      status.textContent = 'Sending test email…';
+      try {
+        await req('/api/settings/email/test', { method: 'POST' });
+        status.textContent = '';
+        S().showEmailTestResult('success', 'Email Test Succeeded', 'Test email sent! Check your inbox.');
+      } catch (err) {
+        status.textContent = '';
+        S().showEmailTestResult('error', 'Email Test Failed', err.message || 'Failed to send test email.');
+      }
+    });
+  }
+
+  // ---------- Update ----------
+
+  async function openUpdate() {
+    state.updateView = true;
+    state.design = false;
+    state.pagesView = false;
+    state.readinessView = false;
+    state.duplicatesView = false;
+    state.trashView = false;
+    state.emailView = false;
+    state.apiView = false;
+    state.galleryId = null;
+    state.gallery = null;
+    render();
+    checkForUpdates();
+    loadVideoToolsStatus();
+  }
+
+  function renderUpdate() {
+    $('pfa-centre').innerHTML = `
+      <div class="centre-header">
+        <div>
+          <h1>Update</h1>
+          <p class="centre-sub">Keep the installation and its video tools current.</p>
+        </div>
+      </div>
+      <div class="pfa-scroll">
+        <section class="pfa-group">
+          <h3>Version</h3>
+          <div class="pfa-group-body">
+            <p class="pfa-hint" id="pfa-update-loading">Checking for updates…</p>
+            <div id="pfa-update-info" hidden>
+              <div class="pfa-field"><span>Current version</span><p class="setting-value"><span id="pfa-update-local-version"></span> <span id="pfa-update-local-commit" class="pfa-hint"></span></p></div>
+              <div id="pfa-update-available" hidden>
+                <div class="pfa-field"><span>Available version</span><p class="setting-value"><span id="pfa-update-remote-version" style="color:var(--accent);"></span> <span id="pfa-update-remote-commit" class="pfa-hint"></span> <a id="pfa-update-release-link" href="#" target="_blank" rel="noopener" hidden>View on GitHub</a></p></div>
+                <div id="pfa-update-commit-log" class="pfa-field" hidden><span>Changes</span><pre id="pfa-update-commits"></pre></div>
+                <div id="pfa-update-changelog-section" class="pfa-field" hidden><span id="pfa-update-changelog-label">Changelog</span><pre id="pfa-update-changelog" style="max-height:300px;overflow-y:auto;"></pre></div>
+                <div class="settings-actions"><button class="btn-primary small" id="pfa-deploy-btn">Update to Latest Version</button></div>
+              </div>
+              <div id="pfa-update-current" hidden><p class="pfa-hint" style="color:#4caf50;font-weight:600;">You are running the latest version.</p></div>
+              <div id="pfa-deploy-status" class="pfa-hint"></div>
+            </div>
+          </div>
+        </section>
+        <section class="pfa-group">
+          <h3>Video tools (ffmpeg)</h3>
+          <div class="pfa-group-body">
+            <p class="pfa-hint">Lets the server auto-extract captions embedded in uploaded MP4s. Installs a self-contained static ffmpeg build — no system access needed.</p>
+            <p id="pfa-video-tools-status" class="pfa-hint">Checking…</p>
+            <div class="settings-actions"><button class="ctrl" id="pfa-install-ffmpeg-btn" disabled>Install Video Tools</button></div>
+            <div id="pfa-video-tools-result" class="pfa-hint"></div>
+          </div>
+        </section>
+      </div>`;
+    wireUpdate();
+  }
+
+  function wireUpdate() {
+    $('pfa-deploy-btn')?.addEventListener('click', async () => {
+      if (!await S().confirm({ title: 'Update', message: 'Update to the latest version?' })) return;
+      const btn = $('pfa-deploy-btn'); btn.disabled = true; btn.textContent = 'Updating…';
+      const s = $('pfa-deploy-status'); s.textContent = '';
+      try {
+        const d = await send('/api/settings/deploy', 'POST', {});
+        s.textContent = d.message || 'Update successful!'; s.style.color = '#4caf50';
+        setTimeout(() => location.reload(), 1500);
+      } catch (err) {
+        s.textContent = err.message || 'Update failed.'; s.style.color = 'var(--danger)';
+        btn.disabled = false; btn.textContent = 'Update to Latest Version';
+      }
+    });
+    $('pfa-install-ffmpeg-btn')?.addEventListener('click', async () => {
+      if (!await S().confirm({ title: 'Install video tools', message: 'Download and install a static ffmpeg build on the server? This can take a minute.' })) return;
+      const btn = $('pfa-install-ffmpeg-btn'), resultEl = $('pfa-video-tools-result');
+      btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Installing…'; resultEl.textContent = '';
+      try {
+        const d = await send('/api/admin/video-tools/install', 'POST', {});
+        resultEl.textContent = '✅ Installed' + (d.status && d.status.version ? ' ffmpeg ' + d.status.version : '') + '.';
+        resultEl.style.color = '#4caf50';
+      } catch (err) {
+        resultEl.textContent = err.message || 'Install failed.'; resultEl.style.color = 'var(--danger)';
+      }
+      btn.textContent = orig;
+      loadVideoToolsStatus();
+    });
+  }
+
+  async function checkForUpdates() {
+    const loading = $('pfa-update-loading'), info = $('pfa-update-info');
+    if (!loading) return; // navigated away already
+    try {
+      const data = await req('/api/settings/update');
+      if (data.checkError) { loading.textContent = `Update check failed: ${data.checkError}`; return; }
+      $('pfa-update-local-version').textContent = data.localVersion || 'unknown';
+      $('pfa-update-local-commit').textContent = data.localCommit ? `(${data.localCommit})` : '';
+      if (data.updateAvailable) {
+        $('pfa-update-available').hidden = false; $('pfa-update-current').hidden = true;
+        $('pfa-update-remote-version').textContent = data.remoteVersion || '';
+        $('pfa-update-remote-commit').textContent = data.remoteCommit ? `(${data.remoteCommit})` : '';
+        if (data.releaseUrl) { const link = $('pfa-update-release-link'); link.href = data.releaseUrl; link.hidden = false; }
+        if (data.commitLog) { $('pfa-update-commit-log').hidden = false; $('pfa-update-commits').textContent = data.commitLog; }
+        if (data.changelog) {
+          $('pfa-update-changelog-section').hidden = false;
+          $('pfa-update-changelog-label').textContent = data.mode === 'release' ? 'Release Notes' : 'Changelog';
+          $('pfa-update-changelog').textContent = data.changelog;
+        }
+      } else {
+        $('pfa-update-available').hidden = true; $('pfa-update-current').hidden = false;
+      }
+      if (!data.enabled) $('pfa-deploy-btn').style.display = 'none';
+    } catch (err) {
+      loading.textContent = 'Failed to check for updates.';
+      return;
+    }
+    loading.style.display = 'none'; info.hidden = false;
+  }
+
+  async function loadVideoToolsStatus() {
+    const statusEl = $('pfa-video-tools-status'), btn = $('pfa-install-ffmpeg-btn');
+    if (!statusEl) return; // navigated away already
+    statusEl.textContent = 'Checking…';
+    try {
+      const data = await req('/api/admin/video-tools/status');
+      if (data.ffmpeg && data.ffprobe) {
+        statusEl.textContent = '✅ Installed' + (data.version ? ' (ffmpeg ' + data.version + ')' : '') + ' — embedded captions are extracted automatically.';
+        btn.textContent = 'Reinstall Video Tools';
+      } else {
+        statusEl.textContent = '⚠️ Not installed — captions baked into MP4s won’t be extracted until installed.';
+        btn.textContent = 'Install Video Tools';
+      }
+      btn.disabled = false;
+    } catch (err) {
+      statusEl.textContent = 'Could not check status.';
+      btn.disabled = false;
+    }
+  }
+
+  // ---------- API ----------
+
+  async function openApi() {
+    state.apiView = true;
+    state.design = false;
+    state.pagesView = false;
+    state.readinessView = false;
+    state.duplicatesView = false;
+    state.trashView = false;
+    state.emailView = false;
+    state.updateView = false;
+    state.galleryId = null;
+    state.gallery = null;
+    try {
+      state.apiToken = await req('/api/settings/api-token');
+      render();
+    } catch (err) {
+      S().toast(err.message || 'Could not load API token state');
+    }
+  }
+
+  function renderApi() {
+    const info = state.apiToken || {};
+    $('pfa-centre').innerHTML = `
+      <div class="centre-header">
+        <div>
+          <h1>API</h1>
+          <p class="centre-sub">Generate an API token so an external tool (CLI, script, app) can create galleries and upload media over HTTP. See <a href="/docs/API.md" target="_blank" rel="noopener">the API docs</a>.</p>
+        </div>
+      </div>
+      <div class="pfa-scroll">
+        <section class="pfa-group">
+          <h3>Token</h3>
+          <div class="pfa-group-body">
+            ${info.envManaged ? `
+              <div class="pfa-field"><span>Current token</span><p class="setting-value">Set via <code>.env</code> on the server.</p><span class="pfa-hint">To change it, edit the <code>API_TOKEN</code> line in <code>.env</code> and redeploy. This panel only manages tokens stored in <code>site-data/</code>.</span></div>
+            ` : `
+              <div class="pfa-field"><span>Current token</span><p class="setting-value">${info.hasToken ? 'An API token is active.' : 'No API token is set.'}</p><span class="pfa-hint">The token is never shown again after generation. Lost it? Regenerate to get a new one (invalidates the old).</span></div>
+              <div class="settings-actions">
+                ${info.hasToken ? `
+                  <button class="ctrl" id="pfa-api-regenerate">Regenerate</button>
+                  <button class="ctrl" id="pfa-api-revoke">Revoke</button>
+                ` : `<button class="btn-primary small" id="pfa-api-generate">Generate Token</button>`}
+              </div>
+              <div id="pfa-api-status" class="pfa-hint"></div>
+            `}
+          </div>
+        </section>
+        <section class="pfa-group">
+          <h3>Compatible tools</h3>
+          <div class="pfa-group-body">
+            <p class="pfa-hint"><a href="https://www.deadlineeditor.com" target="_blank" rel="noopener">Deadline Editor</a> presently has upload capabilities directly to this API.</p>
+          </div>
+        </section>
+      </div>`;
+    wireApi();
+  }
+
+  function wireApi() {
+    const regen = async (rotate) => {
+      if (rotate && !await S().confirm({ title: 'Rotate token', message: 'Any client using the old token will get 401 errors.' })) return;
+      const status = $('pfa-api-status');
+      if (status) status.textContent = 'Generating…';
+      try {
+        const d = await send('/api/settings/api-token', 'POST', {});
+        S().showApiTokenModal(d.token);
+        state.apiToken = await req('/api/settings/api-token');
+        renderApi();
+      } catch (err) {
+        if (status) status.textContent = err.message || 'Error';
+      }
+    };
+    if ($('pfa-api-generate')) $('pfa-api-generate').addEventListener('click', () => regen(false));
+    if ($('pfa-api-regenerate')) $('pfa-api-regenerate').addEventListener('click', () => regen(true));
+    if ($('pfa-api-revoke')) $('pfa-api-revoke').addEventListener('click', async () => {
+      if (!await S().confirm({ title: 'Revoke token', message: 'Any client using it will immediately get 401 errors.', okText: 'Revoke', danger: true })) return;
+      await req('/api/settings/api-token', { method: 'DELETE' });
+      state.apiToken = await req('/api/settings/api-token');
+      renderApi();
+    });
   }
 
   // Files with identical bytes, grouped. Keep one; the rest become picks of it.

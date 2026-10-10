@@ -56,6 +56,8 @@
       </div>
       <div class="topbar-right">
         <button class="topbar-link" id="nav-uploads" hidden>Uploads <span class="accent" id="uploads-count">0</span></button>
+        <button class="topbar-link" id="account-theme">Light theme</button>
+        <button class="topbar-link" id="account-logout">Logout</button>
         <div class="menu-wrap">
           <button class="btn-primary" id="new-btn">New &#9662;</button>
           <div class="menu" id="new-menu" hidden>
@@ -141,91 +143,6 @@
     </div>
 
     <!-- ---------- Settings screen ---------- -->
-    <div id="screen-settings" class="screen" hidden>
-      <div class="settings-wrap">
-        <button class="back-link" id="settings-back">&larr; Portfolio</button>
-        <div class="settings-title-row">
-          <h1>Settings</h1>
-          <div class="settings-title-actions">
-            <button class="link-btn" id="account-theme">Light theme</button>
-            <button class="link-btn danger" id="account-logout">Logout</button>
-          </div>
-        </div>
-        <div class="settings-tabs">
-          <button class="settings-tab active" data-settings-tab="email">Email</button>
-          <button class="settings-tab" data-settings-tab="update">Update</button>
-          <button class="settings-tab" data-settings-tab="api">API</button>
-        </div>
-
-        <!-- Email -->
-        <div id="settings-tab-email" class="settings-tab-content">
-          <p class="setting-hint" style="margin-bottom:16px;">Notifications when clients leave comments. Use Resend (recommended) or SMTP.</p>
-          <div class="setting-group">
-            <label>Resend API Key</label>
-            <input type="password" id="resend-api-key" class="setting-input" placeholder="re_xxxxxxxxx">
-            <p class="setting-hint">Free key at <a href="https://resend.com" target="_blank">resend.com</a>. If set, SMTP fields below are ignored — but the sender settings still apply.</p>
-          </div>
-          <hr class="settings-divider">
-          <p class="setting-hint" style="font-weight:600;color:var(--text-3);margin-bottom:12px;">SMTP (alternative to Resend)</p>
-          <div class="setting-group"><label>SMTP Host</label><input type="text" id="smtp-host" class="setting-input" placeholder="e.g. mail.hosting.com"></div>
-          <div class="setting-group"><label>SMTP Port</label><input type="number" id="smtp-port" class="setting-input" placeholder="587" style="max-width:140px;"></div>
-          <div class="setting-group"><label>Security</label><label class="toggle-label"><input type="checkbox" id="smtp-secure"><span>Use SSL/TLS (port 465). Leave off for STARTTLS (587).</span></label></div>
-          <div class="setting-group"><label>SMTP Username</label><input type="text" id="smtp-user" class="setting-input" placeholder="notifications@yourdomain.com"></div>
-          <div class="setting-group"><label>SMTP Password</label><input type="password" id="smtp-pass" class="setting-input" placeholder="SMTP password"></div>
-          <hr class="settings-divider">
-          <p class="setting-hint" style="font-weight:600;color:var(--text-3);margin-bottom:12px;">Sender &amp; delivery (used by both Resend and SMTP)</p>
-          <div class="setting-group"><label>From Address</label><input type="text" id="smtp-from" class="setting-input" placeholder='"Your Studio" <hello@example.com>'><p class="setting-hint">With Resend, the domain must be verified in your Resend account.</p></div>
-          <div class="setting-group"><label>Notification Email (To)</label><input type="email" id="smtp-admin-email" class="setting-input" placeholder="you@example.com"><p class="setting-hint">Where comment notifications are sent</p></div>
-          <div class="setting-group"><label>Site Base URL</label><input type="text" id="smtp-base-url" class="setting-input" placeholder="https://gallery.example.com"><p class="setting-hint">Used for links in notification emails</p></div>
-          <div class="settings-actions">
-            <button id="save-email-btn" class="btn-primary">Save Email Settings</button>
-            <button id="test-email-btn" class="btn-ghost">Send Test Email</button>
-          </div>
-          <div id="email-status" class="email-status"></div>
-        </div>
-
-        <!-- Update -->
-        <div id="settings-tab-update" class="settings-tab-content" hidden>
-          <div id="update-loading" class="setting-hint">Checking for updates&hellip;</div>
-          <div id="update-info" hidden>
-            <div class="setting-group"><label>Current Version</label><p class="setting-value"><span id="update-local-version"></span> <span id="update-local-commit" style="color:var(--text-5);font-size:12px;"></span></p></div>
-            <div id="update-available-section" hidden>
-              <div class="setting-group"><label>Available Version</label><p class="setting-value"><span id="update-remote-version" style="color:var(--accent);"></span> <span id="update-remote-commit" style="color:var(--text-5);font-size:12px;"></span> <a id="update-release-link" href="#" target="_blank" rel="noopener" style="font-size:12px;" hidden>View on GitHub</a></p></div>
-              <div id="update-commit-log" class="setting-group" hidden><label>Changes</label><pre id="update-commits"></pre></div>
-              <div id="update-changelog-section" class="setting-group" hidden><label id="update-changelog-label">Changelog</label><pre id="update-changelog" style="max-height:300px;overflow-y:auto;"></pre></div>
-              <div class="settings-actions"><button id="deploy-btn" class="btn-primary">Update to Latest Version</button></div>
-            </div>
-            <div id="update-current-section" hidden><p class="setting-hint" style="color:#4caf50;font-weight:600;">You are running the latest version.</p></div>
-            <div id="deploy-status" class="email-status"></div>
-          </div>
-          <div class="setting-group" style="margin-top:24px;border-top:1px solid var(--border);padding-top:20px;">
-            <label>Video Tools (ffmpeg)</label>
-            <p class="setting-hint">Lets the server auto-extract captions embedded in uploaded MP4s. Installs a self-contained static ffmpeg build — no system access needed.</p>
-            <p id="video-tools-status" style="font-size:13px;margin:10px 0;color:var(--text-3);">Checking&hellip;</p>
-            <div class="settings-actions"><button id="install-ffmpeg-btn" class="btn-ghost" disabled>Install Video Tools</button></div>
-            <div id="video-tools-result" class="email-status"></div>
-          </div>
-        </div>
-
-        <!-- API -->
-        <div id="settings-tab-api" class="settings-tab-content" hidden>
-          <p class="setting-hint" style="margin-bottom:16px;">Generate an API token so an external tool (CLI, script, app) can create galleries and upload media over HTTP. See <a href="/docs/API.md" target="_blank">the API docs</a>.</p>
-          <div id="api-token-loading" class="setting-hint">Checking current state&hellip;</div>
-          <div id="api-token-env-state" hidden>
-            <div class="setting-group"><label>Current Token</label><p class="setting-value">Set via <code>.env</code> on the server.</p><p class="setting-hint">To change it, edit the <code>API_TOKEN</code> line in <code>.env</code> and redeploy. This panel only manages tokens stored in <code>site-data/</code>.</p></div>
-          </div>
-          <div id="api-token-state" hidden>
-            <div class="setting-group"><label>Current Token</label><p id="api-token-status-text" class="setting-value"></p><p class="setting-hint">The token is never shown again after generation. Lost it? Regenerate to get a new one (invalidates the old).</p></div>
-            <div class="settings-actions">
-              <button id="api-token-generate-btn" class="btn-primary">Generate Token</button>
-              <button id="api-token-regenerate-btn" class="btn-ghost" style="display:none;">Regenerate</button>
-              <button id="api-token-revoke-btn" class="btn-ghost" style="display:none;">Revoke</button>
-            </div>
-            <div id="api-token-status" class="email-status"></div>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 
   <!-- ============ Modals ============ -->
@@ -518,7 +435,7 @@
   <div id="toast" class="toast"></div>
 
   <script src="/vendor/sortablejs/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=128"></script>
-  <script src="/js/portfolio-admin.js?v=41"></script>
+  <script src="/js/admin.js?v=129"></script>
+  <script src="/js/portfolio-admin.js?v=42"></script>
 </body>
 </html>

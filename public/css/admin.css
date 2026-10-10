@@ -1593,7 +1593,10 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 }
 
 .pfa-item { margin: 0; }
-.pfa-item.dim { opacity: 0.55; }
+/* Dim the picture, not the whole card — an opacity on the figure itself
+   would also wash out the Show action, making it read as disabled when
+   it's exactly the opposite: the one thing you'd want to click. */
+.pfa-item.dim .pfa-item-frame { opacity: 0.55; }
 .pfa-items.pfa-select-mode .pfa-item { cursor: pointer; }
 .pfa-item.selected .pfa-item-frame { outline: 3px solid var(--accent); outline-offset: -3px; }
 .pfa-item-check {

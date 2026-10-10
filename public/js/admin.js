@@ -174,7 +174,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (data.authenticated) {
       hide($('auth-setup')); hide($('auth-login')); show($('app'));
       await Promise.all([loadData(), loadHeaderConfig()]);
-      settingsLoaded.header = true;
       renderAll();
       // Come back to whichever side of the app you were last working on.
       if (lastTab() === 'portfolio') setScreen('portfolio');
@@ -268,14 +267,10 @@ document.addEventListener('DOMContentLoaded', () => {
     state.screen = screen;
     $('screen-library').hidden = screen !== 'library';
     $('screen-upload').hidden = screen !== 'upload';
-    $('screen-settings').hidden = screen !== 'settings';
     $('screen-portfolio').hidden = screen !== 'portfolio';
-    // The Portfolio/Client delivery switch reflects which side you're on, and
-    // Settings belongs to neither.
     $('tab-portfolio').classList.toggle('active', screen === 'portfolio');
     $('tab-delivery').classList.toggle('active', screen === 'library' || screen === 'upload');
     if (screen === 'upload') renderUpload();
-    if (screen === 'settings') openSettings();
     if (screen === 'portfolio' && window.SDPortfolio) window.SDPortfolio.open();
   }
   $('tab-portfolio').addEventListener('click', () => { rememberTab('portfolio'); setScreen('portfolio'); });
@@ -324,7 +319,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('click', closeAllMenus);
 
   $('upload-back').addEventListener('click', () => setScreen('library'));
-  $('settings-back').addEventListener('click', () => setScreen('portfolio'));
 
   setupMenu('new-btn', 'new-menu', (v) => {
     if (v === 'gallery') openNewGallery();
@@ -2709,44 +2703,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ==========================================================================
-  // Settings screen (ported panels)
+  // Modals shared by the Portfolio screen's Email and API pages. The actual
+  // field editing for Email/Update/API lives there now (its own rail rows,
+  // same as Site design) — these two stay here only because the modals
+  // themselves are global DOM, outside any one screen.
   // ==========================================================================
-  let settingsLoaded = { email: false };
-  function openSettings() {
-    switchSettingsTab('email');
-  }
-  document.querySelectorAll('.settings-tab').forEach(tab => tab.addEventListener('click', () => switchSettingsTab(tab.dataset.settingsTab)));
-  function switchSettingsTab(name) {
-    document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.settingsTab === name));
-    document.querySelectorAll('.settings-tab-content').forEach(c => c.hidden = c.id !== 'settings-tab-' + name);
-    if (name === 'email' && !settingsLoaded.email) { loadEmailSettings(); settingsLoaded.email = true; }
-    if (name === 'update') { checkForUpdates(); loadVideoToolsStatus(); }
-    if (name === 'api') loadApiTokenState();
-  }
-
-  // --- Email ---
-  async function loadEmailSettings() {
-    const res = await fetch('/api/settings/email'); if (!res.ok) return;
-    const c = await res.json();
-    $('resend-api-key').value = c.resendApiKey || ''; $('smtp-host').value = c.host || '';
-    $('smtp-port').value = c.port || 587; $('smtp-secure').checked = !!c.secure;
-    $('smtp-user').value = c.user || ''; $('smtp-pass').value = c.pass || '';
-    $('smtp-from').value = c.from || ''; $('smtp-admin-email').value = c.adminEmail || ''; $('smtp-base-url').value = c.baseUrl || '';
-  }
-  $('save-email-btn').addEventListener('click', async () => {
-    const body = { resendApiKey: $('resend-api-key').value, host: $('smtp-host').value, port: $('smtp-port').value, secure: $('smtp-secure').checked, user: $('smtp-user').value, pass: $('smtp-pass').value, from: $('smtp-from').value, adminEmail: $('smtp-admin-email').value, baseUrl: $('smtp-base-url').value };
-    const res = await fetch('/api/settings/email', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const s = $('email-status');
-    if (res.ok) { s.textContent = 'Settings saved.'; s.className = 'email-status success'; } else { s.textContent = 'Failed to save.'; s.className = 'email-status error'; }
-    setTimeout(() => { s.textContent = ''; s.className = 'email-status'; }, 4000);
-  });
-  $('test-email-btn').addEventListener('click', async () => {
-    const s = $('email-status'); s.textContent = 'Sending test email…';
-    const res = await fetch('/api/settings/email/test', { method: 'POST' }); s.textContent = '';
-    if (res.ok) showEmailResult('success', 'Email Test Succeeded', 'Test email sent! Check your inbox.');
-    else { const d = await res.json().catch(() => ({})); showEmailResult('error', 'Email Test Failed', d.error || 'Failed to send test email.'); }
-  });
-  function showEmailResult(type, title, msg) {
+  function showEmailTestResult(type, title, msg) {
     $('email-result-title').textContent = title;
     $('email-result-title').style.color = type === 'error' ? 'var(--danger)' : '#4caf50';
     $('email-result-text').textContent = msg;
@@ -2757,63 +2719,14 @@ document.addEventListener('DOMContentLoaded', () => {
   $('email-result-modal').querySelector('.modal-backdrop').addEventListener('click', () => $('email-result-modal').hidden = true);
   $('email-result-copy-btn').addEventListener('click', () => { navigator.clipboard.writeText($('email-result-text').textContent); $('email-result-copy-btn').textContent = 'Copied!'; setTimeout(() => $('email-result-copy-btn').textContent = 'Copy Error', 1800); });
 
-  // --- Update ---
-  let updateChecked = false;
-  async function checkForUpdates() {
-    if (updateChecked) return;
-    const loading = $('update-loading'), info = $('update-info');
-    loading.style.display = ''; info.hidden = true;
-    try {
-      const data = await (await fetch('/api/settings/update')).json();
-      if (data.checkError) { loading.textContent = `Update check failed: ${data.checkError}`; return; }
-      $('update-local-version').textContent = data.localVersion || 'unknown';
-      $('update-local-commit').textContent = data.localCommit ? `(${data.localCommit})` : '';
-      if (data.updateAvailable) {
-        $('update-available-section').hidden = false; $('update-current-section').hidden = true;
-        $('update-remote-version').textContent = data.remoteVersion || '';
-        $('update-remote-commit').textContent = data.remoteCommit ? `(${data.remoteCommit})` : '';
-        if (data.releaseUrl) { const link = $('update-release-link'); link.href = data.releaseUrl; link.hidden = false; }
-        if (data.commitLog) { $('update-commit-log').hidden = false; $('update-commits').textContent = data.commitLog; }
-        if (data.changelog) {
-          $('update-changelog-section').hidden = false;
-          $('update-changelog-label').textContent = data.mode === 'release' ? 'Release Notes' : 'Changelog';
-          $('update-changelog').textContent = data.changelog;
-        }
-      } else { $('update-available-section').hidden = true; $('update-current-section').hidden = false; }
-      if (!data.enabled) $('deploy-btn').style.display = 'none';
-    } catch (_) { loading.textContent = 'Failed to check for updates.'; return; }
-    loading.style.display = 'none'; info.hidden = false; updateChecked = true;
+  function showApiTokenModal(token) {
+    $('api-token-reveal-input').value = token;
+    $('api-token-modal').hidden = false;
+    $('api-token-reveal-input').focus();
+    $('api-token-reveal-input').select();
   }
-  $('deploy-btn').addEventListener('click', async () => {
-    if (!await confirmModal({ title: 'Update', message: 'Update to the latest version?' })) return;
-    const btn = $('deploy-btn'); btn.disabled = true; btn.textContent = 'Updating…';
-    const s = $('deploy-status'); s.textContent = '';
-    try {
-      const res = await fetch('/api/settings/deploy', { method: 'POST' }); const d = await res.json();
-      if (res.ok) { s.textContent = d.message || 'Update successful!'; s.style.color = '#4caf50'; setTimeout(() => location.reload(), 1500); }
-      else { s.textContent = d.error || 'Update failed.'; s.style.color = 'var(--danger)'; btn.disabled = false; btn.textContent = 'Update to Latest Version'; }
-    } catch (e) { s.textContent = 'Network error.'; s.style.color = 'var(--danger)'; btn.disabled = false; btn.textContent = 'Update to Latest Version'; }
-  });
-  async function loadVideoToolsStatus() {
-    const statusEl = $('video-tools-status'), btn = $('install-ffmpeg-btn');
-    statusEl.textContent = 'Checking…';
-    try {
-      const data = await (await fetch('/api/admin/video-tools/status')).json();
-      if (data.ffmpeg && data.ffprobe) { statusEl.textContent = '✅ Installed' + (data.version ? ' (ffmpeg ' + data.version + ')' : '') + ' — embedded captions are extracted automatically.'; btn.textContent = 'Reinstall Video Tools'; }
-      else { statusEl.textContent = '⚠️ Not installed — captions baked into MP4s won’t be extracted until installed.'; btn.textContent = 'Install Video Tools'; }
-      btn.disabled = false;
-    } catch (e) { statusEl.textContent = 'Could not check status.'; btn.disabled = false; }
-  }
-  $('install-ffmpeg-btn').addEventListener('click', async () => {
-    if (!await confirmModal({ title: 'Install video tools', message: 'Download and install a static ffmpeg build on the server? This can take a minute.' })) return;
-    const btn = $('install-ffmpeg-btn'), resultEl = $('video-tools-result'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Installing…'; resultEl.textContent = '';
-    try {
-      const res = await fetch('/api/admin/video-tools/install', { method: 'POST' }); const d = await res.json();
-      if (res.ok && d.ok) { resultEl.textContent = '✅ Installed' + (d.status && d.status.version ? ' ffmpeg ' + d.status.version : '') + '.'; resultEl.style.color = '#4caf50'; }
-      else { resultEl.textContent = (d && d.error) || 'Install failed.'; resultEl.style.color = 'var(--danger)'; }
-    } catch (e) { resultEl.textContent = 'Network error.'; resultEl.style.color = 'var(--danger)'; }
-    btn.textContent = orig; loadVideoToolsStatus();
-  });
+  $('api-token-copy-btn').addEventListener('click', () => { navigator.clipboard.writeText($('api-token-reveal-input').value); $('api-token-copy-btn').textContent = 'Copied!'; setTimeout(() => $('api-token-copy-btn').textContent = 'Copy', 1500); });
+  $('api-token-modal-done-btn').addEventListener('click', () => { $('api-token-modal').hidden = true; $('api-token-reveal-input').value = ''; });
 
   // --- Header config ---
   // Full editing (logo, contact info, nav links) lives in the Portfolio
@@ -2835,40 +2748,6 @@ document.addEventListener('DOMContentLoaded', () => {
       document.title = (headerConfig.siteName || logo.text || 'Show & Deliver') + ' — Admin';
     } catch (e) { /* the top-left brand just keeps its default until the next load */ }
   }
-
-  // --- API token ---
-  async function loadApiTokenState() {
-    $('api-token-loading').style.display = ''; $('api-token-env-state').hidden = true; $('api-token-state').hidden = true; $('api-token-status').textContent = '';
-    try {
-      const info = await (await fetch('/api/settings/api-token')).json();
-      $('api-token-loading').style.display = 'none';
-      if (info.envManaged) { $('api-token-env-state').hidden = false; return; }
-      $('api-token-state').hidden = false;
-      if (info.hasToken) { $('api-token-status-text').textContent = 'An API token is active.'; $('api-token-generate-btn').style.display = 'none'; $('api-token-regenerate-btn').style.display = ''; $('api-token-revoke-btn').style.display = ''; }
-      else { $('api-token-status-text').textContent = 'No API token is set.'; $('api-token-generate-btn').style.display = ''; $('api-token-regenerate-btn').style.display = 'none'; $('api-token-revoke-btn').style.display = 'none'; }
-    } catch (e) { $('api-token-loading').textContent = 'Could not load API token state.'; }
-  }
-  async function generateApiToken(rotate) {
-    if (rotate && !await confirmModal({ title: 'Rotate token', message: 'Any client using the old token will get 401 errors.' })) return;
-    $('api-token-status').textContent = 'Generating…';
-    try {
-      const res = await fetch('/api/settings/api-token', { method: 'POST' }); const d = await res.json();
-      if (!res.ok) { $('api-token-status').textContent = d.error || 'Error'; return; }
-      $('api-token-status').textContent = '';
-      $('api-token-reveal-input').value = d.token; $('api-token-modal').hidden = false;
-      $('api-token-reveal-input').focus(); $('api-token-reveal-input').select();
-      loadApiTokenState();
-    } catch (e) { $('api-token-status').textContent = 'Network error.'; }
-  }
-  $('api-token-generate-btn').addEventListener('click', () => generateApiToken(false));
-  $('api-token-regenerate-btn').addEventListener('click', () => generateApiToken(true));
-  $('api-token-revoke-btn').addEventListener('click', async () => {
-    if (!await confirmModal({ title: 'Revoke token', message: 'Any client using it will immediately get 401 errors.', okText: 'Revoke', danger: true })) return;
-    const res = await fetch('/api/settings/api-token', { method: 'DELETE' });
-    if (res.ok) { $('api-token-status').textContent = 'Token revoked.'; loadApiTokenState(); }
-  });
-  $('api-token-copy-btn').addEventListener('click', () => { navigator.clipboard.writeText($('api-token-reveal-input').value); $('api-token-copy-btn').textContent = 'Copied!'; setTimeout(() => $('api-token-copy-btn').textContent = 'Copy', 1500); });
-  $('api-token-modal-done-btn').addEventListener('click', () => { $('api-token-modal').hidden = true; $('api-token-reveal-input').value = ''; });
 
   // ==========================================================================
   // Narrow-screen rail toggle
@@ -2902,6 +2781,8 @@ document.addEventListener('DOMContentLoaded', () => {
     escapeHtml,
     setScreen,
     captureFrameAsJpegBlob,
+    showEmailTestResult,
+    showApiTokenModal,
     // One file straight into a portfolio folder, chunked like the upload queue
     // but without the queue's screen: the portfolio editor has its own drop
     // zone and shows progress per file.

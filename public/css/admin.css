@@ -1343,6 +1343,10 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 :root[data-theme="light"] ::-webkit-scrollbar-thumb { background: #cfcfca; }
 :root[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: #bdbdb7; }
 :root[data-theme="light"] .btn-primary { color: #fff; }
+/* .menu button:hover's background is hardcoded dark, for the (default)
+   dark admin theme; left as-is it paired with --text's light-theme value
+   (near-black) to put near-black text on a near-black highlight. */
+:root[data-theme="light"] .menu button:hover { background: var(--hover); }
 
 /* Scrollbars (webkit) */
 ::-webkit-scrollbar { width: 10px; height: 10px; }

@@ -7415,7 +7415,25 @@ function expandPortfolioNav(array $config) {
     if (!is_array($nav)) return $config;
     $expanded = [];
     foreach ($nav as $entry) {
-        if (($entry['type'] ?? '') !== 'portfolio') {
+        $type = $entry['type'] ?? '';
+        if ($type === 'collection') {
+            $cat = null;
+            foreach (portfolioTree()['categories'] as $c) {
+                if ($c['id'] === ($entry['categoryId'] ?? '') && $c['kind'] !== 'gallery') { $cat = $c; break; }
+            }
+            // Deleted, renamed away from, or never picked — nothing to show
+            // rather than a broken empty dropdown.
+            if (!$cat || ($cat['sidecar']['visible'] ?? true) === false) continue;
+            $payload = portfolioCategoryPayload($cat);
+            if (!$payload['galleries']) continue;
+            $expanded[] = [
+                'type' => 'dropdown',
+                'label' => $entry['label'] ?: $payload['title'],
+                'children' => array_map(fn($g) => ['label' => $g['title'], 'url' => $g['url']], $payload['galleries']),
+            ];
+            continue;
+        }
+        if ($type !== 'portfolio') {
             $expanded[] = $entry;
             continue;
         }
@@ -7476,6 +7494,19 @@ function readThemeConfig() {
 // GET header config (public — used by all pages)
 if ($method === 'GET' && $uri === '/api/header') {
     $config = expandPortfolioNav(readHeaderConfig());
+    $config['theme'] = readThemeConfig();
+    respond($config);
+}
+
+// The admin's own copy of the header config — raw, not run through
+// expandPortfolioNav(). The admin's nav editor needs the stored {type:
+// 'portfolio'|'collection', ...} markers back, not the dropdown/link items
+// they expand into for the public site: round-tripping the expanded form
+// back through PUT /api/settings/header would bake that expansion in as
+// plain nav entries, permanently losing the auto-sync the marker exists for.
+if ($method === 'GET' && $uri === '/api/admin/header') {
+    requireAuth();
+    $config = readHeaderConfig();
     $config['theme'] = readThemeConfig();
     respond($config);
 }

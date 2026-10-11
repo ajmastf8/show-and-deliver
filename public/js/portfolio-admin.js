@@ -1466,7 +1466,7 @@
     state.galleryId = null;
     state.gallery = null;
     try {
-      state.header = await req('/api/header');
+      state.header = await req('/api/admin/header');
       state.theme = state.header.theme;
       render();
     } catch (err) {
@@ -1519,8 +1519,34 @@
       <button type="button" class="btn-icon nav-delete">×</button>`;
   }
 
+  // A collection nav item isn't typed in by hand — it's bound to one of the
+  // portfolio's own collections, and expands into a dropdown of that
+  // collection's public galleries on every page load (expandPortfolioNav()
+  // in index.php), so adding/renaming/unpublishing a gallery there is all it
+  // takes to update the menu. Only real collections are offered, not a
+  // standalone top-level gallery, which has no galleries inside it to list.
+  function navCollectionItemHtml(label, categoryId) {
+    const collections = (state.tree?.categories || []).filter(c => c.kind !== 'gallery');
+    const options = collections.map(c =>
+      `<option value="${esc(c.id)}" ${c.id === categoryId ? 'selected' : ''}>${esc(c.title)}</option>`).join('');
+    return `
+      <span class="drag-handle">≡</span>
+      <input type="text" class="setting-input nav-label" value="${esc(label || '')}" placeholder="Label (defaults to its title)" style="width:220px;">
+      <select class="setting-input nav-collection-id" style="flex:1;">
+        <option value="">Pick a collection…</option>
+        ${options}
+      </select>
+      <span class="setting-hint" style="white-space:nowrap;">Auto-filled with its public galleries</span>
+      <button type="button" class="btn-icon nav-delete">×</button>`;
+  }
+
   function navItemsHtml(nav) {
     return nav.map(item => {
+      if (item.type === 'collection') {
+        return `<div class="header-nav-item">
+          <div class="header-nav-item-row">${navCollectionItemHtml(item.label, item.categoryId)}</div>
+        </div>`;
+      }
       if (item.type !== 'link') {
         const children = (item.children || []).map(ch => `
           <div class="header-nav-child-row">${navChildRowHtml(ch.label, ch.url)}</div>`).join('');
@@ -1545,9 +1571,13 @@
     const items = [];
     $('pfa-nav-list').querySelectorAll('.header-nav-item').forEach(el => {
       const label = el.querySelector('.nav-label').value.trim();
+      const collectionSelect = el.querySelector('.nav-collection-id');
       const urlInput = el.querySelector('.nav-url');
-      if (urlInput) items.push({ type: 'link', label, url: urlInput.value.trim(), external: el.querySelector('.nav-external')?.checked || false });
-      else {
+      if (collectionSelect) {
+        items.push({ type: 'collection', label, categoryId: collectionSelect.value });
+      } else if (urlInput) {
+        items.push({ type: 'link', label, url: urlInput.value.trim(), external: el.querySelector('.nav-external')?.checked || false });
+      } else {
         const children = [];
         el.querySelectorAll('.header-nav-child-row').forEach(r => {
           const cl = r.querySelector('.child-label').value.trim();
@@ -1710,6 +1740,7 @@
           <div class="pfa-nav-add-row">
             <button class="ctrl" id="pfa-nav-add-link">+ Link</button>
             <button class="ctrl" id="pfa-nav-add-dropdown">+ Dropdown</button>
+            <button class="ctrl" id="pfa-nav-add-collection">+ Collection</button>
           </div>
         </section>
 
@@ -1774,7 +1805,7 @@
     });
     const saveHeader = (patch) => act(async () => {
       await send('/api/settings/header', 'PUT', patch);
-      state.header = await req('/api/header');
+      state.header = await req('/api/admin/header');
       state.theme = state.header.theme;
       state.design = true;
     });
@@ -1804,7 +1835,7 @@
       const fd = new FormData(); fd.append('watermark', file);
       await act(async () => {
         await fetch('/api/settings/watermark', { method: 'POST', body: fd });
-        state.header = await req('/api/header');
+        state.header = await req('/api/admin/header');
         state.theme = state.header.theme;
         state.design = true;
       });
@@ -1834,7 +1865,7 @@
       fd.append('logo', file.files[0]);
       act(async () => {
         await req('/api/settings/header/logo', { method: 'POST', body: fd });
-        state.header = await req('/api/header');
+        state.header = await req('/api/admin/header');
         state.design = true;
       });
     });
@@ -1889,7 +1920,7 @@
       fd.append('variant', 'dark');
       act(async () => {
         await req('/api/settings/header/logo', { method: 'POST', body: fd });
-        state.header = await req('/api/header');
+        state.header = await req('/api/admin/header');
         state.design = true;
       });
     });
@@ -1905,6 +1936,9 @@
     });
     $('pfa-nav-add-dropdown').addEventListener('click', () => {
       rerenderNav([...collectNav(), { type: 'dropdown', label: '', children: [{ label: '', url: '' }] }]);
+    });
+    $('pfa-nav-add-collection').addEventListener('click', () => {
+      rerenderNav([...collectNav(), { type: 'collection', label: '', categoryId: '' }]);
     });
     navList.addEventListener('click', e => {
       if (e.target.closest('.nav-delete')) { e.target.closest('.header-nav-item').remove(); saveNav(); }
@@ -1925,9 +1959,11 @@
     // whichever kind of list it landed in, since collectNav() (and the
     // public menu) tell link rows and submenu rows apart by shape, not just
     // position. A dropdown can't become a submenu entry itself — nesting
-    // only ever goes one level deep.
-    const navItemIsDropdown = el => !!el.querySelector(':scope > .header-nav-children');
-    const navRejectNesting = evt => !(evt.dragged.classList.contains('header-nav-item') && navItemIsDropdown(evt.dragged) && evt.to !== navList);
+    // only ever goes one level deep — and neither can a collection item: it
+    // already expands into its own dropdown of galleries, so there would be
+    // nothing left to convert it into as a plain child link.
+    const navItemCantNest = el => !!el.querySelector(':scope > .header-nav-children') || !!el.querySelector(':scope .nav-collection-id');
+    const navRejectNesting = evt => !(evt.dragged.classList.contains('header-nav-item') && navItemCantNest(evt.dragged) && evt.to !== navList);
     function wireNavSortable() {
       Sortable.create(navList, {
         animation: 150, group: 'nav', handle: '.drag-handle', draggable: '.header-nav-item',

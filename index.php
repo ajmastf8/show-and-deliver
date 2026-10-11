@@ -7891,11 +7891,13 @@ if ($method === 'POST' && $uri === '/api/admin/import/gallery') {
             $uniqueName = portfolioUniqueChildName($parentDirForNew, portfolioSafeName($folderWanted));
             @mkdir($parentDirForNew . '/' . $uniqueName, 0755);
             portfolioTree(true);
-            $gid = null;
-            foreach (portfolioTree()['categories'] as $cat) {
-                foreach ($cat['galleries'] ?? [] as $g) { if ($g['folder'] === $uniqueName) { $gid = $g['id']; break 2; } }
-                if ($cat['kind'] === 'gallery' && $cat['folder'] === $uniqueName) { $gid = $cat['id']; break; }
-            }
+            // Read the id straight back off the sidecar portfolioTree() just
+            // wrote, rather than searching the tree for it: a top-level-only
+            // search here missed any gallery nested more than one level deep
+            // (a category's direct galleries, but not a gallery-as-collection's
+            // children), the exact case a gallery importing back under another
+            // imported gallery hits.
+            $gid = jsonRead($parentDirForNew . '/' . $uniqueName . '/.gallery.json')['id'] ?? null;
             if (!$gid) { rrmdirTree($tmpDir); respondError('Could not place the imported gallery', 500); }
             [, $gal] = portfolioRequireGallery($gid);
         }

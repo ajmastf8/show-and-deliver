@@ -3270,5 +3270,9 @@
     },
     // Jumped to from the top-left brand wordmark when no logo is set yet.
     openDesign,
+    // Reached from the top bar's "New" menu, which isn't scoped to either
+    // tab — it switches to the Portfolio screen itself first.
+    newTopGallery,
+    newCategory,
   };
 })();

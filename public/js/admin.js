@@ -320,10 +320,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('upload-back').addEventListener('click', () => setScreen('library'));
 
-  setupMenu('new-btn', 'new-menu', (v) => {
+  setupMenu('new-btn', 'new-menu', async (v) => {
     if (v === 'gallery') openNewGallery();
     else if (v === 'collection') openCollectionModal();
     else if (v === 'upload') setScreen('upload');
+    else if (v === 'pf-gallery' || v === 'pf-collection') {
+      // Not scoped to whichever tab is open — switch to Portfolio and wait
+      // for its tree to load before creating, so the prompt that follows
+      // isn't racing the initial fetch.
+      setScreen('portfolio');
+      await window.SDPortfolio?.open();
+      if (v === 'pf-gallery') window.SDPortfolio?.newTopGallery();
+      else window.SDPortfolio?.newCategory();
+    }
   }, 'data-new');
 
   async function logout() {

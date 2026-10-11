@@ -65,6 +65,11 @@ define('PORTFOLIO_OPTION_VALUES', [
     // Layout isn't already a plain grid (horizontal row, full screen,
     // slideshow, featured tiles) — see galleryViews() in portfolio.js.
     'gridStyle' => ['justified', 'masonry', 'grid'],
+    // Justified/masonry/grid/featured show a picture's caption in the
+    // lightbox only by default, same as its title does; this optionally
+    // surfaces it inline too, the same credit overlay horizontal row, full
+    // screen and slideshow already show unconditionally.
+    'captions' => ['off', 'on'],
 ]);
 // How much room a single picture takes in the "featured tiles" layout. Called
 // `tile`, not `size`: an item's `size` is already its file size in bytes.
@@ -4502,6 +4507,7 @@ function portfolioNormalizeOptions($o) {
     $out['gap'] = in_array($o['gap'] ?? '', ['tight', 'normal', 'wide'], true) ? $o['gap'] : 'normal';
     $out['crop'] = in_array($o['crop'] ?? '', ['fit', 'fill'], true) ? $o['crop'] : 'fit';
     $out['gridStyle'] = in_array($o['gridStyle'] ?? '', ['justified', 'masonry', 'grid'], true) ? $o['gridStyle'] : 'justified';
+    $out['captions'] = in_array($o['captions'] ?? '', ['off', 'on'], true) ? $o['captions'] : 'off';
     $out['autoplay'] = !empty($o['autoplay']);
     $out['interval'] = min(30, max(2, (int)($o['interval'] ?? 5)));
     return $out;

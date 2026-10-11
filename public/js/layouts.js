@@ -32,13 +32,18 @@ function withCredit(node, item) {
   return node;
 }
 
+// The scanning layouts (justified/masonry/grid/featured) show a caption only
+// in the lightbox by default; a gallery's own Captions option can turn it on
+// inline here too, the same credit overlay the immersive layouts always use.
+const maybeCredit = (node, item, opts) => opts.captions === 'on' ? withCredit(node, item) : node;
+
 // Rows of equal height that keep each picture's aspect ratio, scaled to fill the
 // width — the usual photographer's grid. The last row is left unstretched so a
 // single leftover frame isn't blown up across the page.
 export function justified(root, items, tile, opts = {}) {
   const gap = gapOf(opts);
   const target = ROW_HEIGHTS[opts.density] ?? ROW_HEIGHTS.normal;
-  const tiles = items.map(tile);
+  const tiles = items.map(item => maybeCredit(tile(item), item, opts));
 
   const relayout = () => {
     const width = root.clientWidth;
@@ -83,7 +88,7 @@ export function justified(root, items, tile, opts = {}) {
 export function masonry(root, items, tile, opts = {}) {
   const gap = gapOf(opts);
   const min = COLUMN_WIDTHS[opts.density] ?? COLUMN_WIDTHS.normal;
-  const tiles = items.map(tile);
+  const tiles = items.map(item => maybeCredit(tile(item), item, opts));
 
   const relayout = () => {
     const width = root.clientWidth;
@@ -123,7 +128,7 @@ export function grid(root, items, tile, opts = {}) {
   const tiles = items.map((item, i) => {
     const node = tile(item);
     if (opts.crop !== 'fill') node.style.aspectRatio = ratio(items[i]);
-    return node;
+    return maybeCredit(node, item, opts);
   });
   root.append(...tiles);
   return { relayout() {}, destroy() { root.replaceChildren(); } };
@@ -140,7 +145,7 @@ export function featured(root, items, tile, opts = {}) {
   root.append(...items.map((item, i) => {
     const node = tile(item);
     node.classList.add('pf-size-' + (item.tile || 'normal'));
-    return node;
+    return maybeCredit(node, item, opts);
   }));
   return { relayout() {}, destroy() { root.replaceChildren(); } };
 }
@@ -299,7 +304,7 @@ export function slideshow(root, items, tile, opts = {}) {
     } else {
       const img = document.createElement('img');
       img.src = item.proxy || item.src;
-      img.alt = item.title || '';
+      img.alt = item.description || item.title || '';
       frame.replaceChildren(img);
     }
     // A video's own stage already renders the caption box under the picture.

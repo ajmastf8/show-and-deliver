@@ -63,6 +63,7 @@
     ['gap', 'Spacing', [['tight', 'Tight'], ['normal', 'Normal'], ['wide', 'Wide']]],
     ['density', 'Image size', [['compact', 'Smaller'], ['normal', 'Normal'], ['roomy', 'Larger']]],
     ['titles', 'Titles', [['none', 'Hidden'], ['hover', 'On hover'], ['under', 'Always']]],
+    ['captions', 'Captions', [['off', 'Lightbox only'], ['on', 'Always show']]],
     ['crop', 'Thumbnails', [['fit', 'Whole frame'], ['fill', 'Cropped']]],
     ['watermark', 'Watermark', [['inherit', 'Inherit'], ['off', 'Off']]],
   ];

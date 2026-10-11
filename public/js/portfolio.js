@@ -7,7 +7,7 @@
 // lightbox is PhotoSwipe (public/vendor/photoswipe), with video slides handled
 // here. A gallery set to the slideshow layout plays in place and has no lightbox.
 import PhotoSwipeLightbox from '/vendor/photoswipe/photoswipe-lightbox.esm.min.js';
-import { LAYOUTS } from '/js/layouts.js?v=10';
+import { LAYOUTS } from '/js/layouts.js?v=11';
 
 const root = document.getElementById('portfolio');
 
@@ -28,6 +28,39 @@ const formatDuration = s => {
   if (!s) return '';
   return Math.floor(s / 60) + ':' + String(Math.round(s % 60)).padStart(2, '0');
 };
+
+// Meta description, Open Graph and Twitter card tags — none of this existed
+// before, so every page starts from the static <head>'s bare minimum. Skipped
+// entirely for a locked gallery: private content shouldn't get a public-facing
+// description or preview image. `image` is whatever path the caller already
+// has on hand (a cover thumbnail, a gallery's own first item) — not fetched
+// specially for this.
+function setSeoMeta({ title, description, image } = {}) {
+  const setMeta = (attr, key, content) => {
+    if (!content) return;
+    let tag = document.head.querySelector(`meta[${attr}="${key}"]`);
+    if (!tag) {
+      tag = document.createElement('meta');
+      tag.setAttribute(attr, key);
+      document.head.appendChild(tag);
+    }
+    tag.setAttribute('content', content);
+  };
+  if (title) setMeta('property', 'og:title', title);
+  if (description) {
+    setMeta('name', 'description', description);
+    setMeta('property', 'og:description', description);
+    setMeta('name', 'twitter:description', description);
+  }
+  if (image) {
+    const absolute = new URL(image, location.origin).href;
+    setMeta('property', 'og:image', absolute);
+    setMeta('name', 'twitter:image', absolute);
+  }
+  setMeta('property', 'og:url', location.href);
+  setMeta('property', 'og:type', 'website');
+  setMeta('name', 'twitter:card', image ? 'summary_large_image' : 'summary');
+}
 
 // --- Cards (categories and galleries) ---
 
@@ -328,7 +361,7 @@ function renderGalleryBody(container, gallery, layoutName) {
     if (displaySrc) {
       const img = el('img');
       img.src = displaySrc;
-      img.alt = item.title || '';
+      img.alt = item.description || item.title || '';
       img.loading = 'lazy';
       node.appendChild(img);
     } else {
@@ -379,6 +412,12 @@ function renderGallery(gallery, opts = {}) {
   }
   // No per-gallery title header — the pictures are the page. The home page
   // keeps its own intro line.
+  const coverImage = (gallery.items || []).find(i => i.proxy || i.thumb);
+  setSeoMeta({
+    title: gallery.title,
+    description: gallery.description,
+    image: coverImage && (coverImage.proxy || coverImage.thumb),
+  });
   if (!opts.home) {
     document.title = gallery.title;
   } else if (gallery.description) {
@@ -594,6 +633,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (data.gallery) { renderGallery(data.gallery); return; }
       const { category, index, categories } = data;
       document.title = category.title;
+      setSeoMeta({
+        title: category.title,
+        description: category.description,
+        image: (category.galleries || []).find(g => g.cover)?.cover,
+      });
       const body = withSidebar(categories || [], category.slug, index || {});
       const head = el('header', 'pf-head');
       head.appendChild(el('h1', 'pf-title', category.title));

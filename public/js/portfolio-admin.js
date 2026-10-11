@@ -1955,50 +1955,57 @@
     // Drag to reorder nav items, drag a link into a dropdown's children to
     // make it a submenu entry, or drag a child out to make it a top-level
     // link again. Both kinds of list share one Sortable group so items can
-    // move between them; onAdd converts the moved row's markup to match
-    // whichever kind of list it landed in, since collectNav() (and the
-    // public menu) tell link rows and submenu rows apart by shape, not just
-    // position. A dropdown can't become a submenu entry itself — nesting
-    // only ever goes one level deep — and neither can a collection item: it
-    // already expands into its own dropdown of galleries, so there would be
-    // nothing left to convert it into as a plain child link.
+    // move between them. A dropdown can't become a submenu entry itself —
+    // nesting only ever goes one level deep — and neither can a collection
+    // item: it already expands into its own dropdown of galleries, so there
+    // would be nothing left to convert it into as a plain child link.
     const navItemCantNest = el => !!el.querySelector(':scope > .header-nav-children') || !!el.querySelector(':scope .nav-collection-id');
     const navRejectNesting = evt => !(evt.dragged.classList.contains('header-nav-item') && navItemCantNest(evt.dragged) && evt.to !== navList);
+
+    // collectNav() (and the public menu) tell a link row and a submenu row
+    // apart by shape, not just position, so a row dragged into a different
+    // kind of list needs converting once it lands. This used to happen in
+    // onAdd, which fires mid-drag — replacing the dragged element's own DOM
+    // node right then confused Sortable's internal reference to it (it keeps
+    // moving the node it started tracking, not whatever replaced it),
+    // producing exactly the duplicated-row, lost-row, non-smooth-drag
+    // symptoms this was built to avoid. Doing it once, after the whole
+    // gesture ends, sidesteps that: nothing touches a node while Sortable is
+    // still actively moving it.
+    function normalizeNavRowShapes() {
+      navList.querySelectorAll('.header-nav-children .header-nav-item').forEach(el => {
+        const label = el.querySelector('.nav-label')?.value || '';
+        const url = el.querySelector('.nav-url')?.value || '';
+        const row = document.createElement('div');
+        row.className = 'header-nav-child-row';
+        row.innerHTML = navChildRowHtml(label, url);
+        el.replaceWith(row);
+      });
+      [...navList.children].forEach(el => {
+        if (!el.classList.contains('header-nav-child-row')) return;
+        const label = el.querySelector('.child-label')?.value || '';
+        const url = el.querySelector('.child-url')?.value || '';
+        const item = document.createElement('div');
+        item.className = 'header-nav-item';
+        item.innerHTML = `<div class="header-nav-item-row">${navLinkItemHtml(label, url, false)}</div>`;
+        el.replaceWith(item);
+      });
+    }
+    const afterNavDrag = () => { normalizeNavRowShapes(); saveNav(); };
+
     function wireNavSortable() {
       Sortable.create(navList, {
         animation: 150, group: 'nav', handle: '.drag-handle', draggable: '.header-nav-item',
         ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
         onMove: navRejectNesting,
-        onAdd: evt => {
-          const el = evt.item;
-          if (el.classList.contains('header-nav-child-row')) {
-            const label = el.querySelector('.child-label')?.value || '';
-            const url = el.querySelector('.child-url')?.value || '';
-            const item = document.createElement('div');
-            item.className = 'header-nav-item';
-            item.innerHTML = `<div class="header-nav-item-row">${navLinkItemHtml(label, url, false)}</div>`;
-            el.replaceWith(item);
-          }
-        },
-        onEnd: saveNav,
+        onEnd: afterNavDrag,
       });
       navList.querySelectorAll('.header-nav-children').forEach(box => {
         Sortable.create(box, {
           animation: 150, group: 'nav', handle: '.drag-handle', draggable: '.header-nav-child-row',
           ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
           onMove: navRejectNesting,
-          onAdd: evt => {
-            const el = evt.item;
-            if (el.classList.contains('header-nav-item')) {
-              const label = el.querySelector('.nav-label')?.value || '';
-              const url = el.querySelector('.nav-url')?.value || '';
-              const row = document.createElement('div');
-              row.className = 'header-nav-child-row';
-              row.innerHTML = navChildRowHtml(label, url);
-              el.replaceWith(row);
-            }
-          },
-          onEnd: saveNav,
+          onEnd: afterNavDrag,
         });
       });
     }

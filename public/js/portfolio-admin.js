@@ -2211,6 +2211,7 @@
         <section class="pfa-group">
           <h3>SMTP (alternative to Resend)</h3>
           <div class="pfa-group-body">
+            <p class="pfa-hint">Using a Gmail or Google Workspace address? It needs an <a href="https://support.google.com/mail/answer/185833" target="_blank" rel="noopener">app password</a>, not your regular one, with host <code>smtp.gmail.com</code> and port 587.</p>
             <label class="pfa-field"><span>Host</span><input class="setting-input" id="pfa-smtp-host" value="${esc(c.host || '')}" placeholder="e.g. mail.hosting.com"></label>
             <label class="pfa-field"><span>Port</span><input class="setting-input narrow" type="number" id="pfa-smtp-port" value="${esc(c.port || 587)}"></label>
             <label class="pfa-check"><input type="checkbox" id="pfa-smtp-secure" ${c.secure ? 'checked' : ''}> Use SSL/TLS (port 465). Leave off for STARTTLS (587).</label>

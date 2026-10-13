@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.6.9 — 2026-10-13
+- **Download the original file for any gallery item, right from admin.** Uploaded files are renamed on disk with a timestamp prefix, so there was no way to pull one back out short of digging through `site-data/uploads` over FTP. Every photo and video in a gallery's item list now has a download button next to Replace that saves the original file under its item title.
+
 ## 1.6.8 — 2026-09-22
 - **Fixed: Delete did nothing on a portfolio gallery, with no explanation.** The server refused to delete your last portfolio gallery, but the admin ignored the refusal entirely — no message, no error, the gallery just stayed put, so Delete looked like a dead button. A delete that the server turns down now tells you why.
 - **You can delete your last portfolio gallery.** The old rule was protecting nothing: the public portfolio page already copes with having no portfolio gallery (it just shows nothing), and you could reach the same state anyway by switching your only portfolio gallery inactive. A gallery you created by accident has to be removable. Deleting the last one now warns that the public portfolio page will be empty until you make another, rather than refusing — and New > Portfolio makes another whenever you want.

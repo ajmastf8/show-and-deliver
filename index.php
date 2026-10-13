@@ -1959,6 +1959,23 @@ if ($method === 'DELETE' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}'
     respond(['ok' => true]);
 }
 
+// Download original file
+if ($method === 'GET' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/download', $uri, $params)) {
+    requireAuth();
+    $videos = readGalleryVideos($params['gid']);
+    $video = null;
+    foreach ($videos as $v) { if ($v['id'] === $params['vid']) { $video = $v; break; } }
+    if (!$video) respondError('Not found', 404);
+
+    $filePath = UPLOADS_DIR . '/' . $video['filename'];
+    if (!file_exists($filePath)) respondError('File not found', 404);
+
+    $ext = pathinfo($video['filename'], PATHINFO_EXTENSION);
+    $downloadName = preg_replace('/[^a-zA-Z0-9 .\-]/', '', $video['title']) . '.' . $ext;
+
+    sendStaticFile($filePath, $downloadName, 'application/octet-stream', staticUploadUrl($video['filename']));
+}
+
 // Headers
 if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/headers', $uri, $params)) {
     requireAuth();

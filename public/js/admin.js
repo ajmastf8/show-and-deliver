@@ -1392,6 +1392,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <input type="text" class="title-input" value="${escapeHtml(entry.title)}">
         <span class="video-dl-count" title="${dlCount} downloads">↓ ${dlCount}</span>
         <button class="btn-icon replace-btn" title="Replace file">↻</button>
+        <a class="btn-icon download-btn" href="/api/admin/galleries/${contentGid}/videos/${entry.id}/download" title="Download original file">⇣</a>
         ${isPortfolio ? `<button class="btn-icon desc-btn${entry.description ? ' has-description' : ''}" title="Caption box">&para;</button>` : ''}
         ${isPhoto ? '' : `<button class="btn-icon cc-btn${(entry.captions && entry.captions.length) ? ' has-captions' : ''}" title="Captions">CC</button>`}
         ${isPhoto ? '' : `<button class="btn-icon thumb-btn" title="Set thumbnail">▦</button>`}

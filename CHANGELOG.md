@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.2.11 — 2026-10-16
+- **Fixed: the From address (and anything else with quotes in it) looked blank after saving.** A value like `"AJ Mast" <aj@ajmast.com>` was saved correctly but the settings form drew it as an empty field, so it appeared not to save, and the next Save Email Settings would have erased it. The shared HTML-escape helper now escapes quotes as well, in the admin, header, collection, proofing and public pages, which also protects titles and alt text containing quotes from breaking their attributes.
+
 ## 2.2.10 — 2026-10-16
 - **Login is more forgiving and more honest.** The email is no longer case-sensitive and ignores stray spaces, so `Name@Site.com` signs in as `name@site.com`. The login page now shows the real reason when it isn't a wrong password (for example the five-tries-a-minute lockout, which used to read "Invalid credentials").
 - **`admin:reset-password` now proves it worked.** After saving, it reads the account back the same way the login page does and prints the file's path, owner and permissions, and says so if the web server might not be able to read it.

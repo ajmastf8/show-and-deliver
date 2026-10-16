@@ -116,6 +116,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str;
-    return div.innerHTML;
+    // Quotes too: the result is also used inside value="…" / alt="…" attributes.
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 });

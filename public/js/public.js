@@ -160,5 +160,6 @@ function closeLightbox(overlay) {
 function escapeHtml(str) {
   const div = document.createElement('div');
   div.textContent = str;
-  return div.innerHTML;
+  // Quotes too: the result is also used inside attributes.
+  return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }

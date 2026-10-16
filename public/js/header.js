@@ -48,7 +48,8 @@
     function esc(str) {
       const d = document.createElement('div');
       d.textContent = str || '';
-      return d.innerHTML;
+      // Quotes too: the result is also used inside href="…" / alt="…" attributes.
+      return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
     // Build nav HTML

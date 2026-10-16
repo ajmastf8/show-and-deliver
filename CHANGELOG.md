@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.10 — 2026-10-16
+- **Login is more forgiving and more honest.** The email is no longer case-sensitive and ignores stray spaces, so `Name@Site.com` signs in as `name@site.com`. The login page now shows the real reason when it isn't a wrong password (for example the five-tries-a-minute lockout, which used to read "Invalid credentials").
+- **`admin:reset-password` now proves it worked.** After saving, it reads the account back the same way the login page does and prints the file's path, owner and permissions, and says so if the web server might not be able to read it.
+
 ## 2.2.9 — 2026-10-16
 - **Fixed: the password reset email could silently never arrive.** A reset link was only sent when you typed the exact admin login address, with no hint if you used a different one, and a mail-server failure was swallowed while the page still said the link was on its way. Either admin address now works (the login email, or the notification address from Settings > Email, which the contact form uses), the link goes to the one you typed, and a send failure is logged and shown on the page with the mail server's reason.
 

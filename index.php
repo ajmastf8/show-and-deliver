@@ -1584,7 +1584,23 @@ if (PHP_SAPI === 'cli') {
         $new = $argv[2] ?? substr(strtr(base64_encode(random_bytes(12)), '+/', 'xy'), 0, 16);
         if (strlen($new) < PASSWORD_MIN_LEN) { fwrite(STDERR, 'Password must be at least ' . PASSWORD_MIN_LEN . " characters.\n"); exit(1); }
         saveAdminPassword($creds['email'], $new);
+        // Read it back the way the login route will, so a file the web server
+        // can't see or a write that didn't take is reported here, not as a
+        // mystery "invalid credentials" later.
+        clearstatcache();
+        $check = getAdminCredentials();
+        if (!$check || !adminPasswordMatches($check, $new)) {
+            fwrite(STDERR, "The password was written but does not read back from " . ADMIN_CONFIG_PATH . ". Check that file's ownership and permissions.\n");
+            exit(1);
+        }
+        $perms = substr(sprintf('%o', fileperms(ADMIN_CONFIG_PATH)), -4);
+        $owner = function_exists('posix_getpwuid') ? (posix_getpwuid(fileowner(ADMIN_CONFIG_PATH))['name'] ?? fileowner(ADMIN_CONFIG_PATH)) : fileowner(ADMIN_CONFIG_PATH);
         echo "Password for {$creds['email']} is now: $new\n";
+        echo "Saved to " . ADMIN_CONFIG_PATH . " (owner $owner, mode $perms) and verified.\n";
+        if (!(fileperms(ADMIN_CONFIG_PATH) & 0004)) {
+            echo "Note: the file is not world-readable; if login still fails, the web server may be running as a different user than this shell.\n";
+        }
+        echo "Log in with the email above exactly as shown.\n";
         exit(0);
     }
     if (($argv[1] ?? '') !== 'portfolio:process') {
@@ -1689,14 +1705,10 @@ if ($method === 'POST' && $uri === '/api/auth/login') {
     $password = $input['password'] ?? '';
     $creds = getAdminCredentials();
 
-    $match = false;
-    if (!empty($creds['passwordHash'])) {
-        // admin.json credentials (bcrypt)
-        $match = hash_equals($creds['email'], $email) && password_verify($password, $creds['passwordHash']);
-    } elseif (!empty($creds['plainPassword'])) {
-        // .env legacy credentials (plaintext)
-        $match = hash_equals($creds['email'], $email) && hash_equals($creds['plainPassword'], $password);
-    }
+    // The address is not a secret and mail clients capitalize it freely, so
+    // compare it case-insensitively and ignore stray spaces.
+    $emailOk = hash_equals(strtolower(trim($creds['email'])), strtolower(trim((string)$email)));
+    $match = $emailOk && adminPasswordMatches($creds, (string)$password);
 
     if ($match) {
         $_SESSION['authenticated'] = true;

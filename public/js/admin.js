@@ -214,7 +214,12 @@ document.addEventListener('DOMContentLoaded', () => {
       body: JSON.stringify({ username: f.username.value, password: f.password.value }),
     });
     if (res.ok) checkAuth();
-    else $('login-error').textContent = 'Invalid credentials';
+    else {
+      // Show the server's reason (e.g. the too-many-attempts lockout) rather than
+      // calling every failure a bad password.
+      const d = await res.json().catch(() => ({}));
+      $('login-error').textContent = res.status === 401 ? 'Invalid credentials' : (d.error || 'Login failed');
+    }
   });
 
   // Password recovery: the emailed link lands here as /admin?reset=<token>.

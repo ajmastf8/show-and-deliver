@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.7 — 2026-10-15
+- **Faster first load.** The public site no longer starts a PHP session for every visitor and bot. Sessions begin only when you log in or unlock a protected gallery (or already carry a session cookie), and read-only requests release the session lock immediately, so the header and portfolio data load in parallel instead of queuing. Old session files are pruned automatically (at most once a day) when someone logs in or unlocks a gallery.
+- The Google Fonts stylesheet no longer blocks the first paint; the page shows in the fallback font until Open Sans arrives.
+
 ## 2.2.0 — 2026-10-09
 - **Duplicate files can be linked instead of copied.** A new **Duplicates** panel in the Portfolio tab finds files that exist byte-for-byte more than once across the portfolio, nested collections included, and lets you keep one and turn the rest into **picks** of it — the picture shows in every gallery while the bytes live in one place. Files are grouped on size first, so only genuine candidates are hashed; nothing is deleted (copies move to `site-data/portfolio-trash/`) and any title or caption on a copy carries onto the link. This is the app-level answer to "one picture, many galleries" — picks rather than symlinks, so identity and metadata stay shared and nothing breaks across FTP, backups or zips.
 

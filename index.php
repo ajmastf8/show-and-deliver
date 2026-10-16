@@ -215,7 +215,40 @@ session_set_cookie_params([
     'samesite' => 'Lax',
     'secure' => (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off'),
 ]);
-session_start();
+
+// Only touch the session when there is one to read or one to create. Public
+// pages used to call session_start() on every request, which minted a session
+// file for every anonymous visitor and bot (7-day lifetime, never reclaimed on
+// hosts where PHP's own gc is off) and made a visitor's parallel API calls
+// queue behind PHP's session file lock.
+$sessionPath = '/' . trim(preg_replace('#^.*?/api/#', '/api/', strtok($_SERVER['REQUEST_URI'] ?? '', '?')), '/');
+$createsSession = ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST'
+    && ($sessionPath === '/api/auth/setup'
+        || $sessionPath === '/api/auth/login'
+        || substr($sessionPath, -7) === '/unlock');
+if (isset($_COOKIE[session_name()]) || $createsSession) {
+    session_start();
+    if ($createsSession) pruneStaleSessions();
+    // Reads never write the session; release the lock so they run in parallel.
+    if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') session_write_close();
+}
+
+// Delete session files past their lifetime, at most once a day. Bounded so a
+// huge backlog is cleared over several runs instead of stalling one request.
+function pruneStaleSessions() {
+    $dir = DATA_DIR . '/sessions';
+    $marker = $dir . '/.last-prune';
+    if (is_file($marker) && filemtime($marker) > time() - 86400) return;
+    @touch($marker);
+    $cutoff = time() - 7 * 24 * 3600;
+    $budget = 20000;
+    foreach (new DirectoryIterator($dir) as $f) {
+        if ($budget-- <= 0) break;
+        if ($f->isFile() && strncmp($f->getFilename(), 'sess_', 5) === 0 && $f->getMTime() < $cutoff) {
+            @unlink($f->getPathname());
+        }
+    }
+}
 
 // Security headers
 header('X-Content-Type-Options: nosniff');
@@ -1618,7 +1651,7 @@ if ($method === 'POST' && $uri === '/api/auth/login') {
 }
 
 if ($method === 'POST' && $uri === '/api/auth/logout') {
-    session_destroy();
+    if (session_status() === PHP_SESSION_ACTIVE) session_destroy();
     respond(['ok' => true]);
 }
 

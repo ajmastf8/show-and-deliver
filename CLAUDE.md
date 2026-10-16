@@ -245,6 +245,12 @@ split by system, and the prefix says which one a route belongs to:
   header, theme, deploy, api-token), `/api/header`, `/api/pages`, `/api/contact`,
   `/api/admin/export|import/*`.
 
+The pre-2.3.0 client paths (`/api/galleries`, `/api/collections`,
+`/api/admin/galleries/{gid}/videos`, `/api/proofing/…`, `/api/packages/…`, and so
+on) are still accepted: `legacyClientRoute()` translates them to the new paths
+and flags the response with `X-API-Deprecated`, because Deadline Editor still
+calls them. Don't add new routes there; remove the function once the app has moved.
+
 Both systems use the same verbs for the same things — `…/items[/{id}]`,
 `…/items/{id}/poster`, `…/items/{id}/captions`, `…/headers`, `…/order` — and the
 multipart upload field is `file` on both. Keep it that way when adding routes:

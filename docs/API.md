@@ -746,10 +746,16 @@ curl -s -X POST "$HOST/api/admin/uploads/$UPLOAD_ID/finalize" "${AUTH[@]}" "${JS
 }
 ```
 
-## What changed in 2.3.0
+## What changed in 2.3.0 (old paths deprecated, not yet removed)
 
-Routes were renamed so the two systems can't be confused. There are no aliases:
-the old paths return `404`.
+Routes were renamed so the two systems can't be confused. **The old client
+delivery paths still work for now as deprecated aliases**: they are translated to
+the new ones, and every aliased response carries an
+`X-API-Deprecated: <old path> is now <new path>` header. A finalize call with no
+`target` is treated as `client` (or `portfolio` when it sends
+`portfolioGalleryId`), and an aliased response also repeats `items` as `videos`.
+Move your tool to the new names; the aliases will be removed in a later release.
+`GET /api/videos` (the old public portfolio feed) has no alias and is gone.
 
 | Old | New |
 |---|---|

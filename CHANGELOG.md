@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.3.2 — 2026-10-16
+- **The old client-delivery API paths work again, as deprecated aliases.** 2.3.0 renamed them with no fallback, which broke Deadline Editor (its Test Connection answered "404 Not found") and would break any cached page. The old paths (`/api/galleries`, `/api/collections`, `/api/admin/galleries/{id}/videos`, `/api/proofing/…`, `/api/packages/…`, and the rest) are now translated to the new ones, the old multipart field `video` and the `videos` response key still work, and a finalize with no `target` is accepted. Every aliased response carries an `X-API-Deprecated` header naming the new path. They will be removed once the app has moved; `GET /api/videos` stays gone.
+
 ## 2.3.1 — 2026-10-16
 - **Generating an API token now tells you where to use it.** The Settings → API panel has a **Site URL** (with a Copy button) at the top, and the one-time "Your new API token" dialog shows it above the token. It is just the site's address, with no `/api` or path, because tools add the paths themselves and one that was given `…/api/admin/portfolio` answered 404.
 

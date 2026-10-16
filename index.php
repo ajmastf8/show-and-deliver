@@ -304,6 +304,8 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 // ============================================================
 
 function respond($data, $status = 200) {
+    // Legacy callers (see legacyClientRoute) still read `videos`.
+    if (!empty($GLOBALS['legacyApi']) && is_array($data) && isset($data['items']) && !isset($data['videos'])) $data['videos'] = $data['items'];
     http_response_code($status);
     header('Content-Type: application/json');
     echo json_encode($data);
@@ -1618,6 +1620,33 @@ $uri = preg_replace('#^.*?/api/#', '/api/', $uri);
 // Normalize
 $uri = '/' . trim($uri, '/');
 
+// DEPRECATED: the pre-2.3.0 client-delivery paths. 2.3.0 renamed them (see
+// docs/API.md), but Deadline Editor and any cached page still call the old
+// ones, so they are translated to the new paths here and flagged with an
+// X-API-Deprecated header. Delete this function (and its call, and the `videos`
+// shim in respond()) once nothing sends them.
+function legacyClientRoute($method, $uri) {
+    $items = fn($tail) => str_replace(['/videos', '/reorder', '/thumbnail'], ['/items', '/order', '/poster'], $tail);
+    if (preg_match('#^/api/admin/galleries/(.+)$#', $uri, $m)) return '/api/admin/client/galleries/' . $items($m[1]);
+    if (preg_match('#^/api/(galleries|collections)(/.*)?$#', $uri, $m) && strpos($uri, '/api/collections/public/') !== 0) {
+        return '/api/admin/client/' . $m[1] . ($m[2] ?? '');
+    }
+    if (preg_match('#^/api/collections/public/(.+)$#', $uri, $m)) return '/api/client/collections/' . $m[1];
+    if (preg_match('#^/api/proofing/(.+)$#', $uri, $m)) return '/api/client/galleries/' . str_replace('/event/download-all', '/events/download-all', $m[1]);
+    if (preg_match('#^/api/packages/(.+)$#', $uri, $m)) return '/api/client/packages/' . $m[1];
+    if (preg_match('#^/api/admin/(packages|crc-warm|sendfile-test|import/files)(/.*)?$#', $uri, $m)) return '/api/admin/client/' . $m[1] . ($m[2] ?? '');
+    if (preg_match('#^(/api/admin/portfolio/galleries/[^/]+)/files$#', $uri, $m)) return $m[1] . '/items';
+    return null;
+}
+$legacyUri = legacyClientRoute($method, $uri);
+if ($legacyUri !== null) {
+    $GLOBALS['legacyApi'] = true;
+    header('X-API-Deprecated: ' . $uri . ' is now ' . $legacyUri . ' (see docs/API.md)');
+    $uri = $legacyUri;
+    // The multipart field was renamed video -> file.
+    if (!empty($_FILES['video']) && empty($_FILES['file'])) $_FILES['file'] = $_FILES['video'];
+}
+
 // Route matching helper
 function matchRoute($pattern, $uri, &$params) {
     $regex = preg_replace('/\{(\w+)\}/', '(?P<$1>[^/]+)', $pattern);
@@ -2221,6 +2250,9 @@ if ($method === 'POST' && matchRoute('/api/admin/uploads/{uploadId}/finalize', $
 
     $input = getInput();
     $target = (string)($input['target'] ?? '');
+    // DEPRECATED: before 2.3.0 the system was implied by the field name.
+    if ($target === '' && isset($input['portfolioGalleryId'])) { $target = 'portfolio'; $input['galleryId'] = $input['portfolioGalleryId']; }
+    elseif ($target === '') { $target = 'client'; header('X-API-Deprecated: finalize without "target"; send {"target":"client","galleryId":"..."}'); }
     if (!in_array($target, ['client', 'portfolio'], true)) respondError('target must be "client" or "portfolio"', 400);
     $gid = trim((string)($input['galleryId'] ?? ''));
     $pgid = $target === 'portfolio' ? $gid : '';

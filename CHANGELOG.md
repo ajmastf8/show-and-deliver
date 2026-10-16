@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.2.12 — 2026-10-16
+- **Private galleries in a collection get their own section.** Open a collection in the admin and its public galleries are listed first, followed by a **Private** divider (with a count) and the private galleries underneath, the same way hidden pictures sit under **Hidden** in a gallery. It's a display grouping only: the stored order and what visitors see are unchanged, and making a gallery public moves it back up. Drag-to-reorder applies to the public galleries; private ones keep their place.
+
 ## 2.2.11 — 2026-10-16
 - **Fixed: the From address (and anything else with quotes in it) looked blank after saving.** A value like `"AJ Mast" <aj@ajmast.com>` was saved correctly but the settings form drew it as an empty field, so it appeared not to save, and the next Save Email Settings would have erased it. The shared HTML-escape helper now escapes quotes as well, in the admin, header, collection, proofing and public pages, which also protects titles and alt text containing quotes from breaking their attributes.
 

@@ -897,6 +897,23 @@
     return out.length ? `<p class="pfa-hint pfa-nudges">${out.map(esc).join(' · ')}</p>` : '';
   }
 
+  const isPrivateChild = g => !!g.access && g.access !== 'public';
+
+  // Admin view of a collection: public galleries first, then a "Private"
+  // divider with the private ones underneath, the same way hidden pictures sit
+  // under "Hidden" in a gallery. Display-only: the stored order is untouched,
+  // and making a gallery public moves it back up on the next render.
+  function subGalleriesWithPrivate(children) {
+    const open = children.filter(c => !isPrivateChild(c));
+    const priv = children.filter(isPrivateChild);
+    let html = open.map(subGalleryCard).join('');
+    if (priv.length) {
+      html += `<div class="pfa-hidden-divider pfa-private-divider" data-divider>Private<span class="pfa-hidden-count">${priv.length}</span></div>`;
+      html += priv.map(subGalleryCard).join('');
+    }
+    return html;
+  }
+
   // A child gallery inside the open gallery: same card, but the node arrives as
   // an admin node (no `category`), so it carries its own meta.
   function subGalleryCard(g) {
@@ -906,7 +923,7 @@
       g.failed ? `<span class="pfa-badge bad">${g.failed} unreadable</span>` : '',
     ].filter(Boolean).join('');
     return `
-      <div class="pfa-card" data-gid="${esc(g.id)}">
+      <div class="pfa-card${isPrivateChild(g) ? ' pfa-private' : ''}" data-gid="${esc(g.id)}">
         <div class="pfa-card-frame">${g.cover ? `<img src="${esc(g.cover)}" alt="" loading="lazy">` : '<span class="pfa-card-empty"></span>'}</div>
         <div class="pfa-card-body">
           <div class="pfa-card-title">${esc(g.title)}</div>
@@ -995,7 +1012,7 @@
         <div class="pfa-section">
           <div class="pfa-section-text">Galleries in this collection</div>
         </div>
-        <div class="pfa-cards" id="pfa-subcards">${g.children.map(subGalleryCard).join('')}</div>`
+        <div class="pfa-cards" id="pfa-subcards">${subGalleriesWithPrivate(g.children)}</div>`
         : `<p class="pfa-hint">This is a gallery — it holds media. Collections hold galleries. Use Location to move it, or add a gallery to turn it into a collection.</p>`)}
 
         <div class="pfa-drop ${g.items.length ? 'compact' : ''}" id="pfa-drop" title="Copied into ${esc(g.folder)}. Files dropped into that folder over FTP appear here too.">
@@ -1381,8 +1398,14 @@
       Sortable.create(subcards, {
         animation: 140,
         disabled: ((g.sort || {}).by || 'custom') !== 'custom',
+        // Only the public galleries are reordered by hand; the Private group
+        // is a fixed section underneath.
+        draggable: '.pfa-card:not(.pfa-private)',
         onEnd: () => {
-          const ids = [...subcards.querySelectorAll('.pfa-card')].map(c => c.dataset.gid);
+          // Public galleries take the new order; private ones keep the slots
+          // they already had in the stored order.
+          const next = [...subcards.querySelectorAll('.pfa-card:not(.pfa-private)')].map(c => c.dataset.gid);
+          const ids = g.children.map(c => isPrivateChild(c) ? c.id : next.shift());
           act(() => send(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/children/order`, 'PUT', { children: ids }));
         },
       });

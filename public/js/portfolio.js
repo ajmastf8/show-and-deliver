@@ -621,12 +621,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
       }
     } catch (_) {}
-    // Nothing on the home page yet: show what this install showed before.
-    const grid = document.getElementById('video-grid');
-    if (grid && window.renderReelsGrid) {
-      grid.hidden = false;
-      window.renderReelsGrid(grid);
-    }
     return;
   }
 

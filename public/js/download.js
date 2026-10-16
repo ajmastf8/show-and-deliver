@@ -13,7 +13,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   try {
-    const res = await fetch(`/api/packages/${encodeURIComponent(token)}`);
+    const res = await fetch(`/api/client/packages/${encodeURIComponent(token)}`);
     if (res.status === 410) {
       showError('Link Expired', 'This download link has expired. Ask for a fresh one and it will be ready straight away.');
       return;

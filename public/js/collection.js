@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   try {
-    const res = await fetch(`/api/collections/public/${token}`);
+    const res = await fetch(`/api/client/collections/${token}`);
 
     if (res.status === 410) {
       showError('Collection Expired', 'This collection has expired and is no longer available.');
@@ -59,7 +59,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       errEl.textContent = '';
 
       try {
-        const res = await fetch(`/api/collections/public/${token}/unlock`, {
+        const res = await fetch(`/api/client/collections/${token}/unlock`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ password: pw })

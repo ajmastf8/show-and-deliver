@@ -300,7 +300,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadData() {
     let gRes, cRes;
     try {
-      [gRes, cRes] = await Promise.all([fetch('/api/galleries'), fetch('/api/collections')]);
+      [gRes, cRes] = await Promise.all([fetch('/api/admin/client/galleries'), fetch('/api/admin/client/collections')]);
     } catch (err) {
       toast('Could not reach the server — check your connection and reload.');
       return;
@@ -329,7 +329,7 @@ document.addEventListener('DOMContentLoaded', () => {
     crcWarming = true;
     try {
       for (;;) {
-        const res = await fetch('/api/admin/crc-warm', {
+        const res = await fetch('/api/admin/client/crc-warm', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ packageId }),
         });
@@ -526,7 +526,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const next = !item.favorite;
     item.favorite = next;
     renderAll();
-    const url = kind === 'collection' ? `/api/collections/${id}` : `/api/galleries/${id}`;
+    const url = kind === 'collection' ? `/api/admin/client/collections/${id}` : `/api/admin/client/galleries/${id}`;
     const res = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ favorite: next }) });
     if (!res.ok) { item.favorite = !next; renderAll(); toast('Failed to update favorite'); }
   }
@@ -990,7 +990,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!colId) return;
       const col = state.collections.find(c => c.id === colId);
       const merged = [...new Set([...(col.galleryIds || []), ...ids])];
-      await fetch(`/api/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: merged }) });
+      await fetch(`/api/admin/client/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: merged }) });
       state.selection.clear();
       await loadData(); renderAll();
       toast(`Added ${ids.length} to ${col.name}`);
@@ -998,21 +998,21 @@ document.addEventListener('DOMContentLoaded', () => {
       const date = await promptModal({ title: 'Set expiration', okText: 'Set', field: { type: 'date', label: 'Expiration date (leave blank to clear)' } });
       if (date === null) return;
       const expiresAt = date ? new Date(date + 'T23:59:59').toISOString() : null;
-      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt }) }));
+      runBulk(id => fetch(`/api/admin/client/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt }) }));
     } else if (kind === 'password') {
       const pw = await promptModal({ title: 'Set / clear password', okText: 'Apply', sub: 'Leave blank to remove the password.', field: { type: 'text', label: 'Password' } });
       if (pw === null) return;
-      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) }));
+      runBulk(id => fetch(`/api/admin/client/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) }));
     } else if (kind === 'downloads') {
       const val = await promptModal({ title: 'Downloads', okText: 'Apply', field: { type: 'select', label: 'Allow client downloads', options: [{ value: '1', label: 'On' }, { value: '0', label: 'Off' }] } });
       if (val === null) return;
-      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ downloadsEnabled: val === '1' }) }));
+      runBulk(id => fetch(`/api/admin/client/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ downloadsEnabled: val === '1' }) }));
     } else if (kind === 'archive') {
       if (!await confirmModal({ title: 'Archive galleries', message: `Archive ${ids.length} galler${ids.length === 1 ? 'y' : 'ies'}? They become inactive and move to Archive.` })) return;
-      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: false }) }));
+      runBulk(id => fetch(`/api/admin/client/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: false }) }));
     } else if (kind === 'delete') {
       if (!await confirmModal({ title: 'Delete galleries', message: `Permanently delete ${ids.length} galler${ids.length === 1 ? 'y' : 'ies'}? This cannot be undone.`, okText: 'Delete', danger: true })) return;
-      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'DELETE' }));
+      runBulk(id => fetch(`/api/admin/client/galleries/${id}`, { method: 'DELETE' }));
     }
   }
 
@@ -1086,14 +1086,14 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (act === 'copy') { copyText(window.location.origin + '/gallery/' + g.token); }
     else if (act === 'open') { window.open(window.location.origin + '/gallery/' + g.token, '_blank', 'noopener'); }
     else if (act === 'refresh') {
-      const res = await fetch(`/api/admin/galleries/${g.id}/probe`, { method: 'POST' });
+      const res = await fetch(`/api/admin/client/galleries/${g.id}/probe`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       toast(data.updated > 0 ? `Updated ${data.updated} item${data.updated !== 1 ? 's' : ''}` : 'All up to date');
       if (data.updated > 0) loadContent();
     } else if (act === 'header') {
       const text = await promptModal({ title: 'Section header', okText: 'Add', field: { type: 'text', label: 'Header text' } });
       if (!text) return;
-      await fetch(`/api/admin/galleries/${g.id}/headers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+      await fetch(`/api/admin/client/galleries/${g.id}/headers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
       loadContent();
     }
   }
@@ -1330,7 +1330,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     else if (act === 'regen') {
       if (!await confirmModal({ title: 'Regenerate link', message: 'This replaces the link with a new one, and anyone you have already sent the current link to will get "not found". Write the current link down first — Edit can put it back.', okText: 'Regenerate', danger: true })) return;
-      const res = await fetch(`/api/galleries/${g.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regenerateToken: true }) });
+      const res = await fetch(`/api/admin/client/galleries/${g.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regenerateToken: true }) });
       if (res.ok) { await loadData(); renderAll(); toast('Link regenerated'); }
     }
   }
@@ -1357,7 +1357,7 @@ document.addEventListener('DOMContentLoaded', () => {
           body.expiresAt = d.expiresAt ? new Date(d.expiresAt + 'T23:59:59').toISOString() : null;
         }
       }
-      const res = await fetch(`/api/galleries/${g.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const res = await fetch(`/api/admin/client/galleries/${g.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (res.ok) {
         state.drawer.dirty = false;
         await loadData(); initDraft(); renderAll(); renderDrawer();
@@ -1372,7 +1372,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ? `Delete "${g.name}"? This cannot be undone. It is your only portfolio gallery, so your public portfolio page will have nothing to show until you create another.`
         : `Delete "${g.name}"? This cannot be undone.`;
       if (!await confirmModal({ title: 'Delete gallery', message, okText: 'Delete', danger: true })) return;
-      const res = await fetch(`/api/galleries/${g.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/admin/client/galleries/${g.id}`, { method: 'DELETE' });
       if (!res.ok) {
         // Silence here is how a refused delete used to look like a dead button.
         const data = await res.json().catch(() => ({}));
@@ -1382,11 +1382,11 @@ document.addEventListener('DOMContentLoaded', () => {
       closeDrawerForce(); state.centreGalleryId = null; contentGid = null; await loadData(); renderAll(); toast('Gallery deleted');
     } else if (act === 'duplicate') {
       toast('Creating copy…');
-      const res = await fetch('/api/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: g.name + ' (copy)', type: g.type }) });
+      const res = await fetch('/api/admin/client/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: g.name + ' (copy)', type: g.type }) });
       if (res.ok && col) {
         const ng = await res.json();
         const merged = [...(col.galleryIds || []), ng.id];
-        await fetch(`/api/collections/${col.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: merged }) });
+        await fetch(`/api/admin/client/collections/${col.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: merged }) });
       }
       await loadData(); renderAll(); toast('Duplicated (metadata only — items not copied)');
     } else if (act === 'move') {
@@ -1404,13 +1404,13 @@ document.addEventListener('DOMContentLoaded', () => {
     for (const c of state.collections) {
       const has = (c.galleryIds || []).includes(g.id);
       if (has && c.id !== colId) {
-        await fetch(`/api/collections/${c.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: c.galleryIds.filter(x => x !== g.id) }) });
+        await fetch(`/api/admin/client/collections/${c.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: c.galleryIds.filter(x => x !== g.id) }) });
       }
     }
     if (colId) {
       const target = state.collections.find(c => c.id === colId);
       if (target && !(target.galleryIds || []).includes(g.id)) {
-        await fetch(`/api/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(target.galleryIds || []), g.id] }) });
+        await fetch(`/api/admin/client/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(target.galleryIds || []), g.id] }) });
       }
     }
     await loadData(); initDraft(); renderAll(); renderDrawer();
@@ -1458,10 +1458,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadContent() {
     if (!contentGid) return;
-    const res = await fetch(`/api/admin/galleries/${contentGid}/videos`);
+    const res = await fetch(`/api/admin/client/galleries/${contentGid}/items`);
     if (!res.ok) { if (res.status === 401) checkAuth(); return; }
     const data = await res.json();
-    contentItems = Array.isArray(data) ? data : (data.videos || []);
+    contentItems = Array.isArray(data) ? data : (data.items || []);
     const stats = (data && data.stats) || {};
     renderContentItems(contentItems, stats);
   }
@@ -1505,7 +1505,7 @@ document.addEventListener('DOMContentLoaded', () => {
       handle: '.drag-handle', animation: 150, ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
       onEnd: async () => {
         const order = Array.from(list.querySelectorAll('.admin-video-item, .admin-header-item')).map(i => i.dataset.id);
-        await fetch(`/api/admin/galleries/${contentGid}/reorder`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }) });
+        await fetch(`/api/admin/client/galleries/${contentGid}/order`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }) });
       },
     });
   }
@@ -1646,9 +1646,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!container || !contentGid) return;
     const id = container.dataset.id;
     if (container.dataset.type === 'header') {
-      await fetch(`/api/admin/galleries/${contentGid}/headers/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: e.target.value }) });
+      await fetch(`/api/admin/client/galleries/${contentGid}/headers/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: e.target.value }) });
     } else {
-      await fetch(`/api/admin/galleries/${contentGid}/videos/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: e.target.value }) });
+      await fetch(`/api/admin/client/galleries/${contentGid}/items/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: e.target.value }) });
     }
   });
   document.addEventListener('click', async (e) => {
@@ -1661,7 +1661,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (vis && contentGid) {
       const item = vis.closest('.admin-video-item'); const id = item.dataset.id;
       const newVisible = vis.classList.contains('hidden-video');
-      const res = await fetch(`/api/admin/galleries/${contentGid}/videos/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visible: newVisible }) });
+      const res = await fetch(`/api/admin/client/galleries/${contentGid}/items/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visible: newVisible }) });
       if (res.ok) { vis.classList.toggle('hidden-video', !newVisible); vis.textContent = newVisible ? '◉' : '○'; vis.title = newVisible ? 'Visible' : 'Hidden'; }
       return;
     }
@@ -1670,7 +1670,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const item = del.closest('.admin-video-item, .admin-header-item'); const id = item.dataset.id;
       const isHeader = item.dataset.type === 'header';
       if (!await confirmModal({ title: isHeader ? 'Delete header' : 'Delete item', message: isHeader ? 'Delete this section header?' : 'Delete this item? This cannot be undone.', okText: 'Delete', danger: true })) return;
-      const url = isHeader ? `/api/admin/galleries/${contentGid}/headers/${id}` : `/api/admin/galleries/${contentGid}/videos/${id}`;
+      const url = isHeader ? `/api/admin/client/galleries/${contentGid}/headers/${id}` : `/api/admin/client/galleries/${contentGid}/items/${id}`;
       const res = await fetch(url, { method: 'DELETE' });
       if (res.ok) item.remove();
       return;
@@ -1695,11 +1695,11 @@ document.addEventListener('DOMContentLoaded', () => {
   $('replace-file-input').addEventListener('change', () => {
     const file = $('replace-file-input').files[0];
     if (!file || !replaceVideoId) return;
-    const fd = new FormData(); fd.append('video', file);
+    const fd = new FormData(); fd.append('file', file);
     const xhr = new XMLHttpRequest();
     xhr.addEventListener('load', () => { if (xhr.status >= 200 && xhr.status < 300) loadContent(); else toast('Replace failed'); replaceVideoId = null; $('replace-file-input').value = ''; });
     xhr.addEventListener('error', () => { toast('Replace failed'); replaceVideoId = null; $('replace-file-input').value = ''; });
-    xhr.open('PUT', `/api/admin/galleries/${contentGid}/videos/${replaceVideoId}/replace`);
+    xhr.open('PUT', `/api/admin/client/galleries/${contentGid}/items/${replaceVideoId}/replace`);
     xhr.send(fd);
   });
 
@@ -1709,7 +1709,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function renderDrawerComments(g) {
     const body = $('drawer-body');
     body.innerHTML = `<div class="drawer-empty">Loading…</div>`;
-    const res = await fetch(`/api/admin/galleries/${g.id}/comments`);
+    const res = await fetch(`/api/admin/client/galleries/${g.id}/comments`);
     if (!res.ok) { if (res.status === 401) checkAuth(); return; }
     const comments = await res.json();
     if (!comments.length) { body.innerHTML = `<div class="drawer-empty">No comments yet.</div>`; return; }
@@ -1781,12 +1781,12 @@ document.addEventListener('DOMContentLoaded', () => {
   $('dest-new-gallery').addEventListener('click', async () => {
     const name = await promptModal({ title: 'New gallery', okText: 'Create', field: { type: 'text', label: 'Gallery name', value: 'Client Gallery' } });
     if (!name) return;
-    const res = await fetch('/api/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, type: 'proofing' }) });
+    const res = await fetch('/api/admin/client/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, type: 'proofing' }) });
     if (!res.ok) { toast('Create failed'); return; }
     const g = await res.json();
     if (state.upload.destination.collectionId) {
       const col = state.collections.find(c => c.id === state.upload.destination.collectionId);
-      if (col) await fetch(`/api/collections/${col.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(col.galleryIds || []), g.id] }) });
+      if (col) await fetch(`/api/admin/client/collections/${col.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(col.galleryIds || []), g.id] }) });
     }
     await loadData();
     state.upload.destination.galleryId = g.id;
@@ -1919,8 +1919,8 @@ document.addEventListener('DOMContentLoaded', () => {
         method: 'POST', url: `/api/admin/uploads/${item.uploadId}/finalize`, item,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item.portfolioGalleryId
-          ? { portfolioGalleryId: item.portfolioGalleryId }
-          : { galleryId: item.galleryId, title: item.title }),
+          ? { target: 'portfolio', galleryId: item.portfolioGalleryId }
+          : { target: 'client', galleryId: item.galleryId, title: item.title }),
       });
       item.uploadId = null;
       item.pct = 100; item.status = 'done'; item.uploaded = uploaded;
@@ -1939,7 +1939,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function startMultipartUpload(item) {
     item.status = 'uploading'; item.error = '';
-    const fd = new FormData(); fd.append('video', item.file); fd.append('title', item.title);
+    const fd = new FormData(); fd.append('file', item.file); fd.append('title', item.title);
     const xhr = new XMLHttpRequest(); item.xhr = xhr;
     xhr.upload.addEventListener('progress', (e) => { if (e.lengthComputable) { item.pct = Math.round(e.loaded / e.total * 100); updateQueueProgress(item); } });
     xhr.addEventListener('load', () => {
@@ -1957,7 +1957,7 @@ document.addEventListener('DOMContentLoaded', () => {
       item.xhr = null; pumpQueue();
     });
     xhr.addEventListener('error', () => { failItem(item, 'Connection dropped at ' + item.pct + '%'); item.xhr = null; pumpQueue(); });
-    xhr.open('POST', `/api/admin/galleries/${item.galleryId}/videos`);
+    xhr.open('POST', `/api/admin/client/galleries/${item.galleryId}/items`);
     xhr.send(fd);
     renderQueues();
   }
@@ -2116,7 +2116,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('export failed')), 'image/jpeg', 0.88));
   }
   async function uploadThumbnailBlob(gid, videoId, blob) {
-    const res = await fetch(`/api/admin/galleries/${gid}/videos/${videoId}/thumbnail`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
+    const res = await fetch(`/api/admin/client/galleries/${gid}/items/${videoId}/poster`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Failed to save thumbnail'); }
   }
   $('thumb-capture-btn').addEventListener('click', async () => {
@@ -2184,7 +2184,7 @@ document.addEventListener('DOMContentLoaded', () => {
       field: { type: 'textarea', label: item.title || item.filename || '', rows: 6, maxLength: 2000, value: item.description || '' },
     });
     if (text === null) return;
-    const res = await fetch(`/api/admin/galleries/${contentGid}/videos/${itemId}`, {
+    const res = await fetch(`/api/admin/client/galleries/${contentGid}/items/${itemId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ description: text }),
@@ -2231,7 +2231,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const btn = e.target.closest('.caption-track-remove'); if (!btn || (!captionsVideoId && !captionsCtx)) return;
     const lang = btn.dataset.lang;
     if (!await confirmModal({ title: 'Remove caption', message: `Remove the "${lang}" caption track?`, okText: 'Remove', danger: true })) return;
-    const url = captionsCtx ? `${captionsCtx.deleteBase}/${encodeURIComponent(lang)}` : `/api/admin/galleries/${contentGid}/videos/${captionsVideoId}/captions/${encodeURIComponent(lang)}`;
+    const url = captionsCtx ? `${captionsCtx.deleteBase}/${encodeURIComponent(lang)}` : `/api/admin/client/galleries/${contentGid}/items/${captionsVideoId}/captions/${encodeURIComponent(lang)}`;
     const res = await fetch(url, { method: 'DELETE' });
     if (res.ok) { if (captionsCtx) await captionsCtx.onChange(); else await loadContent(); renderCaptionsList(); }
     else $('caption-upload-status').textContent = 'Could not remove caption.';
@@ -2247,7 +2247,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } else { lang = captionLangSelect.value; const k = CAPTION_LANGUAGES.find(l => l.code === lang); label = k ? k.label : lang.toUpperCase(); }
     const fd = new FormData(); fd.append(captionsCtx ? captionsCtx.fileField : 'caption', file); fd.append('lang', lang); fd.append('label', label);
     $('caption-upload-status').textContent = 'Uploading…';
-    const url = captionsCtx ? captionsCtx.uploadUrl : `/api/admin/galleries/${contentGid}/videos/${captionsVideoId}/captions`;
+    const url = captionsCtx ? captionsCtx.uploadUrl : `/api/admin/client/galleries/${contentGid}/items/${captionsVideoId}/captions`;
     const res = await fetch(url, { method: 'POST', body: fd });
     if (res.ok) {
       $('caption-file-input').value = ''; $('caption-upload-status').textContent = 'Caption added.';
@@ -2270,7 +2270,7 @@ document.addEventListener('DOMContentLoaded', () => {
     listEl.innerHTML = '<p class="import-loading">Scanning…</p>';
     $('import-select-all').checked = false; $('import-confirm-btn').disabled = true;
     try {
-      const res = await fetch('/api/admin/import/files');
+      const res = await fetch('/api/admin/client/import/files');
       if (!res.ok) throw new Error('scan failed');
       const data = await res.json();
       $('import-path').textContent = data.path;
@@ -2291,7 +2291,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!filenames.length) return;
     $('import-confirm-btn').disabled = true; $('import-confirm-btn').textContent = 'Importing…';
     try {
-      const res = await fetch(`/api/admin/galleries/${contentGid}/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filenames }) });
+      const res = await fetch(`/api/admin/client/galleries/${contentGid}/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filenames }) });
       const data = await res.json();
       if (data.imported && data.imported.length) { importModal.hidden = true; if (contentGid === state.drawer.galleryId) loadContent(); refreshCountsSoon(); toast(`Imported ${data.imported.length}`); }
       if (data.errors && data.errors.length) toast('Some files failed to import');
@@ -2376,12 +2376,12 @@ document.addEventListener('DOMContentLoaded', () => {
       body.expiresAt = $('ng-expires').value ? new Date($('ng-expires').value + 'T23:59:59').toISOString() : null;
     }
     $('new-gallery-modal').hidden = true;
-    const res = await fetch('/api/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await fetch('/api/admin/client/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) { toast('Create failed'); return; }
     const g = await res.json();
     if (colId) {
       const col = state.collections.find(c => c.id === colId);
-      if (col) await fetch(`/api/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(col.galleryIds || []), g.id] }) });
+      if (col) await fetch(`/api/admin/client/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(col.galleryIds || []), g.id] }) });
     }
     await loadData(); renderAll(); openGallery(g.id);
     toast('Gallery created');
@@ -2499,7 +2499,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('nc-regen').addEventListener('click', async () => {
     if (!ncEditingId) return;
     if (!await confirmModal({ title: 'Regenerate link', message: 'This replaces the link with a new one, and anyone you have already sent the current link to will get "not found". Write the current link down first — Edit can put it back.', okText: 'Regenerate', danger: true })) return;
-    const res = await fetch(`/api/collections/${ncEditingId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regenerateToken: true }) });
+    const res = await fetch(`/api/admin/client/collections/${ncEditingId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regenerateToken: true }) });
     if (!res.ok) { toast('Regenerate failed'); return; }
     await loadData();
     const col = state.collections.find(c => c.id === ncEditingId);
@@ -2511,7 +2511,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!ncEditingId) return;
     const col = state.collections.find(c => c.id === ncEditingId);
     if (!await confirmModal({ title: 'Delete collection', message: `Delete "${col ? col.name : 'this collection'}"? Galleries inside it are kept, just ungrouped.`, okText: 'Delete', danger: true })) return;
-    const res = await fetch(`/api/collections/${ncEditingId}`, { method: 'DELETE' });
+    const res = await fetch(`/api/admin/client/collections/${ncEditingId}`, { method: 'DELETE' });
     if (!res.ok) { toast('Delete failed'); return; }
     ncModal.hidden = true;
     if (state.rail === ncEditingId) state.rail = 'all';
@@ -2534,7 +2534,7 @@ document.addEventListener('DOMContentLoaded', () => {
       else if (ncEditingId && ncClearPassword) body.password = '';
     }
 
-    const url = ncEditingId ? `/api/collections/${ncEditingId}` : '/api/collections';
+    const url = ncEditingId ? `/api/admin/client/collections/${ncEditingId}` : '/api/admin/client/collections';
     const method = ncEditingId ? 'PUT' : 'POST';
     const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) { toast(ncEditingId ? 'Save failed' : 'Create failed'); return; }
@@ -2577,7 +2577,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       const [packages, email] = await Promise.all([
-        fetch('/api/admin/packages?sourceId=' + encodeURIComponent(sourceId)).then(r => r.ok ? r.json() : []),
+        fetch('/api/admin/client/packages?sourceId=' + encodeURIComponent(sourceId)).then(r => r.ok ? r.json() : []),
         fetch('/api/settings/email').then(r => r.ok ? r.json() : {}),
       ]);
       pkgEmailConfigured = !!email.configured;
@@ -2606,7 +2606,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function createPackage() {
-    const res = await fetch('/api/admin/packages', {
+    const res = await fetch('/api/admin/client/packages', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sourceType: pkgSource.type, sourceId: pkgSource.id }),
     });
@@ -2657,11 +2657,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // With no recipients this just stores the note for the download page.
     const res = to
-      ? await fetch(`/api/admin/packages/${pkgCurrent.id}/email`, {
+      ? await fetch(`/api/admin/client/packages/${pkgCurrent.id}/email`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ to, message }),
         })
-      : await fetch(`/api/admin/packages/${pkgCurrent.id}`, {
+      : await fetch(`/api/admin/client/packages/${pkgCurrent.id}`, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message }),
         });
@@ -2699,7 +2699,7 @@ document.addEventListener('DOMContentLoaded', () => {
       message: 'The link stops working immediately. Your files are not touched.',
       okText: 'Revoke', danger: true,
     })) return;
-    await fetch(`/api/admin/packages/${pkgCurrent.id}`, { method: 'DELETE' });
+    await fetch(`/api/admin/client/packages/${pkgCurrent.id}`, { method: 'DELETE' });
     pkgCurrent = null;
     pkgModal.hidden = true;
     toast('Link revoked');
@@ -2823,7 +2823,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function saveShareToken(kind, id, token) {
     let res;
     try {
-      res = await fetch(`/api/${kind}/${id}`, {
+      res = await fetch(`/api/admin/client/${kind}/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
@@ -2947,7 +2947,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return await xhrSend({
         method: 'POST', url: `/api/admin/uploads/${init.uploadId}/finalize`,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ portfolioGalleryId: galleryId }),
+        body: JSON.stringify({ target: 'portfolio', galleryId }),
       });
     },
   };

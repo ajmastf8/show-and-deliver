@@ -87,7 +87,7 @@ site-data/             # Runtime data (gitignored)
   front, local headers carry them, no data descriptors are needed, and entry
   bodies go disk-to-socket via `stream_copy_to_stream()` with no PHP loop.
   Never reintroduce per-byte work into that path. Files predating the cache are
-  hashed by `POST /api/admin/crc-warm` with a `packageId`, which the delivery
+  hashed by `POST /api/admin/client/crc-warm` with a `packageId`, which the delivery
   modal drives in the background — scoped to the delivery, never the library.
   Always Zip64, so there is one code path exercised by every download rather
   than a 64-bit path that only runs on rare large transfers.
@@ -127,11 +127,13 @@ site-data/             # Runtime data (gitignored)
   renamed to their titles, keeping item ids so thumbnails and proxies still
   match, with captions renamed to the sidecar convention and section headers
   preserved. The old record stays, archived with `migratedTo`, so
-  `/api/proofing/{token}` can answer `{redirect}` and old links keep working.
+  `/api/client/galleries/{token}` can answer `{redirect}` and old links keep working.
   It refuses to run while a live delivery package points at a reels gallery, and
-  backs up the JSON first. Creating new `reels` galleries or collections is gone;
-  `/api/videos` and `renderReelsGrid()` stay only as the homepage fallback for
-  installs that haven't migrated yet.
+  backs up the JSON first. Creating new `reels` galleries or collections is gone,
+  and so is the old public feed (`GET /api/videos`) and the homepage's
+  `renderReelsGrid()` fallback: an install that never migrated shows an empty
+  home page until it does. The migration itself is the only code left that reads
+  `reels` data.
   `<video>.poster.jpg` and `<video>.<lang>.vtt` beside a video are its poster
   and captions. Each gallery picks one of four layouts (`justified`, `masonry`,
   `grid`, `slideshow`, `horizontal`, `fullscreen`, `featured`) rendered by
@@ -225,18 +227,29 @@ site-data/             # Runtime data (gitignored)
 
 ## API Routes
 
-All routes are in `index.php`. Key patterns:
-- `GET /api/header` — public header config
-- `GET /api/videos` — public portfolio videos (reels gallery)
-- `GET /api/portfolio`, `/api/portfolio/featured`, `/api/portfolio/c/{cat}`, `/api/portfolio/g/{cat}/{gal}` — folder-backed portfolio
-- `GET /api/proofing/{token}` — client gallery data
-- `GET /api/collections/{token}` — collection data
-- `/api/admin/*` — authenticated admin endpoints (CRUD for galleries, videos, uploads)
-- `/api/admin/portfolio/*` — portfolio folders: categories, galleries, items,
-  posters, captions, headers, picks (`refs`), the home gallery, ordering, and
-  `process` (derivative slices)
-- `/api/auth/*` — login, logout, setup, check
-- `/api/settings/*` — email, deploy config
+All routes are in `index.php`; the full reference is `docs/API.md`. The API is
+split by system, and the prefix says which one a route belongs to:
+
+- **Portfolio** (folder-backed): public `GET /api/portfolio`, `/api/portfolio/home`,
+  `/api/portfolio/c/{cat}`, `/api/portfolio/g/{cat}/{gal}...`; admin
+  `/api/admin/portfolio/*` — categories, galleries, items, posters, captions,
+  headers, picks (`refs`), the home gallery, ordering, and `process` (derivative
+  slices).
+- **Client delivery** (JSON-backed): public `/api/client/galleries/{token}...`,
+  `/api/client/collections/{token}...`, `/api/client/packages/{token}...`; admin
+  `/api/admin/client/*` — galleries, collections, items, headers, packages,
+  `crc-warm`, `sendfile-test`, FTP `import/files`.
+- **Shared:** `/api/admin/uploads/*` (chunked; finalize takes
+  `{target: "client"|"portfolio", galleryId}`), `/api/auth/*` (login, logout,
+  setup, check, change-password, forgot, reset), `/api/settings/*` (email,
+  header, theme, deploy, api-token), `/api/header`, `/api/pages`, `/api/contact`,
+  `/api/admin/export|import/*`.
+
+Both systems use the same verbs for the same things — `…/items[/{id}]`,
+`…/items/{id}/poster`, `…/items/{id}/captions`, `…/headers`, `…/order` — and the
+multipart upload field is `file` on both. Keep it that way when adding routes:
+a new operation on one side should have the same name on the other if it makes
+sense there.
 
 ## Development
 

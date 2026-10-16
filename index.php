@@ -1140,13 +1140,6 @@ function publicStats($stats) {
     ];
 }
 
-function findReelsGallery() {
-    foreach (readGalleries() as $g) {
-        if ($g['type'] === 'reels' && ($g['active'] ?? true) !== false) return $g;
-    }
-    return null;
-}
-
 // Both gallery types resolve here. /gallery/{token} is the only per-gallery
 // page there is, and a portfolio collection links its member reels galleries
 // to it (see backfillGalleryTokens above) — restricting this to proofing
@@ -1819,20 +1812,11 @@ if ($method === 'POST' && $uri === '/api/auth/logout') {
 // PUBLIC VIDEOS (REELS)
 // ============================================================
 
-if ($method === 'GET' && $uri === '/api/videos') {
-    $reels = findReelsGallery();
-    if (!$reels) respond([]);
-    $items = array_values(array_filter(readGalleryVideos($reels['id']), function($v) {
-        return ($v['type'] ?? '') === 'header' || ($v['visible'] ?? true) !== false;
-    }));
-    respond($items);
-}
-
 // ============================================================
 // GALLERY CRUD (admin)
 // ============================================================
 
-if ($method === 'GET' && $uri === '/api/galleries') {
+if ($method === 'GET' && $uri === '/api/admin/client/galleries') {
     requireAuth();
     backfillGalleryTokens();
     $collections = readCollections();
@@ -1862,12 +1846,14 @@ if ($method === 'GET' && $uri === '/api/galleries') {
     respond($galleries);
 }
 
-if ($method === 'POST' && $uri === '/api/galleries') {
+if ($method === 'POST' && $uri === '/api/admin/client/galleries') {
     requireAuth();
     $input = getInput();
     $galleries = readGalleries();
     $id = generateId('g_');
-    $type = $input['type'] ?? 'proofing';
+    // Portfolio galleries are folders now: POST /api/admin/portfolio/galleries.
+    if (($input['type'] ?? 'proofing') !== 'proofing') respondError('Client galleries are always type "proofing". Create portfolio galleries with POST /api/admin/portfolio/galleries.', 400);
+    $type = 'proofing';
 
     $hashedPassword = null;
     if (!empty($input['password'])) {
@@ -1898,7 +1884,7 @@ if ($method === 'POST' && $uri === '/api/galleries') {
     respond(sanitizeGallery($gallery));
 }
 
-if ($method === 'PUT' && matchRoute('/api/galleries/{id}', $uri, $params)) {
+if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{id}', $uri, $params)) {
     requireAuth();
     $input = getInput();
     $galleries = readGalleries();
@@ -1957,7 +1943,7 @@ if ($method === 'PUT' && matchRoute('/api/galleries/{id}', $uri, $params)) {
     respond(sanitizeGallery($gallery));
 }
 
-if ($method === 'DELETE' && matchRoute('/api/galleries/{id}', $uri, $params)) {
+if ($method === 'DELETE' && matchRoute('/api/admin/client/galleries/{id}', $uri, $params)) {
     requireAuth();
     $galleries = readGalleries();
     $idx = null;
@@ -1999,15 +1985,15 @@ if ($method === 'DELETE' && matchRoute('/api/galleries/{id}', $uri, $params)) {
 // ADMIN: VIDEO/PHOTO MANAGEMENT
 // ============================================================
 
-if ($method === 'GET' && matchRoute('/api/admin/galleries/{gid}/videos', $uri, $params)) {
+if ($method === 'GET' && matchRoute('/api/admin/client/galleries/{gid}/items', $uri, $params)) {
     requireAuth();
     respond([
-        'videos' => readGalleryVideos($params['gid']),
+        'items' => readGalleryVideos($params['gid']),
         'stats' => publicStats(readGalleryStats($params['gid'])),
     ]);
 }
 
-if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/stats/reset', $uri, $params)) {
+if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/stats/reset', $uri, $params)) {
     requireAuth();
     $statsFile = galleryStatsPath($params['gid']);
     if (file_exists($statsFile)) unlink($statsFile);
@@ -2068,11 +2054,11 @@ function registerGalleryItem(string $gid, string $destName, string $title): arra
 // Upload (multipart, single-request; used by the web admin for files that
 // fit under post_max_size). The shared registerGalleryItem() helper does
 // the heavy lifting so the chunked-upload path below stays consistent.
-if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/videos', $uri, $params)) {
+if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/items', $uri, $params)) {
     requireAuth();
-    if (empty($_FILES['video'])) respondError('No file uploaded', 400);
+    if (empty($_FILES['file'])) respondError('No file uploaded', 400);
 
-    $file = $_FILES['video'];
+    $file = $_FILES['file'];
     if ($file['error'] !== UPLOAD_ERR_OK) respondError('Upload error: ' . $file['error'], 400);
 
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
@@ -2220,8 +2206,11 @@ if ($method === 'PUT' && matchRoute('/api/admin/uploads/{uploadId}/chunk', $uri,
     ]);
 }
 
-// Finalize: move the assembled .part file into uploads/ and attach it to a
-// gallery using the shared registerGalleryItem() helper.
+// Finalize: attach the assembled file to a gallery. The body names where it
+// goes: {"target": "client" | "portfolio", "galleryId": "..."} (client also
+// takes an optional "title"). A client gallery registers it through
+// registerGalleryItem(); a portfolio gallery is a folder, so the file is filed
+// in it and found by scanning.
 if ($method === 'POST' && matchRoute('/api/admin/uploads/{uploadId}/finalize', $uri, $params)) {
     requireAuth();
     $meta = readUploadMeta($params['uploadId']);
@@ -2231,10 +2220,12 @@ if ($method === 'POST' && matchRoute('/api/admin/uploads/{uploadId}/finalize', $
     }
 
     $input = getInput();
+    $target = (string)($input['target'] ?? '');
+    if (!in_array($target, ['client', 'portfolio'], true)) respondError('target must be "client" or "portfolio"', 400);
     $gid = trim((string)($input['galleryId'] ?? ''));
-    $pgid = trim((string)($input['portfolioGalleryId'] ?? ''));
+    $pgid = $target === 'portfolio' ? $gid : '';
     $title = trim((string)($input['title'] ?? 'Untitled'));
-    if ($gid === '' && $pgid === '') respondError('galleryId is required', 400);
+    if ($gid === '') respondError('galleryId is required', 400);
 
     // Portfolio galleries are folders on disk: the file keeps its own name and
     // is registered by scanning, not by an entry in a gallery's videos.json.
@@ -2275,13 +2266,13 @@ if ($method === 'DELETE' && matchRoute('/api/admin/uploads/{uploadId}', $uri, $p
 }
 
 // Update title/visibility
-if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}', $uri, $params)) {
+if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{gid}/items/{iid}', $uri, $params)) {
     requireAuth();
     $input = getInput();
     $videos = readGalleryVideos($params['gid']);
     $video = null;
     foreach ($videos as &$v) {
-        if ($v['id'] === $params['vid']) { $video = &$v; break; }
+        if ($v['id'] === $params['iid']) { $video = &$v; break; }
     }
     unset($v);
     if (!$video) respondError('Not found', 404);
@@ -2303,7 +2294,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}', $
 // Add / replace a caption track (video only). Multipart: `caption` file plus
 // `lang` (BCP-47-ish, e.g. en / pt-br) and an optional display `label`.
 // Uploading a second file for an existing lang replaces it.
-if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/captions', $uri, $params)) {
+if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/items/{iid}/captions', $uri, $params)) {
     requireAuth();
     if (empty($_FILES['caption'])) respondError('No file uploaded', 400);
 
@@ -2333,7 +2324,7 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/ca
     $videos = readGalleryVideos($params['gid']);
     $video = null;
     foreach ($videos as &$v) {
-        if ($v['id'] === $params['vid']) { $video = &$v; break; }
+        if ($v['id'] === $params['iid']) { $video = &$v; break; }
     }
     unset($v);
     if (!$video) respondError('Not found', 404);
@@ -2368,12 +2359,12 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/ca
 }
 
 // Remove a caption track by language code.
-if ($method === 'DELETE' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/captions/{lang}', $uri, $params)) {
+if ($method === 'DELETE' && matchRoute('/api/admin/client/galleries/{gid}/items/{iid}/captions/{lang}', $uri, $params)) {
     requireAuth();
     $videos = readGalleryVideos($params['gid']);
     $video = null;
     foreach ($videos as &$v) {
-        if ($v['id'] === $params['vid']) { $video = &$v; break; }
+        if ($v['id'] === $params['iid']) { $video = &$v; break; }
     }
     unset($v);
     if (!$video) respondError('Not found', 404);
@@ -2392,12 +2383,12 @@ if ($method === 'DELETE' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/
 }
 
 // Generate thumbnail (video only)
-if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/thumbnail', $uri, $params)) {
+if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{gid}/items/{iid}/poster', $uri, $params)) {
     requireAuth();
     $videos = readGalleryVideos($params['gid']);
     $video = null;
     foreach ($videos as &$v) {
-        if ($v['id'] === $params['vid']) { $video = &$v; break; }
+        if ($v['id'] === $params['iid']) { $video = &$v; break; }
     }
     unset($v);
     if (!$video) respondError('Not found', 404);
@@ -2432,18 +2423,18 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/thu
 }
 
 // Replace file
-if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/replace', $uri, $params)) {
+if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{gid}/items/{iid}/replace', $uri, $params)) {
     requireAuth();
-    if (empty($_FILES['video'])) respondError('No file', 400);
+    if (empty($_FILES['file'])) respondError('No file', 400);
 
-    $file = $_FILES['video'];
+    $file = $_FILES['file'];
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
     if (!in_array($ext, MEDIA_EXTS)) respondError('Unsupported file type', 400);
 
     $videos = readGalleryVideos($params['gid']);
     $video = null;
     foreach ($videos as &$v) {
-        if ($v['id'] === $params['vid']) { $video = &$v; break; }
+        if ($v['id'] === $params['iid']) { $video = &$v; break; }
     }
     unset($v);
     if (!$video) respondError('Not found', 404);
@@ -2508,13 +2499,13 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}/rep
 }
 
 // Delete video/photo
-if ($method === 'DELETE' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}', $uri, $params)) {
+if ($method === 'DELETE' && matchRoute('/api/admin/client/galleries/{gid}/items/{iid}', $uri, $params)) {
     requireAuth();
     $videos = readGalleryVideos($params['gid']);
     $idx = null;
     $removed = null;
     foreach ($videos as $i => $v) {
-        if ($v['id'] === $params['vid']) { $idx = $i; $removed = $v; break; }
+        if ($v['id'] === $params['iid']) { $idx = $i; $removed = $v; break; }
     }
     if ($idx === null) respondError('Not found', 404);
 
@@ -2541,7 +2532,7 @@ if ($method === 'DELETE' && matchRoute('/api/admin/galleries/{gid}/videos/{vid}'
 }
 
 // Headers
-if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/headers', $uri, $params)) {
+if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/headers', $uri, $params)) {
     requireAuth();
     $input = getInput();
     $videos = readGalleryVideos($params['gid']);
@@ -2556,7 +2547,7 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/headers', $uri,
     respond($header);
 }
 
-if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/headers/{hid}', $uri, $params)) {
+if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{gid}/headers/{hid}', $uri, $params)) {
     requireAuth();
     $input = getInput();
     $videos = readGalleryVideos($params['gid']);
@@ -2571,7 +2562,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/headers/{hid}', 
     respond($header);
 }
 
-if ($method === 'DELETE' && matchRoute('/api/admin/galleries/{gid}/headers/{hid}', $uri, $params)) {
+if ($method === 'DELETE' && matchRoute('/api/admin/client/galleries/{gid}/headers/{hid}', $uri, $params)) {
     requireAuth();
     $videos = readGalleryVideos($params['gid']);
     $idx = null;
@@ -2585,7 +2576,7 @@ if ($method === 'DELETE' && matchRoute('/api/admin/galleries/{gid}/headers/{hid}
 }
 
 // Reorder
-if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/reorder', $uri, $params)) {
+if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{gid}/order', $uri, $params)) {
     requireAuth();
     $input = getInput();
     $order = $input['order'] ?? [];
@@ -2607,7 +2598,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/galleries/{gid}/reorder', $uri, 
 }
 
 // Admin comments view
-if ($method === 'GET' && matchRoute('/api/admin/galleries/{gid}/comments', $uri, $params)) {
+if ($method === 'GET' && matchRoute('/api/admin/client/galleries/{gid}/comments', $uri, $params)) {
     requireAuth();
     $comments = readGalleryComments($params['gid']);
     $videos = readGalleryVideos($params['gid']);
@@ -2622,7 +2613,7 @@ if ($method === 'GET' && matchRoute('/api/admin/galleries/{gid}/comments', $uri,
 }
 
 // Import: list files
-if ($method === 'GET' && $uri === '/api/admin/import/files') {
+if ($method === 'GET' && $uri === '/api/admin/client/import/files') {
     requireAuth();
     $files = [];
     foreach (scandir(IMPORT_DIR) as $f) {
@@ -2637,7 +2628,7 @@ if ($method === 'GET' && $uri === '/api/admin/import/files') {
 }
 
 // Import: import files
-if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/import', $uri, $params)) {
+if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/import', $uri, $params)) {
     requireAuth();
     // Resizing many large photos is slow; don't let the request time out partway.
     @set_time_limit(0);
@@ -2713,7 +2704,7 @@ if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/import', $uri, 
 }
 
 // Probe/backfill metadata
-if ($method === 'POST' && matchRoute('/api/admin/galleries/{gid}/probe', $uri, $params)) {
+if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/probe', $uri, $params)) {
     requireAuth();
     $videos = readGalleryVideos($params['gid']);
     $updated = 0;
@@ -2819,12 +2810,12 @@ function galleryPayload($gallery) {
             'downloadsEnabled' => $gallery['downloadsEnabled'],
             'commentingEnabled' => $gallery['commentingEnabled'] ?? false,
         ],
-        'videos' => $videos,
+        'items' => $videos,
         'comments' => $comments,
     ];
 }
 
-if ($method === 'GET' && matchRoute('/api/proofing/{token}', $uri, $params)) {
+if ($method === 'GET' && matchRoute('/api/client/galleries/{token}', $uri, $params)) {
     $gallery = getProofingGallery($params['token']);
     $colId = $gallery['_inheritedCollectionId'] ?? null;
     if (!empty($gallery['password']) && !($colId && isCollectionUnlocked($colId))) {
@@ -2834,7 +2825,7 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}', $uri, $params)) {
     respond(galleryPayload($gallery));
 }
 
-if ($method === 'POST' && matchRoute('/api/proofing/{token}/unlock', $uri, $params)) {
+if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/unlock', $uri, $params)) {
     rateLimitCheck('unlock:' . ($params['token']) . ':' . ($_SERVER['REMOTE_ADDR'] ?? ''), 5, 60);
     $gallery = getProofingGallery($params['token']);
     if (empty($gallery['password'])) respond(galleryPayload($gallery));
@@ -2858,7 +2849,7 @@ if ($method === 'POST' && matchRoute('/api/proofing/{token}/unlock', $uri, $para
     respond(galleryPayload($gallery));
 }
 
-if ($method === 'POST' && matchRoute('/api/proofing/{token}/comments', $uri, $params)) {
+if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/comments', $uri, $params)) {
     rateLimitCheck('comment:' . ($_SERVER['REMOTE_ADDR'] ?? ''), 10, 60);
     $gallery = getProofingGallery($params['token']);
     if (!($gallery['commentingEnabled'] ?? false)) respondError('Commenting is disabled', 403);
@@ -2892,13 +2883,13 @@ if ($method === 'POST' && matchRoute('/api/proofing/{token}/comments', $uri, $pa
 }
 
 // Download single
-if ($method === 'GET' && matchRoute('/api/proofing/{token}/download/{videoId}', $uri, $params)) {
+if ($method === 'GET' && matchRoute('/api/client/galleries/{token}/download/{itemId}', $uri, $params)) {
     $gallery = getProofingGallery($params['token']);
     if (!$gallery['downloadsEnabled']) respondError('Downloads disabled', 403);
 
     $videos = readGalleryVideos($gallery['id']);
     $video = null;
-    foreach ($videos as $v) { if ($v['id'] === $params['videoId']) { $video = $v; break; } }
+    foreach ($videos as $v) { if ($v['id'] === $params['itemId']) { $video = $v; break; } }
     if (!$video) respondError('Not found', 404);
 
     $filePath = UPLOADS_DIR . '/' . $video['filename'];
@@ -2917,7 +2908,7 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/download/{videoId}', 
 
 // Bulk "Download All" beacon — fired once by proofing.js when a zip run starts.
 // Per-file counts are still captured via the single-download endpoint above.
-if ($method === 'POST' && matchRoute('/api/proofing/{token}/event/download-all', $uri, $params)) {
+if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/events/download-all', $uri, $params)) {
     $gallery = getProofingGallery($params['token']);
     if (!$gallery['downloadsEnabled']) respondError('Downloads disabled', 403);
     recordDownloadAll(galleryStatsPath($gallery['id']));
@@ -2969,7 +2960,7 @@ function proofingZipEntries($gallery) {
 // The cap still applies to what PHP generates, so the gallery is planned into
 // parts exactly like a delivery is. `plan` describes them; the page renders one
 // button per part.
-if ($method === 'GET' && matchRoute('/api/proofing/{token}/zip', $uri, $params)) {
+if ($method === 'GET' && matchRoute('/api/client/galleries/{token}/zip', $uri, $params)) {
     $gallery = getProofingGallery($params['token']);
     if (!$gallery['downloadsEnabled']) respondError('Downloads disabled', 403);
 
@@ -2982,13 +2973,13 @@ if ($method === 'GET' && matchRoute('/api/proofing/{token}/zip', $uri, $params))
             'label'     => $p['kind'] === 'file' ? basename($p['entries'][0]['name']) : sprintf('Part %d', $p['index']),
             'size'      => (int)$p['size'],
             'fileCount' => count($p['entries']),
-            'url'       => '/api/proofing/' . rawurlencode($params['token']) . '/zip/' . $p['index'],
+            'url'       => '/api/client/galleries/' . rawurlencode($params['token']) . '/zip/' . $p['index'],
         ];
     }
     respond(['name' => $gallery['name'], 'parts' => $out]);
 }
 
-if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/proofing/{token}/zip/{index}', $uri, $params)) {
+if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/client/galleries/{token}/zip/{index}', $uri, $params)) {
     $gallery = getProofingGallery($params['token']);
     if (!$gallery['downloadsEnabled']) respondError('Downloads disabled', 403);
 
@@ -3016,7 +3007,7 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/proofing/{toke
 }
 
 // Send review
-if ($method === 'POST' && matchRoute('/api/proofing/{token}/send-review', $uri, $params)) {
+if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/send-review', $uri, $params)) {
     $gallery = getProofingGallery($params['token']);
     $input = getInput();
     $reviewerName = $input['reviewerName'] ?? '';
@@ -3050,7 +3041,7 @@ if ($method === 'POST' && matchRoute('/api/proofing/{token}/send-review', $uri, 
 // COLLECTIONS
 // ============================================================
 
-if ($method === 'GET' && $uri === '/api/collections') {
+if ($method === 'GET' && $uri === '/api/admin/client/collections') {
     requireAuth();
     $collections = readCollections();
     $galleries = readGalleries();
@@ -3078,7 +3069,7 @@ if ($method === 'GET' && $uri === '/api/collections') {
     respond($enriched);
 }
 
-if ($method === 'POST' && $uri === '/api/collections') {
+if ($method === 'POST' && $uri === '/api/admin/client/collections') {
     requireAuth();
     $input = getInput();
     $collections = readCollections();
@@ -3107,7 +3098,7 @@ if ($method === 'POST' && $uri === '/api/collections') {
     respond($collection);
 }
 
-if ($method === 'PUT' && matchRoute('/api/collections/{id}', $uri, $params)) {
+if ($method === 'PUT' && matchRoute('/api/admin/client/collections/{id}', $uri, $params)) {
     requireAuth();
     $input = getInput();
     $collections = readCollections();
@@ -3185,7 +3176,7 @@ if ($method === 'PUT' && matchRoute('/api/collections/{id}', $uri, $params)) {
     respond($out);
 }
 
-if ($method === 'DELETE' && matchRoute('/api/collections/{id}', $uri, $params)) {
+if ($method === 'DELETE' && matchRoute('/api/admin/client/collections/{id}', $uri, $params)) {
     requireAuth();
     $collections = readCollections();
     $idx = null;
@@ -3240,7 +3231,7 @@ function collectionPublicPayload($col) {
     return ['name' => $col['name'], 'type' => $type, 'galleries' => $publicGalleries];
 }
 
-if ($method === 'GET' && matchRoute('/api/collections/public/{token}', $uri, $params)) {
+if ($method === 'GET' && matchRoute('/api/client/collections/{token}', $uri, $params)) {
     $col = findCollectionByToken($params['token']);
     if (!$col) respondError('Collection not found', 404);
     if (($col['active'] ?? true) === false) respondError('Collection not found', 404);
@@ -3256,7 +3247,7 @@ if ($method === 'GET' && matchRoute('/api/collections/public/{token}', $uri, $pa
     respond(collectionPublicPayload($col));
 }
 
-if ($method === 'POST' && matchRoute('/api/collections/public/{token}/unlock', $uri, $params)) {
+if ($method === 'POST' && matchRoute('/api/client/collections/{token}/unlock', $uri, $params)) {
     rateLimitCheck('col-unlock:' . ($params['token']) . ':' . ($_SERVER['REMOTE_ADDR'] ?? ''), 5, 60);
     $col = findCollectionByToken($params['token']);
     if (!$col) respondError('Collection not found', 404);
@@ -3637,7 +3628,7 @@ function packagePayload($m, $includeInternals = false) {
                 'index' => $fileIndex,
                 'name'  => $e['name'],
                 'size'  => (int)$e['size'],
-                'url'   => "$base/api/packages/{$m['token']}/file/$fileIndex",
+                'url'   => "$base/api/client/packages/{$m['token']}/file/$fileIndex",
                 // Same bytes, served by the web server instead of PHP. The
                 // download page prefers this; the /file/ route above stays as
                 // the API-friendly equivalent.
@@ -3651,7 +3642,7 @@ function packagePayload($m, $includeInternals = false) {
             'label'     => $p['kind'] === 'file' ? basename($p['entries'][0]['name']) : sprintf('Part %d', $p['index']),
             'size'      => (int)$p['size'],
             'fileCount' => count($p['entries']),
-            'url'       => "$base/api/packages/{$m['token']}/part/{$p['index']}",
+            'url'       => "$base/api/client/packages/{$m['token']}/part/{$p['index']}",
             'files'     => $files,
         ];
     }
@@ -3733,13 +3724,13 @@ function buildPackagePlan($sourceType, $sourceId) {
 // and every download breaks with no error anywhere. This serves one small real
 // upload through the requested mode, so the answer is measured, not assumed.
 //
-//   GET /api/admin/sendfile-test              -> stream through PHP (control)
-//   GET /api/admin/sendfile-test?mode=location
-//   GET /api/admin/sendfile-test?mode=litespeed
+//   GET /api/admin/client/sendfile-test              -> stream through PHP (control)
+//   GET /api/admin/client/sendfile-test?mode=location
+//   GET /api/admin/client/sendfile-test?mode=litespeed
 //
 // Compare byte counts against the control. A mode returning fewer bytes is not
 // supported here; leave SENDFILE=off.
-if ($method === 'GET' && $uri === '/api/admin/sendfile-test') {
+if ($method === 'GET' && $uri === '/api/admin/client/sendfile-test') {
     requireAuth();
 
     // Smallest upload available, so the test is quick on any connection.
@@ -3795,7 +3786,7 @@ if ($method === 'GET' && $uri === '/api/admin/sendfile-test') {
 // throughout: an unwarmed file is hashed on its first download instead, which is
 // merely the old speed rather than a failure.
 
-if ($method === 'POST' && $uri === '/api/admin/crc-warm') {
+if ($method === 'POST' && $uri === '/api/admin/client/crc-warm') {
     requireAuth();
     $deadline = microtime(true) + CRC_WARM_SLICE_SECONDS;
     $input = getInput();
@@ -3845,7 +3836,7 @@ if ($method === 'POST' && $uri === '/api/admin/crc-warm') {
     ]);
 }
 
-if ($method === 'GET' && $uri === '/api/admin/packages') {
+if ($method === 'GET' && $uri === '/api/admin/client/packages') {
     requireAuth();
     ensurePackagesDir();
     cleanupExpiredPackages();
@@ -3863,7 +3854,7 @@ if ($method === 'GET' && $uri === '/api/admin/packages') {
 
 // Create a share link. Returns a ready package immediately; pass `to` to email
 // it in the same call, which is the normal path from the admin.
-if ($method === 'POST' && $uri === '/api/admin/packages') {
+if ($method === 'POST' && $uri === '/api/admin/client/packages') {
     requireAuth();
     ensurePackagesDir();
     cleanupExpiredPackages();
@@ -3913,7 +3904,7 @@ if ($method === 'POST' && $uri === '/api/admin/packages') {
 }
 
 // Update the note shown on the download page, without sending anything.
-if ($method === 'PUT' && matchRoute('/api/admin/packages/{id}', $uri, $params)) {
+if ($method === 'PUT' && matchRoute('/api/admin/client/packages/{id}', $uri, $params)) {
     requireAuth();
     $m = readPackage($params['id']);
     if (!$m) respondError('Package not found', 404);
@@ -3923,7 +3914,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/packages/{id}', $uri, $params)) 
     respond(packagePayload($m, true));
 }
 
-if ($method === 'DELETE' && matchRoute('/api/admin/packages/{id}', $uri, $params)) {
+if ($method === 'DELETE' && matchRoute('/api/admin/client/packages/{id}', $uri, $params)) {
     requireAuth();
     $m = readPackage($params['id']);
     if (!$m) respondError('Package not found', 404);
@@ -4008,7 +3999,7 @@ function sendPackageLinks($m, $to, $note) {
 }
 
 // Re-send an existing package.
-if ($method === 'POST' && matchRoute('/api/admin/packages/{id}/email', $uri, $params)) {
+if ($method === 'POST' && matchRoute('/api/admin/client/packages/{id}/email', $uri, $params)) {
     requireAuth();
     $m = readPackage($params['id']);
     if (!$m) respondError('Package not found', 404);
@@ -4045,7 +4036,7 @@ function getLivePackage($token) {
     return $m;
 }
 
-if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{token}', $uri, $params)) {
+if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/client/packages/{token}', $uri, $params)) {
     respond(packagePayload(getLivePackage($params['token'])));
 }
 
@@ -4073,13 +4064,13 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{toke
 // So on that host neither is usable and streaming wins, which is why `off` is
 // the default. Streaming measured ~102 MB/s there, essentially line speed, so
 // there is no throughput being left on the table. Both stay available because
-// other hosts configure this differently — run /api/admin/sendfile-test and
+// other hosts configure this differently — run /api/admin/client/sendfile-test and
 // check both the byte count AND that Content-Disposition survives before
 // switching an install over.
 //
 // Both are opt-in, because a handoff the host ignores fails silently and
 // totally. Default is to stream, which works everywhere. Verify with
-// /api/admin/sendfile-test before switching an install over.
+// /api/admin/client/sendfile-test before switching an install over.
 //
 // SENDFILE=location  — X-LiteSpeed-Location (recommended where supported)
 // SENDFILE=litespeed — X-LiteSpeed-Send-File (legacy, path based)
@@ -4141,7 +4132,7 @@ function beginBinaryResponse($filename, $contentType, $length) {
 }
 
 // One original file, straight from uploads/. This is the "no zip at all" path.
-if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{token}/file/{fileIndex}', $uri, $params)) {
+if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/client/packages/{token}/file/{fileIndex}', $uri, $params)) {
     $m = getLivePackage($params['token']);
     $flat = [];
     foreach ($m['parts'] as $p) foreach ($p['entries'] as $e) $flat[] = $e;
@@ -4219,7 +4210,7 @@ function streamZipOfEntries(array $planned, string $filename) {
 }
 
 // One part, zipped as it goes out. Never touches disk.
-if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/packages/{token}/part/{index}', $uri, $params)) {
+if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/client/packages/{token}/part/{index}', $uri, $params)) {
     $m = getLivePackage($params['token']);
     $part = null;
     foreach ($m['parts'] as $p) { if ((int)$p['index'] === (int)$params['index']) { $part = $p; break; } }
@@ -7388,8 +7379,8 @@ if ($method === 'DELETE' && matchRoute('/api/admin/portfolio/galleries/{gid}/ref
 }
 
 // Small uploads in one request; larger ones go through /api/admin/uploads and
-// finalize with portfolioGalleryId.
-if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/files', $uri, $params)) {
+// finalize with target "portfolio".
+if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/items', $uri, $params)) {
     requireAuth();
     [, $gal] = portfolioRequireGallery($params['gid']);
     if (!empty($gal['children'])) respondError('Collections hold galleries, not media — add this to a gallery instead.', 400);

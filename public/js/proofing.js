@@ -73,7 +73,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadGallery() {
     try {
-      const res = await fetch(`/api/proofing/${token}`);
+      const res = await fetch(`/api/client/galleries/${token}`);
       // An old portfolio link whose gallery moved into the folders.
       const peek = res.clone();
       try {
@@ -119,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
     passwordError.textContent = '';
     const password = document.getElementById('gallery-password').value;
 
-    const res = await fetch(`/api/proofing/${token}/unlock`, {
+    const res = await fetch(`/api/client/galleries/${token}/unlock`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password })
@@ -172,7 +172,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Deep link: open specific video if hash is #video-{id}
     const hashMatch = window.location.hash.match(/^#video-(.+)$/);
     if (hashMatch) {
-      const vid = galleryData.videos.find(v => v.id === hashMatch[1]);
+      const vid = galleryData.items.find(v => v.id === hashMatch[1]);
       if (vid) openLightbox(vid.id);
     }
 
@@ -184,7 +184,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderVideoList() {
     videoListEl.innerHTML = '';
-    const videos = galleryData.videos;
+    const videos = galleryData.items;
 
     videos.forEach(item => {
       if (item.type === 'header') {
@@ -377,7 +377,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Build navigable items list (exclude headers and hidden)
   function getNavigableItems() {
     if (!galleryData) return [];
-    return galleryData.videos.filter(v => v.type === 'video' || v.type === 'photo');
+    return galleryData.items.filter(v => v.type === 'video' || v.type === 'photo');
   }
 
   function getCurrentItemIndex() {
@@ -404,7 +404,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentItemIsPhoto = false;
 
   function openLightbox(videoId) {
-    const item = galleryData.videos.find(v => v.id === videoId);
+    const item = galleryData.items.find(v => v.id === videoId);
     if (!item) return;
 
     currentVideoId = videoId;
@@ -446,7 +446,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (galleryData.gallery.downloadsEnabled) {
       lightboxDownloadBtn.style.display = '';
       lightboxDownloadBtn.onclick = () => {
-        window.location.href = `/api/proofing/${token}/download/${videoId}`;
+        window.location.href = `/api/client/galleries/${token}/download/${videoId}`;
       };
     } else {
       lightboxDownloadBtn.style.display = 'none';
@@ -600,7 +600,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const timestamp = currentItemIsPhoto ? 0 : (lightboxVideo.currentTime || 0);
 
-    const res = await fetch(`/api/proofing/${token}/comments`, {
+    const res = await fetch(`/api/client/galleries/${token}/comments`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -636,7 +636,7 @@ document.addEventListener('DOMContentLoaded', () => {
     statusEl.className = statusEl.className.replace(/ (success|error)/g, '');
 
     try {
-      const res = await fetch(`/api/proofing/${token}/send-review`, {
+      const res = await fetch(`/api/client/galleries/${token}/send-review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reviewerName: viewerName, videoId: currentVideoId })
@@ -817,14 +817,14 @@ document.addEventListener('DOMContentLoaded', () => {
   // chooser so it's clear what to click.
   downloadAllBtn.addEventListener('click', async () => {
     if (downloadActive) return;
-    if (!galleryData || !galleryData.videos) return;
+    if (!galleryData || !galleryData.items) return;
 
-    const mediaItems = galleryData.videos.filter(v => v.type === 'photo' || v.type === 'video');
+    const mediaItems = galleryData.items.filter(v => v.type === 'photo' || v.type === 'video');
     if (mediaItems.length === 0) return;
 
     setDownloadActive(true);
     // Fire-and-forget: record that a "Download All" run started.
-    fetch(`/api/proofing/${token}/event/download-all`, { method: 'POST', keepalive: true })
+    fetch(`/api/client/galleries/${token}/events/download-all`, { method: 'POST', keepalive: true })
       .catch(() => {});
 
     openDownloadModal('Preparing your download', 'Getting your files ready…');
@@ -833,7 +833,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let plan;
     try {
-      const res = await fetch(`/api/proofing/${token}/zip`);
+      const res = await fetch(`/api/client/galleries/${token}/zip`);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       plan = await res.json();
     } catch (e) {

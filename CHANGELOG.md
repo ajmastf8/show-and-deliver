@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.0 — 2026-10-16
+- **The API now says which system a route belongs to, and treats both the same way. This is a breaking change: the old paths return 404 and there are no aliases.** Client delivery lives under `/api/admin/client/…` (admin) and `/api/client/…` (what a client's browser calls); the portfolio stays under `/api/admin/portfolio/…` and `/api/portfolio/…`. Items, captions, posters, headers and ordering are named the same on both sides (`…/items/{id}`, `…/items/{id}/poster`, `…/order`), the multipart upload field is `file` on both, and gallery responses carry `items` instead of `videos`. Chunked uploads finalize with `{"target": "client" | "portfolio", "galleryId": "…"}` instead of picking a system by which field you sent. `docs/API.md` is rewritten to cover both, with a table of every renamed route.
+- **Removed the legacy public portfolio feed.** `GET /api/videos`, the `reels` gallery type for new galleries, and the old homepage fallback grid are gone. An install that never migrated its reels galleries into folders shows an empty home page until it does (Portfolio tab, migration).
+
 ## 2.2.13 — 2026-10-16
 - **Fixed: galleries filed under a top-level gallery vanished into a dead end.** A gallery sitting at the top of the Image Library holds pictures only, but nothing stopped you creating or moving a gallery *inside* one. The folder was made, then couldn't be found again, so opening, saving or changing its access all answered "Gallery not found". The server now refuses it with an explanation (use New collection and add galleries to that), the Location picker no longer offers top-level galleries as a destination, and an empty top-level gallery no longer offers "make it a collection". Galleries in collections and categories behave as before.
 

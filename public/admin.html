@@ -415,10 +415,19 @@
     <div class="modal-backdrop"></div>
     <div class="modal-inner">
       <h3>Your new API token</h3>
-      <p class="sub">Copy this now — you won't see it again.</p>
-      <div class="token-reveal-row">
-        <input type="text" id="api-token-reveal-input" readonly class="setting-input">
-        <button id="api-token-copy-btn" class="btn-ghost">Copy</button>
+      <p class="sub">Copy the token now — you won't see it again. Your tool needs both values below.</p>
+      <div class="setting-group"><label>Site URL</label>
+        <div class="token-reveal-row">
+          <input type="text" id="api-url-reveal-input" readonly class="setting-input">
+          <button id="api-url-copy-btn" class="btn-ghost">Copy</button>
+        </div>
+        <p class="setting-hint">Enter just this address. Leave off <code>/api</code> and anything after it; the tool adds the paths itself.</p>
+      </div>
+      <div class="setting-group"><label>API token</label>
+        <div class="token-reveal-row">
+          <input type="text" id="api-token-reveal-input" readonly class="setting-input">
+          <button id="api-token-copy-btn" class="btn-ghost">Copy</button>
+        </div>
       </div>
       <div class="modal-actions"><div></div><div class="right"><button id="api-token-modal-done-btn" class="btn-primary">I've saved it</button></div></div>
     </div>
@@ -482,7 +491,7 @@
   <div id="toast" class="toast"></div>
 
   <script src="/vendor/sortablejs/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=135"></script>
-  <script src="/js/portfolio-admin.js?v=64"></script>
+  <script src="/js/admin.js?v=136"></script>
+  <script src="/js/portfolio-admin.js?v=65"></script>
 </body>
 </html>

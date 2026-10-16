@@ -2797,6 +2797,19 @@
       </div>
       <div class="pfa-scroll">
         <section class="pfa-group">
+          <h3>Site URL</h3>
+          <div class="pfa-group-body">
+            <div class="pfa-field">
+              <span>Enter this in your tool</span>
+              <div class="token-reveal-row">
+                <input type="text" id="pfa-api-url" class="setting-input" readonly value="${esc(location.origin)}">
+                <button class="ctrl" id="pfa-api-url-copy">Copy</button>
+              </div>
+              <span class="pfa-hint">Just this address: leave off <code>/api</code> and anything after it. The tool adds the paths itself, so <code>${esc(location.origin)}/api/admin/portfolio</code> would not work.</span>
+            </div>
+          </div>
+        </section>
+        <section class="pfa-group">
           <h3>Token</h3>
           <div class="pfa-group-body">
             ${info.envManaged ? `
@@ -2824,6 +2837,11 @@
   }
 
   function wireApi() {
+    $('pfa-api-url-copy').addEventListener('click', () => {
+      navigator.clipboard.writeText($('pfa-api-url').value);
+      $('pfa-api-url-copy').textContent = 'Copied!';
+      setTimeout(() => { const b = $('pfa-api-url-copy'); if (b) b.textContent = 'Copy'; }, 1500);
+    });
     const regen = async (rotate) => {
       if (rotate && !await S().confirm({ title: 'Rotate token', message: 'Any client using the old token will get 401 errors.' })) return;
       const status = $('pfa-api-status');

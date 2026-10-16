@@ -2854,11 +2854,14 @@ document.addEventListener('DOMContentLoaded', () => {
   $('email-result-copy-btn').addEventListener('click', () => { navigator.clipboard.writeText($('email-result-text').textContent); $('email-result-copy-btn').textContent = 'Copied!'; setTimeout(() => $('email-result-copy-btn').textContent = 'Copy Error', 1800); });
 
   function showApiTokenModal(token) {
+    // The address the API answers on, which is where this admin is open.
+    $('api-url-reveal-input').value = location.origin;
     $('api-token-reveal-input').value = token;
     $('api-token-modal').hidden = false;
     $('api-token-reveal-input').focus();
     $('api-token-reveal-input').select();
   }
+  $('api-url-copy-btn').addEventListener('click', () => { navigator.clipboard.writeText($('api-url-reveal-input').value); $('api-url-copy-btn').textContent = 'Copied!'; setTimeout(() => $('api-url-copy-btn').textContent = 'Copy', 1500); });
   $('api-token-copy-btn').addEventListener('click', () => { navigator.clipboard.writeText($('api-token-reveal-input').value); $('api-token-copy-btn').textContent = 'Copied!'; setTimeout(() => $('api-token-copy-btn').textContent = 'Copy', 1500); });
   $('api-token-modal-done-btn').addEventListener('click', () => { $('api-token-modal').hidden = true; $('api-token-reveal-input').value = ''; });
 

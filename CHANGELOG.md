@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.3.1 — 2026-10-16
+- **Generating an API token now tells you where to use it.** The Settings → API panel has a **Site URL** (with a Copy button) at the top, and the one-time "Your new API token" dialog shows it above the token. It is just the site's address, with no `/api` or path, because tools add the paths themselves and one that was given `…/api/admin/portfolio` answered 404.
+
 ## 2.3.0 — 2026-10-16
 - **The API now says which system a route belongs to, and treats both the same way. This is a breaking change: the old paths return 404 and there are no aliases.** Client delivery lives under `/api/admin/client/…` (admin) and `/api/client/…` (what a client's browser calls); the portfolio stays under `/api/admin/portfolio/…` and `/api/portfolio/…`. Items, captions, posters, headers and ordering are named the same on both sides (`…/items/{id}`, `…/items/{id}/poster`, `…/order`), the multipart upload field is `file` on both, and gallery responses carry `items` instead of `videos`. Chunked uploads finalize with `{"target": "client" | "portfolio", "galleryId": "…"}` instead of picking a system by which field you sent. `docs/API.md` is rewritten to cover both, with a table of every renamed route.
 - **Removed the legacy public portfolio feed.** `GET /api/videos`, the `reels` gallery type for new galleries, and the old homepage fallback grid are gone. An install that never migrated its reels galleries into folders shows an empty home page until it does (Portfolio tab, migration).

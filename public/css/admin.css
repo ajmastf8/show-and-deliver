@@ -1556,6 +1556,39 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 .pfa-group .pfa-layout-opt { width: auto; min-width: 0; padding-left: 4px; padding-right: 4px; }
 .pfa-group .pfa-layout-opt span { white-space: normal; text-align: center; line-height: 1.15; }
 
+/* Email settings: tighter field spacing and a collapsible SMTP section. */
+.pfa-group-body.tight { gap: 7px; }
+.settings-actions.flush { margin-top: 0; }
+.pfa-collapse > summary { list-style: none; cursor: pointer; margin: 0 0 10px; }
+.pfa-collapse > summary::-webkit-details-marker { display: none; }
+.pfa-collapse > summary h3 {
+  display: inline-block;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+.pfa-collapse > summary h3::after { content: '\25B8'; margin-left: 8px; font-size: 10px; color: var(--text-6); }
+.pfa-collapse[open] > summary h3::after { content: '\25BE'; }
+
+/* Stats page: count cards and a disk-usage list. */
+.pfa-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; width: 100%; }
+.pfa-stat { background: var(--panel-2); border: 1px solid var(--border-row); border-radius: 8px; padding: 14px 16px; }
+.pfa-stat-value { font-size: 26px; font-weight: 600; color: var(--text); line-height: 1.1; }
+.pfa-stat-label { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-5); margin-top: 5px; }
+.pfa-stat-sub { font-size: 12px; color: var(--text-6); margin-top: 3px; }
+.pfa-stat-list { width: 100%; }
+.pfa-stat-row { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--border-row); font-size: 13px; color: var(--text-3); }
+.pfa-stat-row.total { border-bottom: 0; font-weight: 600; color: var(--text); }
+
+/* "Add to other galleries" modal: a checkbox list of galleries. */
+.pfa-pickg-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; margin: 4px 0 2px; }
+.pfa-pickg { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text-3); }
+.pfa-pickg:hover { background: var(--hover); }
+.pfa-pickg input { margin: 0; }
+
 /* More menu */
 .pfa-menu { position: relative; }
 .pfa-menu > summary { list-style: none; cursor: pointer; }
@@ -1590,6 +1623,11 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 
 .pfa-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--text-4); }
 .pfa-field.wide { flex: 1 1 320px; }
+/* These field stacks are columns, so a field must never stretch vertically —
+   .wide's 320px basis is a row-layout idea and, in a column, sets a 320px
+   *height*, which is what left huge gaps in Email's Sender & delivery. */
+.pfa-group-body .pfa-field.wide,
+.pfa-row .pfa-field.wide { flex: 0 0 auto; }
 .pfa-field .setting-input { min-width: 180px; }
 .pfa-check { display: flex; align-items: center; gap: 7px; color: var(--text-3); font-size: 13px; }
 
@@ -1728,6 +1766,48 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 .pfa-item:focus-within .pfa-item-actions { opacity: 1; }
 @media (hover: none) { .pfa-item .pfa-item-actions { opacity: 1; } }
 
+/* List view: a row per item rather than a tile — better for a library of
+   videos, where a poster frame carries a lot less information at a glance
+   than a title does, and a square crop of a 16:9 or vertical frame is an
+   odd fit either way. */
+.pfa-view-toggle { display: flex; gap: 2px; }
+.pfa-view-toggle .ctrl { padding: 4px 8px; font-size: 15px; }
+.pfa-items-list { display: flex; flex-direction: column; gap: 2px; }
+.pfa-item-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+.pfa-item-row:hover { background: rgba(255,255,255,.04); }
+.pfa-item-row.selected { background: var(--accent-dim); }
+.pfa-item-row.dim .pfa-item-row-frame { opacity: 0.55; }
+.pfa-item-row .pfa-item-check { position: static; margin: 0; }
+.pfa-item-row-frame {
+  position: relative;
+  flex: 0 0 auto;
+  width: 64px; height: 40px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--raised);
+}
+.pfa-item-row-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pfa-item-row-frame .pfa-video-mark { font-size: 11px; }
+.pfa-item-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.pfa-item-row-actions { display: flex; gap: 2px; flex: 0 0 auto; opacity: 0; transition: opacity .12s; }
+.pfa-item-row:hover .pfa-item-row-actions,
+.pfa-item-row:focus-within .pfa-item-row-actions { opacity: 1; }
+@media (hover: none) { .pfa-item-row-actions { opacity: 1; } }
+
 /* A section header spans the grid, the way it will read on the site. */
 .pfa-section {
   grid-column: 1 / -1;
@@ -1746,6 +1826,37 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
   text-transform: uppercase;
 }
 .pfa-section .pfa-item-actions { margin: 0; }
+
+/* "Hidden" divider in the gallery editor: separates hidden items from visible.
+   A filled band so it reads clearly in both the dark and light themes. */
+.pfa-hidden-divider {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 2px;
+  padding: 13px 16px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border-row);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.pfa-hidden-divider::before { content: '\2298'; font-size: 18px; line-height: 1; color: var(--text-3); }
+.pfa-hidden-count {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text-3);
+  background: var(--page);
+  border: 1px solid var(--border-row);
+  border-radius: 999px;
+  padding: 2px 10px;
+}
 
 @media (max-width: 1100px) {
   .pfa-layout { grid-template-columns: 1fr; }

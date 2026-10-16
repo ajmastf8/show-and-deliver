@@ -69,7 +69,7 @@ define('PORTFOLIO_OPTION_VALUES', [
     // lightbox only by default, same as its title does; this optionally
     // surfaces it inline too, the same credit overlay horizontal row, full
     // screen and slideshow already show unconditionally.
-    'captions' => ['off', 'on'],
+    'captions' => ['none', 'off', 'on'],
 ]);
 // How much room a single picture takes in the "featured tiles" layout. Called
 // `tile`, not `size`: an item's `size` is already its file size in bytes.
@@ -1203,11 +1203,21 @@ function emailShell(array $o) {
       . '</table></td></tr></table></div>';
 }
 
-function sendEmail($to, $subject, $textBody, $htmlBody) {
+function sendEmail($to, $subject, $textBody, $htmlBody, $replyTo = null) {
     $config = getEmailConfig();
 
     if ($config['resendApiKey']) {
         // Use Resend API
+        $payload = [
+            'from' => $config['from'],
+            'to' => [$to],
+            'subject' => $subject,
+            'text' => $textBody,
+            'html' => $htmlBody,
+        ];
+        // Set on contact-form notifications so a reply reaches the visitor, not
+        // the site's own From address. Must already be a validated address.
+        if ($replyTo) $payload['reply_to'] = $replyTo;
         $ch = curl_init('https://api.resend.com/emails');
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
@@ -1216,13 +1226,7 @@ function sendEmail($to, $subject, $textBody, $htmlBody) {
                 'Authorization: Bearer ' . $config['resendApiKey'],
                 'Content-Type: application/json',
             ],
-            CURLOPT_POSTFIELDS => json_encode([
-                'from' => $config['from'],
-                'to' => [$to],
-                'subject' => $subject,
-                'text' => $textBody,
-                'html' => $htmlBody,
-            ]),
+            CURLOPT_POSTFIELDS => json_encode($payload),
         ]);
         $response = curl_exec($ch);
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -1233,15 +1237,176 @@ function sendEmail($to, $subject, $textBody, $htmlBody) {
             $err = json_decode($response, true);
             throw new Exception($err['message'] ?? 'Resend API error');
         }
-        return;
+        return true;
+    }
+
+    // SMTP, when a host is configured (Resend above wins if both are set).
+    if (!empty($config['host'])) {
+        smtpSend($config, $to, $subject, $textBody, $htmlBody, $replyTo);
+        return true;
     }
 
     // Fallback: PHP mail()
     $headers = "From: {$config['from']}\r\n";
     $headers .= "Content-Type: text/html; charset=UTF-8\r\n";
+    if ($replyTo) $headers .= "Reply-To: {$replyTo}\r\n";
     if (!mail($to, $subject, $htmlBody, $headers)) {
         throw new Exception('Failed to send email via mail()');
     }
+    return true;
+}
+
+// Deliver one multipart (text + HTML) message over SMTP. Implicit TLS when
+// "secure" is on (port 465), otherwise STARTTLS when the server offers it
+// (port 587). Throws with the server's reply on any failure.
+function smtpSend($config, $to, $subject, $textBody, $htmlBody, $replyTo = null) {
+    // Header values come from settings and form input: never let a newline through.
+    $clean = fn($v) => trim(preg_replace('/[\r\n]+/', ' ', (string)$v));
+    $host = trim((string)$config['host']);
+    $port = (int)($config['port'] ?? 587) ?: 587;
+    $secure = !empty($config['secure']);
+    $user = (string)($config['user'] ?? '');
+    $from = $clean($config['from'] ?: $user);
+    $to = $clean($to);
+    $replyTo = $replyTo ? $clean($replyTo) : null;
+    $addr = fn($v) => preg_match('/<([^>]+)>/', $v, $m) ? $m[1] : $v;
+    $envelopeFrom = $addr($from);
+    if ($envelopeFrom === '' || $to === '') throw new Exception('SMTP needs a From address and a recipient');
+
+    $ctx = stream_context_create(['ssl' => ['verify_peer' => true, 'verify_peer_name' => true]]);
+    $conn = @stream_socket_client(($secure ? 'ssl' : 'tcp') . "://$host:$port", $errno, $errstr, 15, STREAM_CLIENT_CONNECT, $ctx);
+    if (!$conn) throw new Exception("Could not reach $host:$port" . ($errstr ? " ($errstr)" : ''));
+    stream_set_timeout($conn, 20);
+
+    $read = function () use ($conn) {
+        $out = '';
+        while (($line = fgets($conn, 1024)) !== false) {
+            $out .= $line;
+            if (strlen($line) < 4 || $line[3] !== '-') break;
+        }
+        return $out;
+    };
+    $expect = function ($reply, $codes, $step) use ($conn) {
+        if (!in_array(substr($reply, 0, 3), (array)$codes, true)) {
+            fclose($conn);
+            throw new Exception("SMTP $step failed: " . trim($reply));
+        }
+    };
+    $cmd = function ($line) use ($conn) { fwrite($conn, $line . "\r\n"); };
+
+    $expect($read(), '220', 'greeting');
+    $ehloHost = preg_replace('/[^A-Za-z0-9.\-]/', '', $_SERVER['SERVER_NAME'] ?? '') ?: 'localhost';
+    $cmd("EHLO $ehloHost");
+    $ehlo = $read();
+    $expect($ehlo, '250', 'EHLO');
+    if (!$secure && stripos($ehlo, 'STARTTLS') !== false) {
+        $cmd('STARTTLS');
+        $expect($read(), '220', 'STARTTLS');
+        if (!@stream_socket_enable_crypto($conn, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+            fclose($conn);
+            throw new Exception("STARTTLS negotiation failed at $host:$port");
+        }
+        $cmd("EHLO $ehloHost");
+        $expect($read(), '250', 'EHLO after STARTTLS');
+    }
+    if ($user !== '') {
+        $cmd('AUTH LOGIN');
+        $expect($read(), '334', 'AUTH');
+        $cmd(base64_encode($user));
+        $expect($read(), '334', 'AUTH');
+        $cmd(base64_encode((string)($config['pass'] ?? '')));
+        $expect($read(), '235', 'login (check the username and app password)');
+    }
+    $cmd("MAIL FROM:<$envelopeFrom>");
+    $expect($read(), '250', 'MAIL FROM');
+    $cmd('RCPT TO:<' . $addr($to) . '>');
+    $expect($read(), ['250', '251'], 'RCPT TO');
+    $cmd('DATA');
+    $expect($read(), '354', 'DATA');
+
+    $boundary = 'sd_' . bin2hex(random_bytes(12));
+    $headers = [
+        "From: $from",
+        "To: $to",
+        'Subject: ' . mb_encode_mimeheader($clean($subject), 'UTF-8', 'B', "\r\n"),
+        'Date: ' . date('r'),
+        'Message-ID: <' . bin2hex(random_bytes(12)) . '@' . $ehloHost . '>',
+        'MIME-Version: 1.0',
+        "Content-Type: multipart/alternative; boundary=\"$boundary\"",
+    ];
+    if ($replyTo) $headers[] = "Reply-To: $replyTo";
+    $part = fn($type, $body) => "--$boundary\r\nContent-Type: $type; charset=UTF-8\r\n"
+        . "Content-Transfer-Encoding: base64\r\n\r\n" . chunk_split(base64_encode($body), 76, "\r\n");
+    $message = implode("\r\n", $headers) . "\r\n\r\n"
+        . $part('text/plain', $textBody) . $part('text/html', $htmlBody) . "--$boundary--\r\n";
+    // Base64 never produces a leading dot, so no dot-stuffing is needed.
+    fwrite($conn, $message . ".\r\n");
+    $expect($read(), '250', 'message delivery');
+    $cmd('QUIT');
+    fclose($conn);
+}
+
+// Probe an SMTP server: connect (TLS if configured), read the greeting, and try
+// AUTH LOGIN when credentials are set. The Settings > Email "Test SMTP" runs
+// this so "can we reach the mail server?" is answered separately from "did a
+// message go out?" — two different failure modes worth telling apart.
+function smtpProbe($config) {
+    $host = trim((string)($config['host'] ?? ''));
+    if ($host === '') return ['ok' => false, 'detail' => 'No SMTP host is set.'];
+    $port = (int)($config['port'] ?? 587) ?: 587;
+    $secure = !empty($config['secure']);
+    $scheme = $secure ? 'ssl' : 'tcp';
+    $ctx = stream_context_create(['ssl' => [
+        'verify_peer' => false, 'verify_peer_name' => false, 'allow_self_signed' => true,
+    ]]);
+    $errno = 0; $errstr = '';
+    $conn = @stream_socket_client("$scheme://$host:$port", $errno, $errstr, 10, STREAM_CLIENT_CONNECT, $ctx);
+    if (!$conn) {
+        return ['ok' => false, 'detail' => "Could not reach $host:$port" . ($errstr ? " ($errstr)" : '') . '.'];
+    }
+    stream_set_timeout($conn, 10);
+    $read = function () use ($conn) {
+        $out = '';
+        while (($line = fgets($conn, 1024)) !== false) {
+            $out .= $line;
+            if (strlen($line) < 4 || $line[3] !== '-') break;   // last line of a multi-line reply
+        }
+        return $out;
+    };
+    $greeting = $read();
+    if ($greeting === '' || $greeting[0] !== '2') {
+        fclose($conn);
+        return ['ok' => false, 'detail' => "No SMTP greeting from $host:$port."];
+    }
+    $ehloHost = $_SERVER['SERVER_NAME'] ?? 'localhost';
+    fwrite($conn, "EHLO $ehloHost\r\n");
+    $ehlo = $read();
+    if (!$secure && stripos($ehlo, 'STARTTLS') !== false) {
+        fwrite($conn, "STARTTLS\r\n");
+        $r = $read();
+        if (strpos($r, '220') !== 0
+            || !@stream_socket_enable_crypto($conn, true, STREAM_CRYPTO_METHOD_TLS_CLIENT)) {
+            fclose($conn);
+            return ['ok' => false, 'detail' => "STARTTLS negotiation failed at $host:$port."];
+        }
+        fwrite($conn, "EHLO $ehloHost\r\n");
+        $read();
+    }
+    $authOk = null;
+    if (!empty($config['user'])) {
+        fwrite($conn, "AUTH LOGIN\r\n");
+        $read();
+        fwrite($conn, base64_encode((string)$config['user']) . "\r\n");
+        $read();
+        fwrite($conn, base64_encode((string)($config['pass'] ?? '')) . "\r\n");
+        $authOk = strpos($read(), '235') === 0;
+    }
+    fwrite($conn, "QUIT\r\n");
+    fclose($conn);
+    $detail = "Connected to $host:$port";
+    if ($authOk === true) $detail .= ' and authenticated';
+    elseif ($authOk === false) $detail .= ', but the username/password were rejected';
+    return ['ok' => true, 'auth' => $authOk, 'detail' => $detail . '.'];
 }
 
 function sendReviewSummary($gallery, $videos, $comments, $reviewerName, $videoTitle = null, $videoId = null) {
@@ -3931,25 +4096,48 @@ if ($method === 'PUT' && $uri === '/api/settings/email') {
 
 if ($method === 'POST' && $uri === '/api/settings/email/test') {
     requireAuth();
+    $input = getInput();
+    $t = $input['transport'] ?? '';
+    $transport = $t === 'smtp' ? 'smtp' : ($t === 'resend' ? 'resend' : 'auto');
     $config = getEmailConfig();
-    if (!$config['resendApiKey'] && !$config['host']) respondError('No email configured', 400);
-    if (!$config['adminEmail']) respondError('Admin email address is required', 400);
+    if (!$config['adminEmail']) respondError('Notification email (to) is required', 400);
+
+    $testText = "This is a test email from " . siteName() . ". Email notifications are working correctly.";
+    $testHtml = emailShell([
+        'title' => 'Email is working',
+        'lead'  => 'This is a test message from your ' . escHtml(siteName()) . ' site.',
+        'body'  => '<table role="presentation" cellpadding="0" cellspacing="0" border="0">'
+            . '<tr><td style="background:#eaf7ee;border:1px solid #c6e6d1;border-radius:6px;padding:11px 14px;'
+            . 'color:#1f7a3d;font-size:13.5px;font-weight:600;">'
+            . 'Notifications are configured correctly.</td></tr></table>',
+        'note'  => 'Client comment alerts and download links will be delivered this way.',
+    ]);
+
+    // SMTP: check the connection first, then send. Reported separately because
+    // "server unreachable" and "message failed to send" are different problems.
+    if ($transport === 'smtp') {
+        if (!$config['host']) respondError('No SMTP host is set', 400);
+        $probe = smtpProbe($config);
+        if (!$probe['ok']) respondError($probe['detail'], 400);
+        try {
+            sendEmail($config['adminEmail'], emailSubject('Test email'), $testText, $testHtml);
+        } catch (Exception $e) {
+            respond([
+                'ok' => false, 'connected' => true, 'auth' => $probe['auth'] ?? null,
+                'detail' => $probe['detail'] . ' But sending the test message failed: ' . $e->getMessage(),
+            ]);
+        }
+        respond([
+            'ok' => true, 'connected' => true, 'auth' => $probe['auth'] ?? null,
+            'detail' => $probe['detail'] . ' Test email sent.',
+        ]);
+    }
+
+    if ($transport === 'resend' && !$config['resendApiKey']) respondError('No Resend API key is set', 400);
+    if ($transport === 'auto' && !$config['resendApiKey'] && !$config['host']) respondError('No email configured', 400);
 
     try {
-        sendEmail(
-            $config['adminEmail'],
-            emailSubject('Test email'),
-            "This is a test email from " . siteName() . ". Email notifications are working correctly.",
-            emailShell([
-                'title' => 'Email is working',
-                'lead'  => 'This is a test message from your ' . escHtml(siteName()) . ' site.',
-                'body'  => '<table role="presentation" cellpadding="0" cellspacing="0" border="0">'
-                    . '<tr><td style="background:#eaf7ee;border:1px solid #c6e6d1;border-radius:6px;padding:11px 14px;'
-                    . 'color:#1f7a3d;font-size:13.5px;font-weight:600;">'
-                    . 'Notifications are configured correctly.</td></tr></table>',
-                'note'  => 'Client comment alerts and download links will be delivered this way.',
-            ])
-        );
+        sendEmail($config['adminEmail'], emailSubject('Test email'), $testText, $testHtml);
         respond(['ok' => true, 'message' => 'Test email sent successfully']);
     } catch (Exception $e) {
         respondError($e->getMessage(), 400);
@@ -4020,8 +4208,29 @@ function githubHttpGet($url, $toFile = null) {
     return ['ok' => true, 'body' => $toFile ? '' : $body];
 }
 
-// Latest published GitHub Release: tag, bare version, notes, zipball URL.
+// Latest release: tag, bare version, notes, zipball URL. Normally GitHub's
+// Releases API; UPDATE_MANIFEST_URL in .env points this at a self-hosted
+// manifest instead (same {tag_name, body, zipball_url} shape), for a track
+// that isn't meant to go out through the public repo at all. Only ever reads
+// from one or the other, never both, so an install is always on exactly one
+// update channel.
 function latestRelease() {
+    $manifestUrl = env('UPDATE_MANIFEST_URL');
+    if ($manifestUrl) {
+        $res = githubHttpGet($manifestUrl);
+        if (!$res['ok']) return ['error' => $res['error']];
+        $rel = json_decode($res['body'], true);
+        if (!is_array($rel) || empty($rel['tag_name']) || empty($rel['zipball_url'])) {
+            return ['error' => 'Update manifest is missing tag_name or zipball_url.'];
+        }
+        return [
+            'tag' => $rel['tag_name'],
+            'version' => ltrim($rel['tag_name'], 'vV'),
+            'notes' => trim($rel['body'] ?? ''),
+            'zipUrl' => $rel['zipball_url'],
+            'htmlUrl' => null,
+        ];
+    }
     $repo = githubRepo();
     $res = githubHttpGet("https://api.github.com/repos/$repo/releases/latest");
     if (!$res['ok']) return ['error' => $res['error']];
@@ -4507,7 +4716,7 @@ function portfolioNormalizeOptions($o) {
     $out['gap'] = in_array($o['gap'] ?? '', ['tight', 'normal', 'wide'], true) ? $o['gap'] : 'normal';
     $out['crop'] = in_array($o['crop'] ?? '', ['fit', 'fill'], true) ? $o['crop'] : 'fit';
     $out['gridStyle'] = in_array($o['gridStyle'] ?? '', ['justified', 'masonry', 'grid'], true) ? $o['gridStyle'] : 'justified';
-    $out['captions'] = in_array($o['captions'] ?? '', ['off', 'on'], true) ? $o['captions'] : 'off';
+    $out['captions'] = in_array($o['captions'] ?? '', ['none', 'off', 'on'], true) ? $o['captions'] : 'off';
     $out['autoplay'] = !empty($o['autoplay']);
     $out['interval'] = min(30, max(2, (int)($o['interval'] ?? 5)));
     return $out;
@@ -4807,6 +5016,15 @@ function portfolioReconcileGallery($dir, $folder, array $takenSlugs, array $trus
                 // Read once: 0 records "no EXIF date", so it is not re-read.
                 if (!array_key_exists('capturedAt', $it) && $f['type'] === 'photo') {
                     $it['capturedAt'] = portfolioItemCaptureTime($dir . '/' . $name);
+                }
+                // Every rescan, not just once: an empty caption box might mean
+                // "never looked at this file" just as easily as "deliberately
+                // cleared it", and there's no way to tell those apart. Filling
+                // it back in from the file's own XMP whenever it's blank is the
+                // simpler, more predictable rule of the two.
+                if ($f['type'] === 'photo' && trim((string)($it['description'] ?? '')) === '') {
+                    $xmp = portfolioItemXmp($dir . '/' . $name);
+                    if (!empty($xmp['Description'])) $it['description'] = $xmp['Description'];
                 }
             }
             if ($f['type'] === 'video') {
@@ -5266,7 +5484,15 @@ function portfolioProcess($galleryId, $sliceSeconds) {
             $collect($gal['children'] ?? []);
         }
     };
-    foreach (portfolioTree(true)['categories'] as $cat) {
+    $tree = portfolioTree(true);
+    // The home gallery isn't a category and was missing from this sweep
+    // entirely — its items never got processed no matter how long the
+    // background loop ran, since nothing ever added them to $galleries.
+    if ($tree['home']) {
+        if ($tree['home']['id'] === $galleryId) array_unshift($galleries, $tree['home']);
+        else $galleries[] = $tree['home'];
+    }
+    foreach ($tree['categories'] as $cat) {
         if (!empty($cat['isTopGallery'])) {
             if ($cat['id'] === $galleryId) array_unshift($galleries, $cat);
             else $galleries[] = $cat;
@@ -5814,6 +6040,17 @@ if ($method === 'GET' && $uri === '/api/admin/portfolio') {
         ];
     }
     $home = $tree['home'];
+    $homeWork = 0;
+    $homeCapture = 0;
+    $homeFailed = 0;
+    if ($home) {
+        foreach ($home['sidecar']['items'] as $name => $it) {
+            $t = portfolioItemTasks($home['dir'], (string)$name, $it);
+            if ($t['work']) $homeWork++;
+            if ($t['capture']) $homeCapture++;
+            if (!empty($it['error'])) $homeFailed++;
+        }
+    }
     respond([
         'categories' => $categories,
         'home' => $home ? [
@@ -5823,6 +6060,9 @@ if ($method === 'GET' && $uri === '/api/admin/portfolio') {
             'itemCount' => count($home['sidecar']['order']),
             'publicCount' => portfolioPublicItemCount($home),
             'cover' => portfolioGalleryCover(portfolioHomeCategory(), $home),
+            'processing' => $homeWork,
+            'needsPoster' => $homeCapture,
+            'failed' => $homeFailed,
         ] : null,
         'warnings' => $tree['warnings'],
     ]);
@@ -6000,6 +6240,52 @@ if ($method === 'POST' && $uri === '/api/admin/portfolio/trash/empty') {
         $count++;
     }
     respond(['ok' => true, 'removed' => $count]);
+}
+
+if ($method === 'GET' && $uri === '/api/admin/portfolio/stats') {
+    requireAuth();
+    $c = ['galleries' => 0, 'collections' => 0, 'photos' => 0, 'videos' => 0, 'hidden' => 0];
+    $countNode = function ($node) use (&$countNode, &$c) {
+        $kind = $node['kind'] ?? 'gallery';
+        if ($kind === 'collection') $c['collections']++; else $c['galleries']++;
+        foreach (($node['sidecar']['items'] ?? []) as $it) {
+            if (!is_array($it)) continue;
+            if (($it['type'] ?? 'photo') === 'video') $c['videos']++; else $c['photos']++;
+            if (empty($it['visible'])) $c['hidden']++;
+        }
+        foreach (($node['galleries'] ?? $node['children'] ?? []) as $child) $countNode($child);
+    };
+    foreach (portfolioTree()['categories'] as $cat) $countNode($cat);
+
+    $disk = [
+        'portfolio' => pathSize(PORTFOLIO_DIR),
+        'thumbnails' => pathSize(SITE_DATA . '/thumbnails'),
+        'proxies' => pathSize(SITE_DATA . '/proxies'),
+        'uploads' => pathSize(UPLOADS_DIR),
+        'trash' => pathSize(SITE_DATA . '/portfolio-trash'),
+    ];
+    $disk['total'] = pathSize(SITE_DATA);
+
+    // Client delivery (the older reels/proofing galleries) is a separate store:
+    // records in galleries.json/collections.json, items in gallery-<id>/videos.json.
+    $cg = 0; $cphotos = 0; $cvideos = 0; $chidden = 0;
+    foreach (readGalleries() as $g) {
+        $cg++;
+        foreach (readGalleryVideos($g['id'] ?? '') as $it) {
+            if (!is_array($it)) continue;
+            if (($it['type'] ?? '') === 'video') $cvideos++; else $cphotos++;
+            if (($it['visible'] ?? true) === false) $chidden++;
+        }
+    }
+    $client = [
+        'galleries' => $cg,
+        'collections' => count(readCollections()),
+        'photos' => $cphotos,
+        'videos' => $cvideos,
+        'hidden' => $chidden,
+        'uploads' => $disk['uploads'],
+    ];
+    respond(['counts' => $c, 'disk' => $disk, 'client' => $client]);
 }
 
 // Files that exist more than once on disk (same bytes), so a copy can become a
@@ -6647,12 +6933,30 @@ if ($method === 'POST' && matchRoute('/api/admin/portfolio/galleries/{gid}/photo
 
 // Items
 
+// Galleries a file also appears in — picks elsewhere that point at this
+// gallery + file. Drives the "Appears in" list on the item's Details screen.
+function portfolioItemAppearances($gid, $file) {
+    $out = [];
+    foreach (portfolioAllNodes() as [$cat, $node]) {
+        if (($node['id'] ?? null) === $gid) continue;
+        foreach (($node['sidecar']['refs'] ?? []) as $ref) {
+            if (($ref['gallery'] ?? null) === $gid && ($ref['file'] ?? null) === $file) {
+                $out[] = ['id' => $node['id'], 'title' => portfolioTitle($node)];
+                break;
+            }
+        }
+    }
+    return $out;
+}
+
 if ($method === 'GET' && matchRoute('/api/admin/portfolio/galleries/{gid}/items/{file}', $uri, $params)) {
     requireAuth();
     [, $gal] = portfolioRequireGallery($params['gid']);
     $file = $params['file'];
     if (!isset($gal['sidecar']['items'][$file])) respondError('File not found', 404);
-    respond(portfolioItemMeta($gal, $file, $gal['sidecar']['items'][$file]));
+    $meta = portfolioItemMeta($gal, $file, $gal['sidecar']['items'][$file]);
+    $meta['appearances'] = portfolioItemAppearances($gal['id'], $file);
+    respond($meta);
 }
 
 if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}/items/{file}', $uri, $params)) {
@@ -6908,21 +7212,78 @@ function readPages() { return jsonRead(PAGES_PATH) ?: []; }
 function writePages($pages) { jsonWrite(PAGES_PATH, array_values($pages)); }
 
 // A page's body comes from the admin's rich-text editor, not the public, but
-// it is rendered straight into the public page — so this strips the handful
-// of constructs that would otherwise let it run script in a visitor's
-// browser. Not a full HTML sanitizer, just the realistic single-admin-author
-// threat model: no <script>/<style>/<iframe>/<object>/<embed>/<form>, no
-// inline event handlers, no javascript:/data: URLs.
+// it is rendered straight into the public page — so this is an allowlist
+// sanitizer, not a blocklist: only tags/attributes the editor can actually
+// produce (bold/italic/underline, lists, links, tables) survive, every
+// attribute value is the browser-decoded form (so entity-encoded payloads
+// can't slip past it the way a regex on raw markup could), and href/src
+// schemes are restricted to http(s)/mailto/relative.
+function portfolioUrlSchemeSafe($url) {
+    $url = trim((string)$url);
+    if ($url === '' || $url[0] === '#' || $url[0] === '/' || $url[0] === '.') return true;
+    if (preg_match('/^([a-z][a-z0-9+.\-]*):/i', $url, $m)) {
+        return in_array(strtolower($m[1]), ['http', 'https', 'mailto'], true);
+    }
+    return true;
+}
+
 function sanitizePageBody($html) {
-    $html = (string)$html;
-    $html = preg_replace('#<(script|style|iframe|object|embed|form)\b[^>]*>.*?</\1>#is', '', $html);
-    $html = preg_replace('#<(script|style|iframe|object|embed|form|meta|link)\b[^>]*/?>#i', '', $html);
-    $html = preg_replace('#\s+on[a-z]+\s*=\s*"[^"]*"#i', '', $html);
-    $html = preg_replace("#\\s+on[a-z]+\\s*=\\s*'[^']*'#i", '', $html);
-    $html = preg_replace('#\s+on[a-z]+\s*=\s*[^\s>]+#i', '', $html);
-    $html = preg_replace('#(href|src)\s*=\s*"\s*(javascript|data):[^"]*"#i', '$1="#"', $html);
-    $html = preg_replace("#(href|src)\\s*=\\s*'\\s*(javascript|data):[^']*'#i", "\$1='#'", $html);
-    return $html;
+    $html = trim((string)$html);
+    if ($html === '') return '';
+
+    $allowedTags = [
+        'p' => [], 'br' => [], 'b' => [], 'strong' => [], 'i' => [], 'em' => [],
+        'u' => [], 's' => [], 'sub' => [], 'sup' => [], 'blockquote' => [], 'pre' => [],
+        'code' => [], 'hr' => [], 'div' => [], 'span' => [],
+        'h1' => [], 'h2' => [], 'h3' => [], 'h4' => [], 'h5' => [], 'h6' => [],
+        'ul' => [], 'ol' => [], 'li' => [],
+        'a' => ['href', 'target', 'rel'],
+        'img' => ['src', 'alt', 'width', 'height'],
+        'table' => [], 'thead' => [], 'tbody' => [], 'tr' => [],
+        'td' => ['colspan', 'rowspan'], 'th' => ['colspan', 'rowspan'],
+    ];
+    $urlAttrs = ['href' => true, 'src' => true];
+
+    $doc = new DOMDocument();
+    libxml_use_internal_errors(true);
+    $doc->loadHTML('<?xml encoding="utf-8"?><div id="pfa-root">' . $html . '</div>', LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    libxml_clear_errors();
+    $root = $doc->getElementById('pfa-root');
+    if (!$root) return '';
+
+    $strip = function (DOMNode $node) use (&$strip, $allowedTags, $urlAttrs, $doc) {
+        $children = [];
+        foreach ($node->childNodes as $child) $children[] = $child;
+        foreach ($children as $child) {
+            if ($child instanceof DOMComment || $child instanceof DOMProcessingInstruction) {
+                $node->removeChild($child);
+                continue;
+            }
+            if (!($child instanceof DOMElement)) continue;
+            $tag = strtolower($child->tagName);
+            if (!isset($allowedTags[$tag])) {
+                // Unknown/dangerous tag (script, style, iframe, svg, event-bearing
+                // custom elements, ...): drop it, keeping only its text content.
+                while ($child->firstChild) $node->insertBefore($child->firstChild, $child);
+                $node->removeChild($child);
+                continue;
+            }
+            foreach (iterator_to_array($child->attributes) as $attr) {
+                $name = strtolower($attr->name);
+                if (!in_array($name, $allowedTags[$tag], true)) {
+                    $child->removeAttribute($attr->name);
+                } elseif (isset($urlAttrs[$name]) && !portfolioUrlSchemeSafe($attr->value)) {
+                    $child->removeAttribute($attr->name);
+                }
+            }
+            $strip($child);
+        }
+    };
+    $strip($root);
+
+    $out = '';
+    foreach ($root->childNodes as $child) $out .= $doc->saveHTML($child);
+    return trim($out);
 }
 
 function pagePayload($p, $admin = false) {
@@ -6995,8 +7356,12 @@ if ($method === 'POST' && $uri === '/api/contact') {
         'lead' => escHtml($name) . ' &lt;' . escHtml($from) . '&gt;',
         'body' => '<p style="white-space:pre-wrap">' . escHtml($message) . '</p>',
     ]);
-    $sent = sendEmail($to, $subject, $text, $html);
-    if (!$sent) respondError('Could not send the message. Please email directly instead.', 502);
+    try {
+        sendEmail($to, $subject, $text, $html, $from);
+    } catch (Exception $e) {
+        error_log('Contact form email failed: ' . $e->getMessage());
+        respondError('Could not send the message. Please email directly instead.', 502);
+    }
     respond(['ok' => true]);
 }
 
@@ -7998,8 +8363,10 @@ if ($method === 'POST' && $uri === '/api/admin/import/settings') {
         if ($name === 'portfolio-structure.json') continue;
         foreach ($destRoots as $prefix => $destDir) {
             if (strpos($name, $prefix) === 0) {
-                $rel = substr($name, strlen($prefix));
-                $dest = $destDir . '/' . $rel;
+                $rel = str_replace('\\', '/', substr($name, strlen($prefix)));
+                $parts = array_filter(explode('/', $rel), fn($p) => $p !== '' && $p !== '.');
+                if ($rel === '' || in_array('..', $parts, true)) break;
+                $dest = $destDir . '/' . implode('/', $parts);
                 @mkdir(dirname($dest), 0755, true);
                 $data = $za->getFromIndex($i);
                 if ($data !== false) file_put_contents($dest, $data);

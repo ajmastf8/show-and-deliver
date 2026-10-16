@@ -92,6 +92,16 @@
 .mobile-nav-social { display: flex; gap: 16px; padding: 18px 0 6px; }
 .mobile-nav-social svg { width: 22px; height: 22px; fill: currentColor; }
 
+/* This file loads after style.css, so its unconditional .header-social rule
+   above would otherwise always beat style.css's @media(max-width:1100px)
+   rule that hides .header-nav/.header-contact and switches to the hamburger
+   menu — leaving the social icons as the one thing still crowding the bar,
+   with nothing to wrap them, past the point where the row has room for them
+   (they're still reachable, duplicated into .mobile-nav-social above). */
+@media (max-width: 1100px) {
+  .header-social { display: none; }
+}
+
 /* --- Dark preset touch-ups --- */
 
 /* This one paints itself white rather than through the palette, because it

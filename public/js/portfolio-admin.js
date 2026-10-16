@@ -24,6 +24,8 @@
     duplicates: null,   // its payload
     trashView: false,   // the Trash panel
     trash: null,        // its payload
+    statsView: false,   // the Stats panel
+    stats: null,        // its payload
     emailView: false,   // the Email panel
     email: null,        // its payload
     updateView: false,  // the Update panel
@@ -63,7 +65,7 @@
     ['gap', 'Spacing', [['tight', 'Tight'], ['normal', 'Normal'], ['wide', 'Wide']]],
     ['density', 'Image size', [['compact', 'Smaller'], ['normal', 'Normal'], ['roomy', 'Larger']]],
     ['titles', 'Titles', [['none', 'Hidden'], ['hover', 'On hover'], ['under', 'Always']]],
-    ['captions', 'Captions', [['off', 'Lightbox only'], ['on', 'Always show']]],
+    ['captions', 'Captions', [['none', 'None'], ['off', 'Lightbox only'], ['on', 'Always show']]],
     ['crop', 'Thumbnails', [['fit', 'Whole frame'], ['fill', 'Cropped']]],
     ['watermark', 'Watermark', [['inherit', 'Inherit'], ['off', 'Off']]],
   ];
@@ -141,8 +143,10 @@
   // posters in the browser (the host has no ffmpeg). Both run only while this
   // tab is open, so the work follows the person who added the files.
   function scheduleProcessing() {
-    const pending = (state.tree?.categories || []).some(c =>
-      c.galleries.some(g => g.processing > 0 || g.needsPoster > 0));
+    const home = state.tree?.home;
+    const pending = (home && (home.processing > 0 || home.needsPoster > 0))
+      || (state.tree?.categories || []).some(c =>
+        c.galleries.some(g => g.processing > 0 || g.needsPoster > 0));
     if (pending && !state.processing.running) processingLoop();
   }
 
@@ -224,6 +228,7 @@
     else if (state.readinessView) renderReadiness();
     else if (state.duplicatesView) renderDuplicates();
     else if (state.trashView) renderTrash();
+    else if (state.statsView) renderStats();
     else if (state.emailView) renderEmail();
     else if (state.updateView) renderUpdate();
     else if (state.apiView) renderApi();
@@ -288,6 +293,9 @@
         </div>
         <div class="rail-row sub ${state.apiView ? 'active' : ''}" id="pfa-api-row">
           <span class="rail-name">API</span>
+        </div>
+        <div class="rail-row sub ${state.statsView ? 'active' : ''}" id="pfa-stats-row">
+          <span class="rail-name">Stats</span>
         </div>
         <details class="rail-group sub" id="pfa-checks" ${state.readinessView || state.duplicatesView || state.checksOpen ? 'open' : ''}>
           <summary class="rail-row sub">
@@ -388,6 +396,7 @@
         state.readinessView = false;
         state.duplicatesView = false;
         state.trashView = false;
+        state.statsView = false;
         state.emailView = false;
         state.updateView = false;
         state.apiView = false;
@@ -422,6 +431,7 @@
     $('pfa-readiness-row').addEventListener('click', openReadiness);
     $('pfa-duplicates-row').addEventListener('click', openDuplicates);
     $('pfa-trash-row').addEventListener('click', openTrash);
+    $('pfa-stats-row').addEventListener('click', openStats);
     $('pfa-email-row').addEventListener('click', openEmail);
     $('pfa-update-row').addEventListener('click', openUpdate);
     $('pfa-api-row').addEventListener('click', openApi);
@@ -915,6 +925,7 @@
       state.readinessView = false;
       state.duplicatesView = false;
       state.trashView = false;
+      state.statsView = false;
       state.emailView = false;
       state.updateView = false;
       state.apiView = false;
@@ -970,6 +981,10 @@
             </div>
           </details>
           <button class="ctrl pfa-settings-toggle ${open ? 'active' : ''}" id="pfa-settings-toggle" aria-pressed="${open}" title="${esc(settingsSummary(g, isHome))}">Settings</button>
+          ${isCollection || !g.items.length ? '' : `<div class="pfa-view-toggle" role="group" aria-label="Item view">
+            <button class="ctrl ${itemViewMode(g.id) !== 'list' ? 'active' : ''}" data-view="grid" title="Grid view">⊞</button>
+            <button class="ctrl ${itemViewMode(g.id) === 'list' ? 'active' : ''}" data-view="list" title="List view">☰</button>
+          </div>`}
           ${isCollection || !g.items.length ? '' : `<button class="ctrl ${state.selectMode ? 'active' : ''}" id="pfa-select-toggle" aria-pressed="${!!state.selectMode}">${state.selectMode ? 'Done' : 'Select'}</button>`}
           ${isCollection ? '' : '<button class="btn-primary small" id="pfa-add-files">Add media</button>'}
         </div>
@@ -1000,7 +1015,7 @@
 
         ${state.selectMode ? selectionBar(g) : ''}
 
-        ${g.items.length ? `<div class="pfa-items ${(g.sort || {}).by && g.sort.by !== 'custom' ? 'pfa-sorted' : ''} ${state.selectMode ? 'pfa-select-mode' : ''}" id="pfa-items">${g.items.map(itemTile).join('')}</div>`
+        ${g.items.length ? `<div class="pfa-items ${(g.sort || {}).by && g.sort.by !== 'custom' ? 'pfa-sorted' : ''} ${state.selectMode ? 'pfa-select-mode' : ''} ${itemViewMode(g.id) === 'list' ? 'pfa-items-list' : ''}" id="pfa-items">${itemsWithHidden(g.items)}</div>`
           : '<div class="pfa-empty"><p>This gallery is empty.</p></div>'}
       </div>
       ${railMarkup(`
@@ -1125,6 +1140,30 @@
     return isHome ? layout : [layout, ACCESS_LABELS[g.access] || g.access, '/' + g.slug].join(' \u00b7 ');
   }
 
+  // A per-gallery preference, not a gallery option: it's how the admin wants
+  // to work with this gallery's items, not something that affects the public
+  // site, so it lives in localStorage rather than the saved options.
+  function itemViewMode(gid) {
+    try { return localStorage.getItem('pfa-item-view:' + gid) || 'grid'; } catch (_) { return 'grid'; }
+  }
+  function setItemViewMode(gid, mode) {
+    try { localStorage.setItem('pfa-item-view:' + gid, mode); } catch (_) {}
+  }
+
+  // Admin view: visible items first, then a "Hidden" divider with the hidden
+  // ones underneath. Display-only — the stored order is untouched; unhiding an
+  // item moves it back up on the next render.
+  function itemsWithHidden(items) {
+    const visible = items.filter(i => i.type === 'header' || i.visible);
+    const hidden = items.filter(i => i.type !== 'header' && !i.visible);
+    let html = visible.map(itemTile).join('');
+    if (hidden.length) {
+      html += `<div class="pfa-hidden-divider" data-divider>Hidden<span class="pfa-hidden-count">${hidden.length}</span></div>`;
+      html += hidden.map(itemTile).join('');
+    }
+    return html;
+  }
+
   function itemTile(item) {
     if (item.type === 'header') {
       return `<div class="pfa-section" data-key="${esc(item.id)}">
@@ -1156,8 +1195,33 @@
       g.cover === item.file ? '<span class="pfa-badge good">Cover</span>' : '',
     ].filter(Boolean).join('');
     const selected = state.selectMode && state.selected.has(item.file);
+    if (itemViewMode(g.id) === 'list') {
+      return `
+        <figure class="pfa-item pfa-item-row ${item.visible ? '' : 'dim pfa-hidden'} ${selected ? 'selected' : ''}" data-key="${esc(item.file)}"${item.ref ? '' : ' data-own="1"'}>
+          <span class="pfa-drag" title="Drag to reorder">⠿</span>
+          ${state.selectMode ? `<input type="checkbox" class="pfa-item-check" ${selected ? 'checked' : ''} tabindex="-1">` : ''}
+          <div class="pfa-item-row-frame">
+            ${item.thumb ? `<img src="${esc(item.thumb)}" alt="" loading="lazy">` : '<span class="pfa-item-empty"></span>'}
+            ${item.type === 'video' ? '<span class="pfa-video-mark">▶</span>' : ''}
+          </div>
+          <div class="pfa-item-row-name" title="${esc(item.source ? item.source.file : item.file)}">
+            ${esc(item.title || (item.source ? item.source.file : item.file))}
+            <span class="pfa-flags">${flags}</span>
+          </div>
+          <div class="pfa-item-row-actions">
+            <button class="btn-icon" data-act="${item.ref ? 'ref-edit' : 'edit'}" data-file="${esc(item.file)}" title="Edit title, caption, file name">✎</button>
+            ${item.ref ? '' : `<button class="btn-icon" data-act="details" data-file="${esc(item.file)}" title="Details">ℹ</button>`}
+            <button class="btn-icon ${g.cover === item.file ? 'has-description' : ''}" data-act="cover" data-file="${esc(item.file)}" title="Set as gallery cover">★</button>
+            ${g.layout === 'featured' ? `<button class="btn-icon" data-act="tile" data-file="${esc(item.file)}" title="Tile size: ${esc(TILE_SIZES.find(s => s[0] === (item.tile || 'normal'))[1])}">▦</button>` : ''}
+            ${item.type === 'video' && !item.ref ? `<button class="btn-icon" data-act="poster" data-file="${esc(item.file)}" title="Choose poster frame">↻</button>` : ''}
+            ${item.type === 'video' && !item.ref ? `<button class="btn-icon cc-btn${item.captions.length ? ' has-captions' : ''}" data-act="captions" data-file="${esc(item.file)}" title="Captions${item.captions.length ? ` (${item.captions.length})` : ''}">CC</button>` : ''}
+            <button class="btn-icon ${item.visible ? '' : 'hidden-video'}" data-act="${item.ref ? 'ref-visible' : 'visible'}" data-file="${esc(item.file)}" title="${item.visible ? 'Hide from visitors' : 'Show to visitors'}">${item.visible ? '◉' : '○'}</button>
+            <button class="btn-icon delete-btn" data-act="${item.ref ? 'ref-remove' : 'delete'}" data-file="${esc(item.file)}" title="${item.ref ? 'Remove from this gallery' : 'Delete'}">×</button>
+          </div>
+        </figure>`;
+    }
     return `
-      <figure class="pfa-item ${item.visible ? '' : 'dim'} ${selected ? 'selected' : ''}" data-key="${esc(item.file)}">
+      <figure class="pfa-item ${item.visible ? '' : 'dim pfa-hidden'} ${selected ? 'selected' : ''}" data-key="${esc(item.file)}"${item.ref ? '' : ' data-own="1"'}>
         <div class="pfa-item-frame">
           ${item.thumb ? `<img src="${esc(item.thumb)}" alt="" loading="lazy">` : '<span class="pfa-item-empty"></span>'}
           ${item.type === 'video' ? '<span class="pfa-video-mark">▶</span>' : ''}
@@ -1173,6 +1237,7 @@
             <button data-act="cover" data-file="${esc(item.file)}">Cover</button>
             ${g.layout === 'featured' ? `<button data-act="tile" data-file="${esc(item.file)}">Size: ${esc(TILE_SIZES.find(s => s[0] === (item.tile || 'normal'))[1])}</button>` : ''}
             <button data-act="${item.ref ? 'ref-visible' : 'visible'}" data-file="${esc(item.file)}">${item.visible ? 'Hide' : 'Show'}</button>
+            ${item.type === 'video' && !item.ref ? `<button data-act="poster" data-file="${esc(item.file)}">Poster</button>` : ''}
             ${item.type === 'video' && !item.ref ? `<button data-act="captions" data-file="${esc(item.file)}">Captions${item.captions.length ? ` (${item.captions.length})` : ''}</button>` : ''}
             <button data-act="${item.ref ? 'ref-remove' : 'delete'}" data-file="${esc(item.file)}">${item.ref ? 'Remove' : 'Delete'}</button>
           </div>
@@ -1273,6 +1338,10 @@
       state.selected = new Set();
       render();
     });
+    document.querySelectorAll('[data-view]').forEach(btn => btn.addEventListener('click', () => {
+      setItemViewMode(gid, btn.dataset.view);
+      render();
+    }));
     if (state.selectMode) {
       const itemsEl = $('pfa-items');
       if (itemsEl) itemsEl.addEventListener('click', e => {
@@ -1288,6 +1357,15 @@
       if ($('pfa-select-hide')) $('pfa-select-hide').addEventListener('click', () => bulkVisible(gid, false));
       if ($('pfa-select-show')) $('pfa-select-show').addEventListener('click', () => bulkVisible(gid, true));
       if ($('pfa-select-delete')) $('pfa-select-delete').addEventListener('click', () => bulkDelete(gid));
+    } else {
+      // Clicking a picture opens its Details view (the same screen as the ℹ
+      // button), unless the click landed on an action button or the drag handle.
+      const itemsEl = $('pfa-items');
+      if (itemsEl) itemsEl.addEventListener('click', e => {
+        const fig = e.target.closest('.pfa-item');
+        if (!fig || !fig.dataset.own || e.target.closest('[data-act]') || e.target.closest('.pfa-drag')) return;
+        openItem(gid, fig.dataset.key);
+      });
     }
 
     // Sorting: the rail's Order group. Keeping a sort writes the order shown
@@ -1316,6 +1394,7 @@
         animation: 140,
         disabled: state.selectMode || ((g.sort || {}).by || 'custom') !== 'custom',
         draggable: '.pfa-item, .pfa-section',
+        filter: '.pfa-hidden, [data-divider]',
         onEnd: () => {
           const order = [...items.querySelectorAll('[data-key]')].map(n => n.dataset.key);
           act(() => send(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/order`, 'PUT', { order }));
@@ -1364,6 +1443,7 @@
       return act(() => send(target, 'PUT', { tile: next }));
     }
     if (action === 'edit') return editItem(item, gid);
+    if (action === 'poster') return openPosterPicker(item, gid);
     if (action === 'captions') return editCaptions(item, gid);
     if (action === 'section-edit') {
       const header = g.items.find(i => i.id === id);
@@ -1393,35 +1473,27 @@
     act(() => send(`${base}/items/${encodeURIComponent(item.file)}`, 'PUT', body));
   }
 
-  async function editCaptions(item, gid) {
+  // The admin scrubs to a frame itself instead of trusting the random one
+  // capturePoster() grabs in the background — that one exists so a fresh
+  // upload has *something* to show before anyone's looked at it, not as the
+  // last word on which frame represents the video.
+  function openPosterPicker(item, gid) {
+    S().openThumbPickerFor(item.src, (blob) => act(() => req(
+      `/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/items/${encodeURIComponent(item.file)}/poster`,
+      { method: 'PUT', body: blob, headers: { 'Content-Type': 'image/jpeg' } }
+    )), { title: 'Choose poster frame', buttonLabel: 'Set Poster' });
+  }
+
+  function editCaptions(item, gid) {
     const base = `/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/items/${encodeURIComponent(item.file)}/captions`;
-    if (item.captions.length) {
-      const choice = await S().prompt({
-        title: 'Caption tracks', okText: 'Go',
-        field: {
-          label: `${item.captions.map(c => c.label).join(', ')} — what next?`,
-          type: 'select',
-          options: [{ value: 'add', label: 'Add a track' }, ...item.captions.map(c => ({ value: 'del:' + c.lang, label: 'Remove ' + c.label }))],
-        },
-      });
-      if (!choice) return;
-      if (choice.startsWith('del:')) {
-        return act(() => req(`${base}/${encodeURIComponent(choice.slice(4))}`, { method: 'DELETE' }));
-      }
-    }
-    const lang = await S().prompt({ title: 'Add captions', okText: 'Choose file', field: { label: 'Language code, e.g. en or pt-br', type: 'text', value: 'en' } });
-    if (!lang) return;
-    const picker = document.createElement('input');
-    picker.type = 'file';
-    picker.accept = '.vtt,text/vtt';
-    picker.addEventListener('change', () => {
-      if (!picker.files.length) return;
-      const fd = new FormData();
-      fd.append('file', picker.files[0]);
-      fd.append('lang', lang);
-      act(() => req(base, { method: 'POST', body: fd }));
+    S().openCaptionsModalFor({
+      title: '— ' + (item.title || item.file),
+      uploadUrl: base,
+      deleteBase: base,
+      fileField: 'file',
+      getItem: () => (state.gallery?.items || []).find(i => i.file === item.file),
+      onChange: () => loadGallery(gid).then(render),
     });
-    picker.click();
   }
 
   // ---------- Site design ----------
@@ -1460,6 +1532,7 @@
     state.readinessView = false;
     state.duplicatesView = false;
     state.trashView = false;
+    state.statsView = false;
     state.emailView = false;
     state.updateView = false;
     state.apiView = false;
@@ -2036,6 +2109,7 @@
     state.readinessView = false;
     state.duplicatesView = false;
     state.trashView = false;
+    state.statsView = false;
     state.emailView = false;
     state.updateView = false;
     state.apiView = false;
@@ -2057,6 +2131,7 @@
     state.pagesView = false;
     state.duplicatesView = false;
     state.trashView = false;
+    state.statsView = false;
     state.emailView = false;
     state.updateView = false;
     state.apiView = false;
@@ -2114,6 +2189,7 @@
     state.pagesView = false;
     state.readinessView = false;
     state.trashView = false;
+    state.statsView = false;
     state.emailView = false;
     state.updateView = false;
     state.apiView = false;
@@ -2134,8 +2210,78 @@
     return n + ' B';
   }
 
+  async function openStats() {
+    state.statsView = true;
+    state.design = false;
+    state.pagesView = false;
+    state.readinessView = false;
+    state.duplicatesView = false;
+    state.trashView = false;
+    state.emailView = false;
+    state.updateView = false;
+    state.apiView = false;
+    state.galleryId = null;
+    state.gallery = null;
+    try {
+      state.stats = await req('/api/admin/portfolio/stats');
+      render();
+    } catch (err) {
+      S().toast(err.message || 'Could not compute stats');
+    }
+  }
+
+  function renderStats() {
+    const s = state.stats || {};
+    const disk = s.disk || {};
+    const cardsHtml = (o) => `<div class="pfa-stat-grid">${[
+      ['Galleries', (o.galleries || 0).toLocaleString(), ''],
+      ['Collections', (o.collections || 0).toLocaleString(), ''],
+      ['Photos', (o.photos || 0).toLocaleString(), o.hidden ? `${o.hidden.toLocaleString()} hidden` : ''],
+      ['Videos', (o.videos || 0).toLocaleString(), ''],
+    ].map(([label, value, sub]) => `
+      <div class="pfa-stat">
+        <div class="pfa-stat-value">${value}</div>
+        <div class="pfa-stat-label">${label}</div>
+        ${sub ? `<div class="pfa-stat-sub">${sub}</div>` : ''}
+      </div>`).join('')}</div>`;
+    const diskRows = [
+      ['Portfolio (originals)', disk.portfolio],
+      ['Proxies', disk.proxies],
+      ['Thumbnails', disk.thumbnails],
+      ['Uploads (client delivery)', disk.uploads],
+      ['Trash', disk.trash],
+    ].filter(([, v]) => typeof v === 'number');
+    $('pfa-centre').innerHTML = `
+      <div class="centre-header">
+        <div>
+          <h1>Stats</h1>
+          <p class="centre-sub">Library counts and disk use, by the two halves of the site.</p>
+        </div>
+      </div>
+      <div class="pfa-scroll">
+        <section class="pfa-group">
+          <h3>Portfolio</h3>
+          <div class="pfa-group-body">${cardsHtml(s.counts || {})}</div>
+        </section>
+        <section class="pfa-group">
+          <h3>Client delivery</h3>
+          <div class="pfa-group-body">${cardsHtml(s.client || {})}</div>
+        </section>
+        <section class="pfa-group">
+          <h3>Disk</h3>
+          <div class="pfa-group-body">
+            <div class="pfa-stat-list">
+              ${diskRows.map(([label, v]) => `<div class="pfa-stat-row"><span>${label}</span><span>${bytes(v)}</span></div>`).join('')}
+              <div class="pfa-stat-row total"><span>Total (site-data)</span><span>${bytes(disk.total || 0)}</span></div>
+            </div>
+          </div>
+        </section>
+      </div>`;
+  }
+
   async function openTrash() {
     state.trashView = true;
+    state.statsView = false;
     state.design = false;
     state.pagesView = false;
     state.readinessView = false;
@@ -2220,6 +2366,7 @@
     state.readinessView = false;
     state.duplicatesView = false;
     state.trashView = false;
+    state.statsView = false;
     state.updateView = false;
     state.apiView = false;
     state.galleryId = null;
@@ -2234,6 +2381,7 @@
 
   function renderEmail() {
     const c = state.email || {};
+    const hasResend = !!c.resendApiKey;   // returns '••••••••' when a key is stored
     $('pfa-centre').innerHTML = `
       <div class="centre-header">
         <div>
@@ -2243,6 +2391,14 @@
       </div>
       <div class="pfa-scroll">
         <section class="pfa-group">
+          <h3>Sender &amp; delivery</h3>
+          <div class="pfa-group-body tight">
+            <label class="pfa-field wide"><span>From address</span><input class="setting-input" id="pfa-smtp-from" value="${esc(c.from || '')}" placeholder='&quot;Your Studio&quot; &lt;hello@example.com&gt;'><span class="pfa-hint">With Resend, the domain must be verified in your Resend account.</span></label>
+            <label class="pfa-field wide"><span>Notification email (to)</span><input type="email" class="setting-input" id="pfa-smtp-admin-email" value="${esc(c.adminEmail || '')}" placeholder="you@example.com"><span class="pfa-hint">Where comment notifications are sent.</span></label>
+            <label class="pfa-field wide"><span>Site base URL</span><input class="setting-input" id="pfa-smtp-base-url" value="${esc(c.baseUrl || '')}" placeholder="https://gallery.example.com"><span class="pfa-hint">Used for links in notification emails.</span></label>
+          </div>
+        </section>
+        <section class="pfa-group">
           <h3>Resend</h3>
           <div class="pfa-group-body">
             <label class="pfa-field wide">
@@ -2250,10 +2406,13 @@
               <input type="password" class="setting-input" id="pfa-resend-key" value="${esc(c.resendApiKey || '')}" placeholder="re_xxxxxxxxx">
               <span class="pfa-hint">Free key at <a href="https://resend.com" target="_blank" rel="noopener">resend.com</a>. If set, SMTP below is ignored — but the sender settings still apply.</span>
             </label>
+            <div class="settings-actions flush">
+              <button class="ctrl" id="pfa-email-test-resend">Send test via Resend</button>
+            </div>
           </div>
         </section>
-        <section class="pfa-group">
-          <h3>SMTP (alternative to Resend)</h3>
+        <details class="pfa-group pfa-collapse" id="pfa-smtp-details"${hasResend ? '' : ' open'}>
+          <summary><h3>SMTP (alternative to Resend)</h3></summary>
           <div class="pfa-group-body">
             <p class="pfa-hint">Using a Gmail or Google Workspace address? It needs an <a href="https://support.google.com/mail/answer/185833" target="_blank" rel="noopener">app password</a>, not your regular one, with host <code>smtp.gmail.com</code> and port 587.</p>
             <label class="pfa-field"><span>Host</span><input class="setting-input" id="pfa-smtp-host" value="${esc(c.host || '')}" placeholder="e.g. mail.hosting.com"></label>
@@ -2261,17 +2420,15 @@
             <label class="pfa-check"><input type="checkbox" id="pfa-smtp-secure" ${c.secure ? 'checked' : ''}> Use SSL/TLS (port 465). Leave off for STARTTLS (587).</label>
             <label class="pfa-field"><span>Username</span><input class="setting-input" id="pfa-smtp-user" value="${esc(c.user || '')}" placeholder="notifications@yourdomain.com"></label>
             <label class="pfa-field"><span>Password</span><input type="password" class="setting-input" id="pfa-smtp-pass" value="${esc(c.pass || '')}" placeholder="SMTP password"></label>
+            <div class="settings-actions flush">
+              <button class="ctrl" id="pfa-email-test-smtp">Test SMTP connection</button>
+            </div>
           </div>
-        </section>
+        </details>
         <section class="pfa-group">
-          <h3>Sender &amp; delivery</h3>
           <div class="pfa-group-body">
-            <label class="pfa-field wide"><span>From address</span><input class="setting-input" id="pfa-smtp-from" value="${esc(c.from || '')}" placeholder='&quot;Your Studio&quot; &lt;hello@example.com&gt;'><span class="pfa-hint">With Resend, the domain must be verified in your Resend account.</span></label>
-            <label class="pfa-field wide"><span>Notification email (to)</span><input type="email" class="setting-input" id="pfa-smtp-admin-email" value="${esc(c.adminEmail || '')}" placeholder="you@example.com"><span class="pfa-hint">Where comment notifications are sent.</span></label>
-            <label class="pfa-field wide"><span>Site base URL</span><input class="setting-input" id="pfa-smtp-base-url" value="${esc(c.baseUrl || '')}" placeholder="https://gallery.example.com"><span class="pfa-hint">Used for links in notification emails.</span></label>
-            <div class="settings-actions">
+            <div class="settings-actions flush">
               <button class="btn-primary small" id="pfa-email-save">Save Email Settings</button>
-              <button class="ctrl" id="pfa-email-test">Send Test Email</button>
             </div>
             <div id="pfa-email-status" class="pfa-hint"></div>
           </div>
@@ -2303,18 +2460,33 @@
       }
       setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 4000);
     });
-    $('pfa-email-test').addEventListener('click', async () => {
+
+    const runTest = async (transport, btn) => {
       const status = $('pfa-email-status');
-      status.textContent = 'Sending test email…';
+      status.textContent = transport === 'smtp' ? 'Checking the SMTP connection…' : 'Sending test email…';
+      status.style.color = '';
+      btn.disabled = true;
       try {
-        await req('/api/settings/email/test', { method: 'POST' });
+        const res = await send('/api/settings/email/test', 'POST', { transport });
         status.textContent = '';
-        S().showEmailTestResult('success', 'Email Test Succeeded', 'Test email sent! Check your inbox.');
+        if (res && res.ok === false) {
+          S().showEmailTestResult('error', 'SMTP Test', res.detail || 'The test failed.');
+        } else {
+          S().showEmailTestResult('success',
+            transport === 'smtp' ? 'SMTP Test Succeeded' : 'Email Test Succeeded',
+            (res && res.detail) || 'Test email sent! Check your inbox.');
+        }
       } catch (err) {
         status.textContent = '';
-        S().showEmailTestResult('error', 'Email Test Failed', err.message || 'Failed to send test email.');
+        S().showEmailTestResult('error',
+          transport === 'smtp' ? 'SMTP Test Failed' : 'Email Test Failed',
+          err.message || 'The test failed.');
+      } finally {
+        btn.disabled = false;
       }
-    });
+    };
+    $('pfa-email-test-resend').addEventListener('click', e => runTest('resend', e.currentTarget));
+    $('pfa-email-test-smtp').addEventListener('click', e => runTest('smtp', e.currentTarget));
   }
 
   // ---------- Update ----------
@@ -2326,6 +2498,7 @@
     state.readinessView = false;
     state.duplicatesView = false;
     state.trashView = false;
+    state.statsView = false;
     state.emailView = false;
     state.apiView = false;
     state.galleryId = null;
@@ -2574,6 +2747,7 @@
     state.readinessView = false;
     state.duplicatesView = false;
     state.trashView = false;
+    state.statsView = false;
     state.emailView = false;
     state.updateView = false;
     state.galleryId = null;
@@ -2745,6 +2919,7 @@
         <div class="centre-controls">
           <button class="ctrl" id="pfa-item-visible">${f.visible ? 'Hide' : 'Show'}</button>
           <button class="ctrl" id="pfa-item-cover">Set as cover</button>
+          <button class="ctrl" id="pfa-item-galleries">Add to galleries…</button>
           <button class="ctrl" id="pfa-item-rename">Rename</button>
           <button class="ctrl danger" id="pfa-item-delete">Delete</button>
         </div>
@@ -2754,6 +2929,11 @@
         <div class="pfa-item-meta">
           <div class="pfa-section"><div class="pfa-section-text">File</div></div>
           ${metaRows({ File: f.file, Type: f.type, Size: bytes(f.bytes || 0), Dimensions: `${f.width}×${f.height}`, Added: isoDay(f.addedAt), Modified: unixDay(f.mtime) })}
+          <div class="pfa-section"><div class="pfa-section-text">Appears in</div></div>
+          <div class="pfa-metalist">
+            <div class="pfa-metarow"><span>${esc(meta.gallery ? meta.gallery.title : 'This gallery')}</span><span>this gallery</span></div>
+            ${(meta.appearances || []).map(a => `<div class="pfa-metarow"><span>${esc(a.title)}</span><span>pick</span></div>`).join('')}
+          </div>
           ${Object.keys(meta.exif || {}).length ? `<div class="pfa-section"><div class="pfa-section-text">EXIF</div></div>${metaRows(meta.exif)}` : ''}
           ${Object.keys(meta.xmp || {}).length ? `<div class="pfa-section"><div class="pfa-section-text">XMP</div></div>${metaRows(meta.xmp)}` : ''}
         </div>
@@ -2762,6 +2942,7 @@
     $('pfa-item-back').addEventListener('click', () => { state.item = null; render(); });
     $('pfa-item-visible').addEventListener('click', () => send(base, 'PUT', { visible: !f.visible }).then(() => openItem(gid, file)));
     $('pfa-item-cover').addEventListener('click', () => send(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}`, 'PUT', { cover: file }).then(() => openItem(gid, file)));
+    $('pfa-item-galleries').addEventListener('click', () => openAddToGalleries(gid, file));
     $('pfa-item-rename').addEventListener('click', async () => {
       const name = await S().prompt({ title: 'Rename file', okText: 'Rename', field: { label: 'New file name (extension kept)', type: 'text', value: file } });
       if (!name || !name.trim() || name === file) return;
@@ -2994,6 +3175,51 @@
       });
       close();
       act(() => send(`/api/admin/portfolio/galleries/${encodeURIComponent(gid)}/refs`, 'POST', { items }));
+    });
+  }
+
+  // The reverse of the picker: from a picture's own Details screen, add it to
+  // other galleries without leaving the picture. Same refs call, item-driven.
+  async function openAddToGalleries(gid, file) {
+    const already = new Set(((state.item && state.item.meta && state.item.meta.appearances) || []).map(a => a.id));
+    const galleries = galleriesInScope.all().filter(g => g.id !== gid && !already.has(g.id));
+    if (!galleries.length) { S().toast('This picture is already in every other gallery'); return; }
+    const chosen = new Set();
+    const wrap = document.createElement('div');
+    wrap.className = 'pfa-modal';
+    wrap.innerHTML = `
+      <div class="pfa-modal-backdrop"></div>
+      <div class="pfa-modal-card">
+        <h3>Add to other galleries</h3>
+        <p class="pfa-hint">The file stays here — it just also appears in the galleries you pick. Edits to the original show up everywhere it appears.</p>
+        <div class="pfa-pickg-list">
+          ${galleries.map(g => `
+            <label class="pfa-pickg">
+              <input type="checkbox" value="${esc(g.id)}">
+              <span>${esc(g.category ? g.category.title + ' — ' : '')}${esc(g.title)}</span>
+            </label>`).join('')}
+        </div>
+        <div class="pfa-modal-actions">
+          <button class="ctrl" id="pfa-pickg-cancel">Cancel</button>
+          <button class="btn-primary small" id="pfa-pickg-add">Add <span id="pfa-pickg-count">0</span></button>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    const close = () => wrap.remove();
+    wrap.querySelector('.pfa-modal-backdrop').addEventListener('click', close);
+    $('pfa-pickg-cancel').addEventListener('click', close);
+    wrap.querySelectorAll('.pfa-pickg input').forEach(cb => cb.addEventListener('change', () => {
+      if (cb.checked) chosen.add(cb.value); else chosen.delete(cb.value);
+      $('pfa-pickg-count').textContent = String(chosen.size);
+    }));
+    $('pfa-pickg-add').addEventListener('click', async () => {
+      if (!chosen.size) return close();
+      const targets = [...chosen];
+      close();
+      for (const targetId of targets) {
+        await send(`/api/admin/portfolio/galleries/${encodeURIComponent(targetId)}/refs`, 'POST', { items: [{ galleryId: gid, file }] });
+      }
+      openItem(gid, file);
     });
   }
 

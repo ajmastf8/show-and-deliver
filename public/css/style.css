@@ -197,7 +197,11 @@ a { color: inherit; text-decoration: none; }
   bottom: 0;
   background: var(--color-white);
   z-index: 99;
-  padding: 80px 24px 40px;
+  /* header.js measures the real header (a logo can wrap to two lines, or
+     shrink less than expected) and sets --header-h; a fixed guess here was
+     routinely shorter than the actual header, which stayed visible on top
+     (it has the higher z-index) and clipped the first nav link. */
+  padding: calc(var(--header-h, 80px) + 16px) 24px 40px;
   overflow-y: auto;
 }
 
@@ -218,6 +222,51 @@ a { color: inherit; text-decoration: none; }
 }
 
 .mobile-nav-link.active {
+  color: var(--color-black);
+}
+
+.mobile-nav-dropdown-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.mobile-nav-dropdown-toggle::after {
+  content: '\25BE';
+  font-size: 14px;
+  transition: transform 0.15s ease;
+}
+
+.mobile-nav-dropdown.open .mobile-nav-dropdown-toggle::after {
+  transform: rotate(180deg);
+}
+
+.mobile-nav-dropdown-menu {
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 14px;
+  padding-left: 16px;
+  border-left: 1px solid var(--color-gray-mid);
+}
+
+.mobile-nav-dropdown.open .mobile-nav-dropdown-menu {
+  display: flex;
+}
+
+.mobile-nav-sublink {
+  font-size: 15px;
+  color: var(--color-gray-text);
+}
+
+.mobile-nav-sublink:hover {
   color: var(--color-black);
 }
 
@@ -1818,6 +1867,29 @@ a { color: inherit; text-decoration: none; }
 
   .mobile-menu-btn {
     display: block;
+    order: -1;
+    margin-left: 0;
+    margin-right: auto;
+  }
+
+  /* The logo has flex-shrink:0 for desktop, where there's always room; past
+     this breakpoint the hamburger button is competing for the same row, so
+     a wide wordmark image (fixed to a height, no width cap) can run off the
+     right edge instead of shrinking to fit. */
+  .logo {
+    flex-shrink: 1;
+    min-width: 0;
+  }
+
+  .logo-img {
+    max-width: 100%;
+    width: auto;
+    height: auto !important;
+    max-height: 74px;
+  }
+
+  .logo-text {
+    font-size: 28px;
   }
 }
 

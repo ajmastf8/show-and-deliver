@@ -65,8 +65,21 @@
           `<a href="${esc(c.url)}">${esc(c.label)}</a>`
         ).join('');
         navHtml += `<div class="nav-dropdown"><span class="nav-link">${esc(item.label)}</span><div class="nav-dropdown-menu">${children}</div></div>`;
-        const mobileUrl = (item.children && item.children.length) ? item.children[0].url : '#';
-        mobileNavHtml += `<a href="${esc(mobileUrl)}" class="mobile-nav-link">${esc(item.label)}</a>`;
+        if (item.children && item.children.length) {
+          // The flyout/accordion above only make sense with room to spare, so
+          // the overlay gets its own always-expandable version: a button that
+          // reveals every child link, rather than silently linking straight
+          // to just the first one.
+          const subLinks = item.children.map(c =>
+            `<a href="${esc(c.url)}" class="mobile-nav-sublink">${esc(c.label)}</a>`
+          ).join('');
+          mobileNavHtml += `<div class="mobile-nav-dropdown">`
+            + `<button type="button" class="mobile-nav-link mobile-nav-dropdown-toggle">${esc(item.label)}</button>`
+            + `<div class="mobile-nav-dropdown-menu">${subLinks}</div>`
+            + `</div>`;
+        } else {
+          mobileNavHtml += `<a href="#" class="mobile-nav-link">${esc(item.label)}</a>`;
+        }
       }
     });
 
@@ -126,9 +139,23 @@
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
       `;
+      // The overlay needs to start clear of the real header, which stays
+      // visible on top of it (it's sticky, with the higher z-index) — measured
+      // rather than guessed, since a logo can wrap or be taller/shorter than
+      // whatever a fixed number assumed. Re-measured on open, not just once
+      // here: the logo image hasn't necessarily finished loading (and settled
+      // into its real box) by the time this script runs.
+      const siteHeader = document.querySelector('.site-header');
+      const setHeaderHeightVar = () => {
+        if (siteHeader) document.documentElement.style.setProperty('--header-h', siteHeader.getBoundingClientRect().height + 'px');
+      };
+      setHeaderHeightVar();
+      window.addEventListener('resize', setHeaderHeightVar);
+
       const menuBtn = header.querySelector('.mobile-menu-btn');
       if (menuBtn) {
         menuBtn.addEventListener('click', () => {
+          setHeaderHeightVar();
           document.getElementById('mobile-nav').classList.toggle('open');
         });
       }
@@ -156,6 +183,11 @@
         <div class="mobile-nav-contact">${mobileContactHtml}</div>
         ${socialHtml ? `<div class="mobile-nav-social">${socialHtml}</div>` : ''}
       `;
+      mobileNav.querySelectorAll('.mobile-nav-dropdown-toggle').forEach(btn => {
+        btn.addEventListener('click', () => {
+          btn.closest('.mobile-nav-dropdown').classList.toggle('open');
+        });
+      });
     }
   }
 

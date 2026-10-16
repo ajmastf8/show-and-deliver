@@ -206,24 +206,22 @@
 .pf-screen .pf-tile { max-width: 100%; height: 100%; background: none; }
 .pf-screen .pf-tile img { width: auto; max-width: 100%; height: 100%; object-fit: contain; }
 
-/* The credit over an immersive picture (filmstrip and fullscreen). The title
-   and video badge sit at the bottom of the tile, so this takes the top edge as
-   a compact pill — a full-width bar would look like a letterbox in "contain". */
-.pf-credit {
-  position: absolute;
-  left: 10px;
-  top: 10px;
-  max-width: calc(100% - 20px);
-  padding: 6px 10px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.62);
+/* A caption box UNDER the picture, never over it. The tile becomes a column so
+   the image shrinks to leave room for the box at the bottom. */
+.pf-tile.pf-has-caption { display: flex; flex-direction: column; }
+.pf-tile.pf-has-caption > img,
+.pf-tile.pf-has-caption > .pf-tile-placeholder { flex: 1 1 auto; min-height: 0; height: auto; object-fit: cover; }
+.pf-screen .pf-tile.pf-has-caption > img { height: auto; object-fit: contain; }
+.pf-caption-box {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  background: rgba(0, 0, 0, 0.72);
   color: #fff;
   font-size: 12.5px;
   line-height: 1.45;
   white-space: pre-wrap;
-  pointer-events: none;
 }
-.pf-credit a { color: #fff; text-decoration: underline; pointer-events: auto; }
+.pf-caption-box a { color: #fff; text-decoration: underline; }
 
 /* Titles: always, on hover, or not at all. */
 .pf-titles-under .pf-tile-title { opacity: 1; }
@@ -542,6 +540,13 @@
   justify-content: flex-end;
   gap: 4px;
   margin: 14px 0;
+}
+
+/* portfolio.js forces grid view at this width when nothing's been chosen
+   explicitly, so the toggle would only offer a way back to a layout that
+   doesn't fit the screen. */
+@media (max-width: 720px) {
+  .pf-viewtoggle { display: none; }
 }
 .pf-view-btn {
   display: inline-flex;

@@ -20,22 +20,22 @@ const ratio = item => {
   return w / h;
 };
 
-// A credit/caption overlaid on the picture. Only the immersive layouts use it:
-// the scanning layouts leave credits to the lightbox, and the slideshow draws
-// its own caption under the frame. The title and video badge sit at the bottom
-// of the tile, so the credit takes the top edge.
-function withCredit(node, item) {
+// A caption box UNDER the picture — never over it. Shown when a gallery's
+// Captions option is "Always show" (all layouts); the slideshow draws its own
+// caption under the frame, and every other layout otherwise leaves the caption
+// to the lightbox. The tile becomes a column so the image shrinks to make room.
+function withCaption(node, item) {
   if (!item.description || typeof window.renderCaptionBox !== 'function') return node;
   const cap = document.createElement('div');
-  cap.className = 'pf-credit';
-  if (window.renderCaptionBox(cap, item.description)) node.appendChild(cap);
+  cap.className = 'pf-caption-box';
+  if (window.renderCaptionBox(cap, item.description)) {
+    node.classList.add('pf-has-caption');
+    node.appendChild(cap);
+  }
   return node;
 }
 
-// The scanning layouts (justified/masonry/grid/featured) show a caption only
-// in the lightbox by default; a gallery's own Captions option can turn it on
-// inline here too, the same credit overlay the immersive layouts always use.
-const maybeCredit = (node, item, opts) => opts.captions === 'on' ? withCredit(node, item) : node;
+const maybeCaption = (node, item, opts) => opts.captions === 'on' ? withCaption(node, item) : node;
 
 // Rows of equal height that keep each picture's aspect ratio, scaled to fill the
 // width — the usual photographer's grid. The last row is left unstretched so a
@@ -43,7 +43,7 @@ const maybeCredit = (node, item, opts) => opts.captions === 'on' ? withCredit(no
 export function justified(root, items, tile, opts = {}) {
   const gap = gapOf(opts);
   const target = ROW_HEIGHTS[opts.density] ?? ROW_HEIGHTS.normal;
-  const tiles = items.map(item => maybeCredit(tile(item), item, opts));
+  const tiles = items.map(item => maybeCaption(tile(item), item, opts));
 
   const relayout = () => {
     const width = root.clientWidth;
@@ -88,7 +88,7 @@ export function justified(root, items, tile, opts = {}) {
 export function masonry(root, items, tile, opts = {}) {
   const gap = gapOf(opts);
   const min = COLUMN_WIDTHS[opts.density] ?? COLUMN_WIDTHS.normal;
-  const tiles = items.map(item => maybeCredit(tile(item), item, opts));
+  const tiles = items.map(item => maybeCaption(tile(item), item, opts));
 
   const relayout = () => {
     const width = root.clientWidth;
@@ -128,7 +128,7 @@ export function grid(root, items, tile, opts = {}) {
   const tiles = items.map((item, i) => {
     const node = tile(item);
     if (opts.crop !== 'fill') node.style.aspectRatio = ratio(items[i]);
-    return maybeCredit(node, item, opts);
+    return maybeCaption(node, item, opts);
   });
   root.append(...tiles);
   return { relayout() {}, destroy() { root.replaceChildren(); } };
@@ -145,7 +145,7 @@ export function featured(root, items, tile, opts = {}) {
   root.append(...items.map((item, i) => {
     const node = tile(item);
     node.classList.add('pf-size-' + (item.tile || 'normal'));
-    return maybeCredit(node, item, opts);
+    return maybeCaption(node, item, opts);
   }));
   return { relayout() {}, destroy() { root.replaceChildren(); } };
 }
@@ -158,11 +158,20 @@ export function horizontal(root, items, tile, opts = {}) {
   strip.className = 'pf-strip';
   strip.style.gap = gap + 'px';
   // Fill exactly the space left in the viewport under the header and the page
-  // chrome, so a picture is seen whole with no page scrolling.
-  const avail = () => Math.max(240, window.innerHeight - root.getBoundingClientRect().top - 8);
+  // chrome, so a picture is seen whole with no page scrolling. On a narrow
+  // (mobile) screen, the tallest row that fits the viewport's height can
+  // still make a wide/landscape picture wider than the screen itself —
+  // seen whole would then take a sideways swipe nobody is told to make. So
+  // the shared row height is also capped to whatever keeps the widest
+  // picture in the set no wider than the viewport.
+  const widestRatio = Math.max(...items.map(ratio));
+  const avail = () => Math.min(
+    Math.max(240, window.innerHeight - root.getBoundingClientRect().top - 8),
+    window.innerWidth / widestRatio
+  );
   strip.style.setProperty('--pf-strip-h', avail() + 'px');
   items.forEach((item, i) => {
-    const node = withCredit(tile(item), item);
+    const node = maybeCaption(tile(item), item, opts);
     node.style.height = '100%';
     node.style.width = Math.round(avail() * ratio(item)) + 'px';
     strip.appendChild(node);
@@ -223,7 +232,7 @@ export function fullscreen(root, items, tile, opts = {}) {
   const frames = items.map(item => {
     const frame = document.createElement('div');
     frame.className = 'pf-screen';
-    const node = withCredit(tile(item), item);
+    const node = maybeCaption(tile(item), item, opts);
     // As large as the screen allows, but never past the picture's own size.
     const img = node.querySelector('img');
     if (img && item.width > 0 && item.height > 0) {

@@ -7,7 +7,7 @@
 // lightbox is PhotoSwipe (public/vendor/photoswipe), with video slides handled
 // here. A gallery set to the slideshow layout plays in place and has no lightbox.
 import PhotoSwipeLightbox from '/vendor/photoswipe/photoswipe-lightbox.esm.min.js';
-import { LAYOUTS } from '/js/layouts.js?v=11';
+import { LAYOUTS } from '/js/layouts.js?v=13';
 
 const root = document.getElementById('portfolio');
 
@@ -343,7 +343,7 @@ function buildViewToggle(onToggleGrid, onFullscreen) {
 function renderGalleryBody(container, gallery, layoutName) {
   const options = gallery.options || {};
   const media = gallery.items.filter(i => i.type !== 'header');
-  const lightbox = layoutName === 'slideshow' ? null : createLightbox(media);
+  const lightbox = layoutName === 'slideshow' ? null : createLightbox(media, options);
   const tiles = new Map();
   const instances = [];
 
@@ -435,6 +435,16 @@ function renderGallery(gallery, opts = {}) {
 
   const views = galleryViews(gallery);
   let grid = readView();
+  // A visitor who hasn't chosen a view yet (no ?view= and no remembered
+  // choice) gets the flat grid on a phone-sized screen regardless of the
+  // gallery's configured layout. Horizontal (swipe sideways to see the rest
+  // of a picture), featured/fullscreen (meant to fill a large screen) and
+  // slideshow all assume more room than a phone has; grid's plain vertical
+  // scroll, with a tap opening the same full-screen slide-through lightbox,
+  // is the one layout that was never designed around desktop in particular.
+  if (!new URLSearchParams(location.search).get('view') && views.default !== views.grid && window.innerWidth <= 720) {
+    grid = true;
+  }
 
   const body = el('div', 'pf-gallery-body');
   const hasPictures = gallery.items.some(i => i.type !== 'header');
@@ -466,7 +476,9 @@ function renderGallery(gallery, opts = {}) {
 
 // --- Lightbox ---
 
-function createLightbox(media) {
+function createLightbox(media, opts = {}) {
+  // "None" hides the caption everywhere, the lightbox included.
+  const showCaption = opts.captions !== 'none';
   const lightbox = new PhotoSwipeLightbox({
     dataSource: media.map(item => (item.type === 'video'
       ? { type: 'video', item, width: item.width || 1920, height: item.height || 1080 }
@@ -476,7 +488,7 @@ function createLightbox(media) {
         width: item.width || 1600,
         height: item.height || 1200,
         alt: item.title || '',
-        description: item.description,
+        description: showCaption ? item.description : undefined,
       })),
     bgOpacity: 0.95,
     pswpModule: () => import('/vendor/photoswipe/photoswipe.esm.min.js'),

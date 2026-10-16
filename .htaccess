@@ -21,6 +21,9 @@ RewriteRule (^|/)\.(?!well-known(/|$)) - [F]
 # the exact version, which tells an attacker which fixes a site is missing.
 RewriteRule ^[^/]+\.md$ - [F]
 
+# Deploy logs disclose the running version and deploy timing.
+RewriteRule ^[^/]+\.log$ - [F]
+
 # Local development tooling (tools/dev-router.php serves files under php -S).
 RewriteRule ^tools/ - [F]
 

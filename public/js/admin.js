@@ -1977,16 +1977,25 @@ document.addEventListener('DOMContentLoaded', () => {
   const thumbTime = $('thumb-time');
   const thumbCanvas = $('thumb-canvas');
   const thumbCtx = thumbCanvas.getContext('2d', { willReadFrequently: true });
-  let thumbGid = null, thumbVideoId = null;
+  let thumbGid = null, thumbVideoId = null, thumbSaveFn = null;
 
   function openThumbForItem(videoId) {
-    thumbGid = contentGid; thumbVideoId = videoId;
+    thumbGid = contentGid; thumbVideoId = videoId; thumbSaveFn = null;
     const item = contentItems.find(v => v.id === videoId);
     if (item && item.filename) openThumbPicker('/uploads/' + encodeURIComponent(item.filename));
   }
   function openThumbForUploaded(queueItem) {
-    thumbGid = queueItem.galleryId; thumbVideoId = queueItem.uploaded.id;
+    thumbGid = queueItem.galleryId; thumbVideoId = queueItem.uploaded.id; thumbSaveFn = null;
     openThumbPicker('/uploads/' + encodeURIComponent(queueItem.uploaded.filename));
+  }
+  // The portfolio screen (a separate file, no gallery/video ids of its own)
+  // reaches this same scrubber through the bridge, with its own save step —
+  // everything up to "here's a JPEG blob" is identical either way.
+  function openThumbPickerFor(src, saveFn, opts = {}) {
+    thumbGid = null; thumbVideoId = null; thumbSaveFn = saveFn;
+    thumbPicker.querySelector('h3').textContent = opts.title || 'Choose thumbnail frame';
+    $('thumb-capture-btn').textContent = opts.buttonLabel || 'Set Thumbnail';
+    openThumbPicker(src);
   }
   function openThumbPicker(src) {
     thumbVideo.src = src;
@@ -2026,10 +2035,21 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Failed to save thumbnail'); }
   }
   $('thumb-capture-btn').addEventListener('click', async () => {
-    const btn = $('thumb-capture-btn'); btn.disabled = true; btn.textContent = 'Saving…';
-    try { const blob = await captureFrameAsJpegBlob(thumbVideo); await uploadThumbnailBlob(thumbGid, thumbVideoId, blob); closeThumbPicker(); if (contentGid === thumbGid) loadContent(); toast('Thumbnail set'); }
+    const btn = $('thumb-capture-btn'); const savedLabel = btn.textContent; btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const blob = await captureFrameAsJpegBlob(thumbVideo);
+      const isPortfolio = !!thumbSaveFn;
+      if (isPortfolio) {
+        await thumbSaveFn(blob);
+      } else {
+        await uploadThumbnailBlob(thumbGid, thumbVideoId, blob);
+        if (contentGid === thumbGid) loadContent();
+      }
+      closeThumbPicker();
+      toast(isPortfolio ? 'Poster set' : 'Thumbnail set');
+    }
     catch (err) { toast(err.message || 'Failed'); }
-    finally { btn.disabled = false; btn.textContent = 'Set Thumbnail'; }
+    finally { btn.disabled = false; btn.textContent = savedLabel; }
   });
   async function autoGenerateVideoThumbnail(video, gid) {
     const v = document.createElement('video'); v.muted = true; v.preload = 'auto'; v.playsInline = true;
@@ -2050,7 +2070,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   $('thumb-cancel-btn').addEventListener('click', closeThumbPicker);
   thumbPicker.addEventListener('click', (e) => { if (e.target === thumbPicker) closeThumbPicker(); });
-  function closeThumbPicker() { thumbPicker.classList.remove('open'); thumbVideo.pause(); thumbVideo.src = ''; thumbVideoId = null; }
+  function closeThumbPicker() { thumbPicker.classList.remove('open'); thumbVideo.pause(); thumbVideo.src = ''; thumbVideoId = null; thumbSaveFn = null; }
 
   // ==========================================================================
   // Captions modal (ported)
@@ -2062,7 +2082,7 @@ document.addEventListener('DOMContentLoaded', () => {
     { code: 'ja', label: '日本語' }, { code: 'ko', label: '한국어' }, { code: 'ar', label: 'العربية' },
     { code: 'hi', label: 'हिन्दी' }, { code: 'ru', label: 'Русский' },
   ];
-  let captionsVideoId = null;
+  let captionsVideoId = null, captionsCtx = null;
   const captionLangSelect = $('caption-lang');
   captionLangSelect.innerHTML = CAPTION_LANGUAGES.map(l => `<option value="${l.code}">${escapeHtml(l.label)} (${l.code})</option>`).join('') + '<option value="__custom__">Other…</option>';
   captionLangSelect.addEventListener('change', () => { $('caption-custom-lang-label').style.display = captionLangSelect.value === '__custom__' ? '' : 'none'; });
@@ -2090,7 +2110,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function openCaptionsModal(videoId) {
-    captionsVideoId = videoId;
+    captionsVideoId = videoId; captionsCtx = null;
     $('caption-upload-status').textContent = ''; $('caption-file-input').value = '';
     captionLangSelect.value = CAPTION_LANGUAGES[0].code; $('caption-custom-lang-label').style.display = 'none';
     $('caption-custom-code').value = ''; $('caption-custom-label').value = '';
@@ -2099,24 +2119,40 @@ document.addEventListener('DOMContentLoaded', () => {
     renderCaptionsList();
     $('captions-modal').hidden = false;
   }
+  // The portfolio screen reaches this same modal through the bridge: its
+  // videos aren't in contentItems and its caption routes take a filename
+  // instead of a video id, so the gallery-specific bits — which item to
+  // show, where to POST/DELETE, what field name the upload goes under, how
+  // to refresh afterward — all come from `ctx` instead of being assumed.
+  function openCaptionsModalFor(ctx) {
+    captionsVideoId = null; captionsCtx = ctx;
+    $('caption-upload-status').textContent = ''; $('caption-file-input').value = '';
+    captionLangSelect.value = CAPTION_LANGUAGES[0].code; $('caption-custom-lang-label').style.display = 'none';
+    $('caption-custom-code').value = ''; $('caption-custom-label').value = '';
+    $('captions-modal-title').textContent = ctx.title || '';
+    renderCaptionsList();
+    $('captions-modal').hidden = false;
+  }
   function renderCaptionsList() {
-    const item = contentItems.find(v => v.id === captionsVideoId);
+    const item = captionsCtx ? captionsCtx.getItem() : contentItems.find(v => v.id === captionsVideoId);
     const captions = (item && item.captions) || [];
     const el = $('captions-list');
     if (!captions.length) { el.innerHTML = `<p class="setting-hint">No captions yet.</p>`; return; }
     el.innerHTML = captions.map(c => `<div class="editable-row"><span class="er-key">${escapeHtml(c.label || c.lang)} <span style="color:var(--text-5);">(${escapeHtml(c.lang)})</span></span><button class="btn-icon caption-track-remove" data-lang="${escapeHtml(c.lang)}">×</button></div>`).join('');
   }
-  $('captions-close-btn').addEventListener('click', () => { $('captions-modal').hidden = true; captionsVideoId = null; });
-  $('captions-modal').querySelector('.modal-backdrop').addEventListener('click', () => { $('captions-modal').hidden = true; });
+  $('captions-close-btn').addEventListener('click', () => { $('captions-modal').hidden = true; captionsVideoId = null; captionsCtx = null; });
+  $('captions-modal').querySelector('.modal-backdrop').addEventListener('click', () => { $('captions-modal').hidden = true; captionsVideoId = null; captionsCtx = null; });
   $('captions-list').addEventListener('click', async (e) => {
-    const btn = e.target.closest('.caption-track-remove'); if (!btn || !captionsVideoId) return;
+    const btn = e.target.closest('.caption-track-remove'); if (!btn || (!captionsVideoId && !captionsCtx)) return;
     const lang = btn.dataset.lang;
     if (!await confirmModal({ title: 'Remove caption', message: `Remove the "${lang}" caption track?`, okText: 'Remove', danger: true })) return;
-    const res = await fetch(`/api/admin/galleries/${contentGid}/videos/${captionsVideoId}/captions/${encodeURIComponent(lang)}`, { method: 'DELETE' });
-    if (res.ok) { await loadContent(); renderCaptionsList(); } else $('caption-upload-status').textContent = 'Could not remove caption.';
+    const url = captionsCtx ? `${captionsCtx.deleteBase}/${encodeURIComponent(lang)}` : `/api/admin/galleries/${contentGid}/videos/${captionsVideoId}/captions/${encodeURIComponent(lang)}`;
+    const res = await fetch(url, { method: 'DELETE' });
+    if (res.ok) { if (captionsCtx) await captionsCtx.onChange(); else await loadContent(); renderCaptionsList(); }
+    else $('caption-upload-status').textContent = 'Could not remove caption.';
   });
   $('caption-upload-btn').addEventListener('click', async () => {
-    if (!captionsVideoId) return;
+    if (!captionsVideoId && !captionsCtx) return;
     const file = $('caption-file-input').files[0];
     if (!file) { $('caption-upload-status').textContent = 'Choose a .vtt file first.'; return; }
     let lang, label;
@@ -2124,11 +2160,15 @@ document.addEventListener('DOMContentLoaded', () => {
       lang = $('caption-custom-code').value.trim().toLowerCase(); label = $('caption-custom-label').value.trim();
       if (!/^[a-z]{2,3}(-[a-z]{2,4})?$/.test(lang)) { $('caption-upload-status').textContent = 'Enter a valid code (e.g. en or pt-br).'; return; }
     } else { lang = captionLangSelect.value; const k = CAPTION_LANGUAGES.find(l => l.code === lang); label = k ? k.label : lang.toUpperCase(); }
-    const fd = new FormData(); fd.append('caption', file); fd.append('lang', lang); fd.append('label', label);
+    const fd = new FormData(); fd.append(captionsCtx ? captionsCtx.fileField : 'caption', file); fd.append('lang', lang); fd.append('label', label);
     $('caption-upload-status').textContent = 'Uploading…';
-    const res = await fetch(`/api/admin/galleries/${contentGid}/videos/${captionsVideoId}/captions`, { method: 'POST', body: fd });
-    if (res.ok) { $('caption-file-input').value = ''; $('caption-upload-status').textContent = 'Caption added.'; await loadContent(); renderCaptionsList(); }
-    else { const e = await res.json().catch(() => ({})); $('caption-upload-status').textContent = e.error || 'Upload failed.'; }
+    const url = captionsCtx ? captionsCtx.uploadUrl : `/api/admin/galleries/${contentGid}/videos/${captionsVideoId}/captions`;
+    const res = await fetch(url, { method: 'POST', body: fd });
+    if (res.ok) {
+      $('caption-file-input').value = ''; $('caption-upload-status').textContent = 'Caption added.';
+      if (captionsCtx) await captionsCtx.onChange(); else await loadContent();
+      renderCaptionsList();
+    } else { const e = await res.json().catch(() => ({})); $('caption-upload-status').textContent = e.error || 'Upload failed.'; }
   });
 
   // ==========================================================================
@@ -2790,6 +2830,8 @@ document.addEventListener('DOMContentLoaded', () => {
     escapeHtml,
     setScreen,
     captureFrameAsJpegBlob,
+    openThumbPickerFor,
+    openCaptionsModalFor,
     showEmailTestResult,
     showApiTokenModal,
     // One file straight into a portfolio folder, chunked like the upload queue

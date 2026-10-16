@@ -206,6 +206,48 @@ function isSetupComplete() {
     return getAdminCredentials() !== null;
 }
 
+define('PASSWORD_RESET_PATH', DATA_DIR . '/password-reset.json');
+define('PASSWORD_RESET_TTL', 3600);
+define('PASSWORD_MIN_LEN', 8);
+
+function adminPasswordMatches($creds, $password) {
+    if (!empty($creds['passwordHash'])) return password_verify($password, $creds['passwordHash']);
+    if (!empty($creds['plainPassword'])) return hash_equals($creds['plainPassword'], $password);
+    return false;
+}
+
+// Writes the new hash to admin.json, which wins over the legacy .env pair, so
+// an install still on ADMIN_PASSWORD moves off it the first time it changes.
+// passwordChangedAt retires every session older than the change.
+function saveAdminPassword($email, $password) {
+    $config = jsonRead(ADMIN_CONFIG_PATH) ?: [];
+    $config['email'] = $email;
+    $config['passwordHash'] = password_hash($password, PASSWORD_BCRYPT);
+    $config['passwordChangedAt'] = time();
+    $config['createdAt'] = $config['createdAt'] ?? date('c');
+    jsonWrite(ADMIN_CONFIG_PATH, $config);
+    @unlink(PASSWORD_RESET_PATH);
+}
+
+// A logged-in session is only good if it was established after the last
+// password change, so resetting a forgotten password also signs out whoever
+// else was holding a session.
+function isAdminSession() {
+    if (empty($_SESSION['authenticated'])) return false;
+    $config = jsonRead(ADMIN_CONFIG_PATH);
+    $changed = (int)($config['passwordChangedAt'] ?? 0);
+    return !$changed || (int)($_SESSION['authAt'] ?? 0) >= $changed;
+}
+
+// Reset links need a real public address: building one from the request's Host
+// header would let anyone aim the emailed link at a site of their choosing.
+function passwordResetBaseUrl() {
+    $base = rtrim((string)(getEmailConfig()['baseUrl'] ?? ''), '/');
+    if (!preg_match('#^https?://#i', $base)) return null;
+    if (preg_match('#^https?://(localhost|127\.|\[::1\])#i', $base)) return null;
+    return $base;
+}
+
 // Session
 ini_set('session.save_path', DATA_DIR . '/sessions');
 ini_set('session.gc_maxlifetime', 7 * 24 * 3600);
@@ -225,6 +267,7 @@ $sessionPath = '/' . trim(preg_replace('#^.*?/api/#', '/api/', strtok($_SERVER['
 $createsSession = ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST'
     && ($sessionPath === '/api/auth/setup'
         || $sessionPath === '/api/auth/login'
+        || $sessionPath === '/api/auth/change-password'
         || substr($sessionPath, -7) === '/unlock');
 if (isset($_COOKIE[session_name()]) || $createsSession) {
     session_start();
@@ -340,7 +383,7 @@ function requireAuth() {
     // Browser path: session cookie set by /api/auth/login. Release the session
     // lock once auth is confirmed (we don't write to it here) so concurrent
     // requests sharing the same cookie aren't serialized by PHP's file lock.
-    if (!empty($_SESSION['authenticated'])) { session_write_close(); return; }
+    if (isAdminSession()) { session_write_close(); return; }
 
     // Programmatic path: Authorization: Bearer <API_TOKEN>. Only active when
     // API_TOKEN is defined in .env (empty value disables the Bearer path).
@@ -1532,8 +1575,20 @@ migrateIfNeeded();
 // the admin to drive processing. Suitable for cron. Shares the web route's
 // lock, so the two never run GD at the same time.
 if (PHP_SAPI === 'cli') {
+    // `php index.php admin:reset-password [new-password]`: recovery for installs
+    // that can't send email. Whoever can run it already controls the server.
+    // Prints a generated password when none is given.
+    if (($argv[1] ?? '') === 'admin:reset-password') {
+        $creds = getAdminCredentials();
+        if (!$creds) { fwrite(STDERR, "No admin account yet: open /admin in a browser to create one.\n"); exit(1); }
+        $new = $argv[2] ?? substr(strtr(base64_encode(random_bytes(12)), '+/', 'xy'), 0, 16);
+        if (strlen($new) < PASSWORD_MIN_LEN) { fwrite(STDERR, 'Password must be at least ' . PASSWORD_MIN_LEN . " characters.\n"); exit(1); }
+        saveAdminPassword($creds['email'], $new);
+        echo "Password for {$creds['email']} is now: $new\n";
+        exit(0);
+    }
     if (($argv[1] ?? '') !== 'portfolio:process') {
-        fwrite(STDERR, "Usage: php index.php portfolio:process\n");
+        fwrite(STDERR, "Usage: php index.php portfolio:process | admin:reset-password [new-password]\n");
         exit(1);
     }
     do {
@@ -1574,7 +1629,7 @@ $params = [];
 // Setup check — tells the admin UI if first-run setup is needed
 if ($method === 'GET' && $uri === '/api/auth/check') {
     respond([
-        'authenticated' => !empty($_SESSION['authenticated']),
+        'authenticated' => isAdminSession(),
         'setupRequired' => !isSetupComplete(),
     ]);
 }
@@ -1621,6 +1676,7 @@ if ($method === 'POST' && $uri === '/api/auth/setup') {
     }
 
     $_SESSION['authenticated'] = true;
+    $_SESSION['authAt'] = time();
     respond(['ok' => true, 'gitInitialized' => !empty($gitLog)]);
 }
 
@@ -1644,10 +1700,89 @@ if ($method === 'POST' && $uri === '/api/auth/login') {
 
     if ($match) {
         $_SESSION['authenticated'] = true;
+        $_SESSION['authAt'] = time();
         respond(['ok' => true]);
     } else {
         respondError('Invalid credentials', 401);
     }
+}
+
+// Change the password from inside the app. Needs the current one even with a
+// valid session, so an unattended browser can't be used to lock the owner out.
+if ($method === 'POST' && $uri === '/api/auth/change-password') {
+    requireAuth();
+    rateLimitCheck('chpw:' . ($_SERVER['REMOTE_ADDR'] ?? ''), 5, 300);
+    $input = getInput();
+    $creds = getAdminCredentials();
+    if (!$creds || !adminPasswordMatches($creds, (string)($input['currentPassword'] ?? ''))) {
+        respondError('Current password is incorrect', 403);
+    }
+    $new = (string)($input['newPassword'] ?? '');
+    if (strlen($new) < PASSWORD_MIN_LEN) respondError('New password must be at least ' . PASSWORD_MIN_LEN . ' characters', 400);
+    saveAdminPassword($creds['email'], $new);
+    // requireAuth released the session lock; reopen it to keep this browser signed in.
+    if (session_status() !== PHP_SESSION_ACTIVE) session_start();
+    $_SESSION['authenticated'] = true;
+    $_SESSION['authAt'] = time();
+    respond(['ok' => true]);
+}
+
+// Forgot password: emails a one-hour link to the admin address. The answer is
+// the same whether or not the address matched, so the form can't be used to
+// probe for it. `emailConfigured` only says whether this install can send one
+// at all, which lets the page point to the command-line reset when it can't.
+if ($method === 'POST' && $uri === '/api/auth/forgot') {
+    rateLimitCheck('forgot:' . ($_SERVER['REMOTE_ADDR'] ?? ''), 5, 900);
+    $input = getInput();
+    $email = strtolower(trim((string)($input['email'] ?? '')));
+    $creds = getAdminCredentials();
+    $base = passwordResetBaseUrl();
+    $cfg = getEmailConfig();
+    $canSend = $base && ($cfg['resendApiKey'] || $cfg['host'] || $cfg['from']);
+    if ($canSend && $creds && $email !== '' && hash_equals(strtolower($creds['email']), $email)) {
+        $token = bin2hex(random_bytes(32));
+        jsonWrite(PASSWORD_RESET_PATH, [
+            'hash' => hash('sha256', $token),
+            'expires' => time() + PASSWORD_RESET_TTL,
+        ]);
+        $link = $base . '/admin?reset=' . $token;
+        $site = siteName() ?: 'your site';
+        try {
+            sendEmail(
+                $creds['email'],
+                'Reset your admin password',
+                "Someone asked to reset the admin password for $site.\n\nOpen this link within an hour to choose a new one:\n$link\n\nIf this wasn't you, ignore this email; your password is unchanged.",
+                emailShell([
+                    'title' => 'Reset your password',
+                    'lead'  => 'Someone asked to reset the admin password for <strong style="color:#1a1a1a;">' . escHtml($site) . '</strong>.',
+                    'cta'   => ['label' => 'Choose a new password', 'url' => $link],
+                    'note'  => 'This link works for one hour. If this wasn\'t you, ignore this email; your password is unchanged.',
+                ])
+            );
+        } catch (Exception $e) {
+            @unlink(PASSWORD_RESET_PATH);
+        }
+    }
+    respond(['ok' => true, 'emailConfigured' => (bool)$canSend]);
+}
+
+// Finish a reset with the emailed token. The token is single-use and only its
+// hash is stored.
+if ($method === 'POST' && $uri === '/api/auth/reset') {
+    rateLimitCheck('reset:' . ($_SERVER['REMOTE_ADDR'] ?? ''), 10, 900);
+    $input = getInput();
+    $token = (string)($input['token'] ?? '');
+    $new = (string)($input['password'] ?? '');
+    $stored = jsonRead(PASSWORD_RESET_PATH);
+    if (!$stored || $token === '' || (int)($stored['expires'] ?? 0) < time()
+        || !hash_equals((string)($stored['hash'] ?? ''), hash('sha256', $token))) {
+        respondError('This reset link is invalid or has expired. Request a new one.', 400);
+    }
+    if (strlen($new) < PASSWORD_MIN_LEN) respondError('Password must be at least ' . PASSWORD_MIN_LEN . ' characters', 400);
+    $creds = getAdminCredentials();
+    if (!$creds) respondError('Setup required', 400);
+    saveAdminPassword($creds['email'], $new);
+    respond(['ok' => true]);
 }
 
 if ($method === 'POST' && $uri === '/api/auth/logout') {
@@ -5795,7 +5930,7 @@ function portfolioGalleryIsPublic($cat, $gal) {
 // The admin sees every gallery, so a locked one can be checked without
 // typing its password.
 function portfolioIsUnlocked($galleryId) {
-    return !empty($_SESSION['pfUnlocked'][$galleryId]) || !empty($_SESSION['authenticated']);
+    return !empty($_SESSION['pfUnlocked'][$galleryId]) || isAdminSession();
 }
 
 function portfolioGallerySummary($cat, $gal) {

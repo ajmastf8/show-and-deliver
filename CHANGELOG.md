@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.2.8 — 2026-10-15
+- **You can now recover and change the admin password.** The login page has a **Forgot password?** link that emails a one-hour, single-use reset link to the admin address (it needs email set up under Settings, with a real Base URL). A **Password** link in the top bar changes it from inside the app. Either way, every other signed-in browser is signed out, so resetting a password you suspect is compromised actually locks the other party out.
+- For sites that can't send email, `php index.php admin:reset-password [new-password]` resets it from the command line (it prints a random one if you don't give one). Run it as the same user the web server runs as, so the account file stays writable.
+- Installs still using `ADMIN_PASSWORD` in `.env` move to the in-app account the first time the password changes.
+
 ## 2.2.7 — 2026-10-15
 - **Faster first load.** The public site no longer starts a PHP session for every visitor and bot. Sessions begin only when you log in or unlock a protected gallery (or already carry a session cookie), and read-only requests release the session lock immediately, so the header and portfolio data load in parallel instead of queuing. Old session files are pruned automatically (at most once a day) when someone logs in or unlocks a gallery.
 - The Google Fonts stylesheet no longer blocks the first paint; the page shows in the fallback font until Open Sans arrives.

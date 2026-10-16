@@ -137,6 +137,10 @@ code, kbd, samp { font-family: inherit; font-size: inherit; }
 .auth-card input:focus { outline: none; border-color: var(--accent); }
 .auth-card .btn-primary { width: 100%; justify-content: center; margin-top: 4px; }
 .error-text { color: var(--danger); font-size: 13px; margin: 10px 0 0; min-height: 16px; }
+.error-text.ok { color: var(--text-4); }
+.auth-alt { margin: 14px 0 0; text-align: center; font-size: 13px; }
+.auth-alt a { color: var(--text-5); }
+.auth-alt a:hover { color: var(--accent); }
 
 /* ==========================================================================
    Top bar

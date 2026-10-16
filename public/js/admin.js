@@ -168,21 +168,29 @@ document.addEventListener('DOMContentLoaded', () => {
     try { data = await (await fetch('/api/auth/check')).json(); }
     catch (_) { return; }
     if (data.setupRequired) {
-      show($('auth-setup')); hide($('auth-login')); hide($('app'));
+      showAuth('auth-setup');
       return;
     }
     if (data.authenticated) {
-      hide($('auth-setup')); hide($('auth-login')); show($('app'));
+      showAuth(null); show($('app'));
       await Promise.all([loadData(), loadHeaderConfig()]);
       renderAll();
       // Come back to whichever side of the app you were last working on.
       if (lastTab() === 'portfolio') setScreen('portfolio');
+    } else if (resetToken()) {
+      showAuth('auth-reset');
     } else {
-      hide($('auth-setup')); show($('auth-login')); hide($('app'));
+      showAuth('auth-login');
     }
   }
   function show(el) { el.hidden = false; }
   function hide(el) { el.hidden = true; }
+  // One signed-out screen at a time (or none, once the app itself is showing).
+  function showAuth(id) {
+    ['auth-setup', 'auth-login', 'auth-forgot', 'auth-reset'].forEach(n => { $(n).hidden = n !== id; });
+    $('app').hidden = true;
+  }
+  function resetToken() { return new URLSearchParams(location.search).get('reset') || ''; }
 
   $('setup-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -207,6 +215,77 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     if (res.ok) checkAuth();
     else $('login-error').textContent = 'Invalid credentials';
+  });
+
+  // Password recovery: the emailed link lands here as /admin?reset=<token>.
+  $('forgot-link').addEventListener('click', (e) => {
+    e.preventDefault();
+    $('forgot-msg').textContent = ''; $('forgot-msg').classList.remove('ok');
+    showAuth('auth-forgot');
+  });
+  document.querySelectorAll('.back-to-login').forEach(a => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (resetToken()) history.replaceState(null, '', location.pathname);
+    showAuth('auth-login');
+  }));
+
+  $('forgot-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = $('forgot-msg');
+    msg.classList.remove('ok'); msg.textContent = '';
+    const res = await fetch('/api/auth/forgot', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: e.target.email.value.trim() }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { msg.textContent = d.error || 'Something went wrong. Try again.'; return; }
+    msg.classList.add('ok');
+    msg.textContent = d.emailConfigured
+      ? 'If that address is the admin account, a reset link is on its way. It works for one hour.'
+      : 'This site can\'t send email yet. Ask whoever hosts it to run "php index.php admin:reset-password", or set up email under Settings once you\'re in.';
+  });
+
+  $('reset-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target, err = $('reset-error');
+    err.textContent = '';
+    if (f.password.value !== f.confirmPassword.value) { err.textContent = 'Passwords do not match'; return; }
+    const res = await fetch('/api/auth/reset', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: resetToken(), password: f.password.value }),
+    });
+    if (res.ok) {
+      history.replaceState(null, '', location.pathname);
+      f.reset();
+      showAuth('auth-login');
+      $('login-error').textContent = 'Password updated. Log in with the new one.';
+    } else {
+      const d = await res.json().catch(() => ({}));
+      err.textContent = d.error || 'Could not reset the password';
+    }
+  });
+
+  // Change password (signed in).
+  function closePasswordModal() { $('password-modal').hidden = true; }
+  $('account-password').addEventListener('click', () => {
+    $('password-form').reset();
+    $('password-msg').textContent = '';
+    $('password-modal').hidden = false;
+    $('password-form').currentPassword.focus();
+  });
+  $('password-cancel').addEventListener('click', closePasswordModal);
+  $('password-modal').querySelector('.modal-backdrop').addEventListener('click', closePasswordModal);
+  $('password-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target, msg = $('password-msg');
+    msg.textContent = '';
+    if (f.newPassword.value !== f.confirmPassword.value) { msg.textContent = 'New passwords do not match'; return; }
+    const res = await fetch('/api/auth/change-password', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: f.currentPassword.value, newPassword: f.newPassword.value }),
+    });
+    if (res.ok) { closePasswordModal(); toast('Password changed'); }
+    else { const d = await res.json().catch(() => ({})); msg.textContent = d.error || 'Could not change the password'; }
   });
 
   // ==========================================================================

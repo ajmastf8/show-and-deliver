@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/admin.css?v=35">
+  <link rel="stylesheet" href="/css/admin.css?v=36">
 </head>
 <body>
 
@@ -32,6 +32,31 @@
       <input type="password" name="password" placeholder="Password" required autocomplete="current-password">
       <button type="submit" class="btn-primary">Login</button>
       <p id="login-error" class="error-text"></p>
+      <p class="auth-alt"><a href="#" id="forgot-link">Forgot password?</a></p>
+    </form>
+  </section>
+
+  <!-- ============ Forgot password ============ -->
+  <section id="auth-forgot" class="auth-screen" hidden>
+    <form id="forgot-form" class="auth-card">
+      <h2>Reset password</h2>
+      <p class="hint">Enter the admin email address and we'll send a link to choose a new password.</p>
+      <input type="email" name="email" placeholder="Email" required autocomplete="email">
+      <button type="submit" class="btn-primary">Send reset link</button>
+      <p id="forgot-msg" class="error-text"></p>
+      <p class="auth-alt"><a href="#" class="back-to-login">Back to login</a></p>
+    </form>
+  </section>
+
+  <!-- ============ Choose a new password (from the emailed link) ============ -->
+  <section id="auth-reset" class="auth-screen" hidden>
+    <form id="reset-form" class="auth-card">
+      <h2>Choose a new password</h2>
+      <input type="password" name="password" placeholder="New password (min 8 characters)" required minlength="8" autocomplete="new-password">
+      <input type="password" name="confirmPassword" placeholder="Confirm new password" required minlength="8" autocomplete="new-password">
+      <button type="submit" class="btn-primary">Set password</button>
+      <p id="reset-error" class="error-text"></p>
+      <p class="auth-alt"><a href="#" class="back-to-login">Back to login</a></p>
     </form>
   </section>
 
@@ -57,6 +82,7 @@
       <div class="topbar-right">
         <button class="topbar-link" id="nav-uploads" hidden>Uploads <span class="accent" id="uploads-count">0</span></button>
         <button class="topbar-link" id="account-theme">Light theme</button>
+        <button class="topbar-link" id="account-password">Password</button>
         <button class="topbar-link" id="account-logout">Logout</button>
         <div class="menu-wrap">
           <button class="btn-primary" id="new-btn">New &#9662;</button>
@@ -148,6 +174,25 @@
   </div>
 
   <!-- ============ Modals ============ -->
+
+  <!-- Change password -->
+  <div id="password-modal" class="modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-inner">
+      <h3>Change password</h3>
+      <p class="sub">You stay signed in here; other devices are signed out.</p>
+      <form id="password-form">
+        <div class="setting-group"><label>Current password</label><input type="password" name="currentPassword" class="setting-input" required autocomplete="current-password"></div>
+        <div class="setting-group"><label>New password</label><input type="password" name="newPassword" class="setting-input" required minlength="8" autocomplete="new-password"></div>
+        <div class="setting-group"><label>Confirm new password</label><input type="password" name="confirmPassword" class="setting-input" required minlength="8" autocomplete="new-password"></div>
+        <p id="password-msg" class="error-text"></p>
+        <div class="modal-actions">
+          <button type="button" id="password-cancel" class="btn-ghost">Cancel</button>
+          <button type="submit" class="btn-primary">Change password</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- New / edit collection sheet -->
   <div id="new-collection-modal" class="modal" hidden>
@@ -437,7 +482,7 @@
   <div id="toast" class="toast"></div>
 
   <script src="/vendor/sortablejs/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=133"></script>
+  <script src="/js/admin.js?v=134"></script>
   <script src="/js/portfolio-admin.js?v=63"></script>
 </body>
 </html>

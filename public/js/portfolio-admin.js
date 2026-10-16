@@ -757,7 +757,8 @@
     const banWalk = ns => (ns || []).forEach(n => { ban.add(n.id); banWalk(n.children); });
     banWalk(g.children);
     const here = g.parentId ? 'gal:' + g.parentId : 'cat:' + g.categoryId;
-    const roots = cats.map(c => {
+    // A top-level gallery holds media only, so it is not a place to file a gallery.
+    const roots = cats.filter(c => c.kind !== 'gallery').map(c => {
       const v = 'cat:' + c.id;
       return `<option value="${esc(v)}" ${v === here ? 'selected' : ''}>▣ ${esc(c.title)} — top level</option>`;
     }).join('');
@@ -768,7 +769,7 @@
       rows.push(`<option value="${esc(v)}" ${v === here ? 'selected' : ''}>${'&nbsp;&nbsp;&nbsp;'.repeat(depth)}↳ ${esc(n.title)}</option>`);
       walk(n.children, depth + 1);
     });
-    cats.forEach(c => walk(c.galleries, 0));
+    cats.filter(c => c.kind !== 'gallery').forEach(c => walk(c.galleries, 0));
     return roots + (rows.length ? `<optgroup label="Inside a gallery">${rows.join('')}</optgroup>` : '');
   }
 
@@ -967,6 +968,8 @@
     const isHome = !!(state.tree?.home && state.tree.home.id === g.id);
     // Strict kinds: a collection holds galleries, a gallery holds media.
     const isCollection = !!(g.children && g.children.length);
+    // A gallery at the top of the Image Library can't become a collection.
+    const isTopLevel = !isHome && !g.parentId && g.categoryId === g.id;
     // Open by default while a gallery is empty (that is when you set it up),
     // then it remembers your choice.
     const open = state.settingsOpen == null ? !g.items.length && !isCollection : state.settingsOpen;
@@ -991,7 +994,7 @@
             <div class="pfa-menu-list">
               ${isCollection ? '' : '<button type="button" id="pfa-add-section">Add section</button>'}
               ${isCollection ? '' : '<button type="button" id="pfa-add-picks">Add from the library</button>'}
-              ${isHome || isCollection || g.itemCount ? '' : '<button type="button" id="pfa-new-subgallery">New gallery (make it a collection)</button>'}
+              ${isHome || isTopLevel || isCollection || g.itemCount ? '' : '<button type="button" id="pfa-new-subgallery">New gallery (make it a collection)</button>'}
               ${isHome || isCollection ? '' : '<button type="button" id="pfa-g-photoshelter-sync">Sync from migration file</button>'}
               ${isHome ? '' : '<button type="button" id="pfa-g-rename">Rename</button>'}
               ${isHome ? '' : `<button type="button" class="danger" id="pfa-g-delete">${isCollection ? 'Delete collection' : 'Delete gallery'}</button>`}

@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.2.13 — 2026-10-16
+- **Fixed: galleries filed under a top-level gallery vanished into a dead end.** A gallery sitting at the top of the Image Library holds pictures only, but nothing stopped you creating or moving a gallery *inside* one. The folder was made, then couldn't be found again, so opening, saving or changing its access all answered "Gallery not found". The server now refuses it with an explanation (use New collection and add galleries to that), the Location picker no longer offers top-level galleries as a destination, and an empty top-level gallery no longer offers "make it a collection". Galleries in collections and categories behave as before.
+
 ## 2.2.12 — 2026-10-16
 - **Private galleries in a collection get their own section.** Open a collection in the admin and its public galleries are listed first, followed by a **Private** divider (with a count) and the private galleries underneath, the same way hidden pictures sit under **Hidden** in a gallery. It's a display grouping only: the stored order and what visitors see are unchanged, and making a gallery public moves it back up. Drag-to-reorder applies to the public galleries; private ones keep their place.
 

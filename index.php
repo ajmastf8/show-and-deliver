@@ -6643,6 +6643,17 @@ function portfolioRequireGallery($gid) {
     return $found;
 }
 
+// A top-level gallery holds media only: its address is /portfolio/<slug>, with
+// no room for a sub-path, so the tree never looks inside it for galleries. A
+// folder filed under one would be created and then be unfindable by id (every
+// later save or move on it answering "Gallery not found"), so refuse it up
+// front. A collection is what holds galleries.
+function portfolioRefuseTopGalleryTarget($target) {
+    if (!empty($target['isTopGallery'])) {
+        respondError("A gallery at the top level of the Image Library holds pictures only. Create a collection (New collection) and add galleries to that instead.", 400);
+    }
+}
+
 function portfolioRequireCategory($cid) {
     foreach (portfolioTree()['categories'] as $cat) {
         if ($cat['id'] === $cid) return $cat;
@@ -6864,12 +6875,14 @@ if ($method === 'POST' && $uri === '/api/admin/portfolio/galleries') {
     $isTopGallery = false;
     if ($parentId !== '') {
         [$cat, $parent] = portfolioRequireGallery($parentId);
+        portfolioRefuseTopGalleryTarget($parent);
         if (!empty($parent['sidecar']['items'])) {
             respondError("A gallery can't hold other galleries — move its media into a gallery first.", 400);
         }
         $targetDir = $parent['dir'];
     } elseif ($categoryId !== '') {
         $cat = portfolioRequireCategory($categoryId);
+        portfolioRefuseTopGalleryTarget($cat);
         $targetDir = $cat['dir'];
     } else {
         $isTopGallery = true;
@@ -6937,6 +6950,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
         $newParent = (string)$input['parentId'];
         if ($newParent !== '') {
             [, $parent] = portfolioRequireGallery($newParent);
+            portfolioRefuseTopGalleryTarget($parent);
             $descendant = [];
             $collect = function ($nodes) use (&$collect, &$descendant) {
                 foreach ($nodes as $n) { $descendant[] = $n['id']; $collect($n['children'] ?? []); }
@@ -6951,6 +6965,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
             if (!empty($input['categoryId']) && $input['categoryId'] !== $cat['id']) {
                 $cat = portfolioRequireCategory((string)$input['categoryId']);
             }
+            portfolioRefuseTopGalleryTarget($cat);
             $targetDir = $cat['dir'];
         }
         if (rtrim(dirname($dir), '/') !== rtrim($targetDir, '/')) {
@@ -6964,6 +6979,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/portfolio/galleries/{gid}', $uri
     // unique among its new siblings.
     if (!array_key_exists('parentId', $input) && !empty($input['categoryId']) && $input['categoryId'] !== $cat['id']) {
         $target = portfolioRequireCategory((string)$input['categoryId']);
+        portfolioRefuseTopGalleryTarget($target);
         $folder = portfolioUniqueChildName($target['dir'], $gal['folder']);
         if (!@rename($dir, $target['dir'] . '/' . $folder)) respondError('Could not move the gallery', 500);
         $dir = $target['dir'] . '/' . $folder;

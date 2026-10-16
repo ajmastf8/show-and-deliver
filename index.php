@@ -1739,7 +1739,16 @@ if ($method === 'POST' && $uri === '/api/auth/forgot') {
     $base = passwordResetBaseUrl();
     $cfg = getEmailConfig();
     $canSend = $base && ($cfg['resendApiKey'] || $cfg['host'] || $cfg['from']);
-    if ($canSend && $creds && $email !== '' && hash_equals(strtolower($creds['email']), $email)) {
+    // Either address the admin controls may ask: the login email, or the
+    // notification address from Settings > Email (what the contact form uses).
+    // The link goes to whichever one was typed.
+    $recipient = null;
+    if ($creds && $email !== '') {
+        foreach ([$creds['email'] ?? '', $cfg['adminEmail'] ?? ''] as $known) {
+            if ($known !== '' && hash_equals(strtolower(trim($known)), $email)) { $recipient = trim($known); break; }
+        }
+    }
+    if ($canSend && $recipient) {
         $token = bin2hex(random_bytes(32));
         jsonWrite(PASSWORD_RESET_PATH, [
             'hash' => hash('sha256', $token),
@@ -1749,7 +1758,7 @@ if ($method === 'POST' && $uri === '/api/auth/forgot') {
         $site = siteName() ?: 'your site';
         try {
             sendEmail(
-                $creds['email'],
+                $recipient,
                 'Reset your admin password',
                 "Someone asked to reset the admin password for $site.\n\nOpen this link within an hour to choose a new one:\n$link\n\nIf this wasn't you, ignore this email; your password is unchanged.",
                 emailShell([
@@ -1761,6 +1770,10 @@ if ($method === 'POST' && $uri === '/api/auth/forgot') {
             );
         } catch (Exception $e) {
             @unlink(PASSWORD_RESET_PATH);
+            error_log('Password reset email failed: ' . $e->getMessage());
+            // Only reachable with the real admin address, so saying so reveals
+            // nothing a failed mail server wasn't already about to.
+            respondError('The reset email could not be sent: ' . $e->getMessage(), 502);
         }
     }
     respond(['ok' => true, 'emailConfigured' => (bool)$canSend]);

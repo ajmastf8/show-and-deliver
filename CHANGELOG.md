@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.2.9 — 2026-10-16
+- **Fixed: the password reset email could silently never arrive.** A reset link was only sent when you typed the exact admin login address, with no hint if you used a different one, and a mail-server failure was swallowed while the page still said the link was on its way. Either admin address now works (the login email, or the notification address from Settings > Email, which the contact form uses), the link goes to the one you typed, and a send failure is logged and shown on the page with the mail server's reason.
+
 ## 2.2.8 — 2026-10-15
 - **You can now recover and change the admin password.** The login page has a **Forgot password?** link that emails a one-hour, single-use reset link to the admin address (it needs email set up under Settings, with a real Base URL). A **Password** link in the top bar changes it from inside the app. Either way, every other signed-in browser is signed out, so resetting a password you suspect is compromised actually locks the other party out.
 - For sites that can't send email, `php index.php admin:reset-password [new-password]` resets it from the command line (it prints a random one if you don't give one). Run it as the same user the web server runs as, so the account file stays writable.

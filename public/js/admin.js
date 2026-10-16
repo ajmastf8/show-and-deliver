@@ -241,7 +241,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!res.ok) { msg.textContent = d.error || 'Something went wrong. Try again.'; return; }
     msg.classList.add('ok');
     msg.textContent = d.emailConfigured
-      ? 'If that address is the admin account, a reset link is on its way. It works for one hour.'
+      ? 'If that address is an admin address for this site, a reset link is on its way. It works for one hour. Check spam too.'
       : 'This site can\'t send email yet. Ask whoever hosts it to run "php index.php admin:reset-password", or set up email under Settings once you\'re in.';
   });
 

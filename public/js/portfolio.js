@@ -7,7 +7,7 @@
 // lightbox is PhotoSwipe (public/vendor/photoswipe), with video slides handled
 // here. A gallery set to the slideshow layout plays in place and has no lightbox.
 import PhotoSwipeLightbox from '/vendor/photoswipe/photoswipe-lightbox.esm.min.js';
-import { LAYOUTS } from '/js/layouts.js?v=13';
+import { LAYOUTS } from '/js/layouts.js?v=14';
 
 const root = document.getElementById('portfolio');
 
@@ -73,6 +73,9 @@ function coverCard(href, cover, title, subtitle) {
     img.src = cover;
     img.alt = '';
     img.loading = 'lazy';
+    // Decode off the main thread so big pictures don't stall painting
+    // (Safari is the one that notices).
+    img.decoding = 'async';
     frame.appendChild(img);
   }
   a.append(frame, el('h3', 'pf-card-title', title));
@@ -241,6 +244,8 @@ function renderHero(hero) {
     const img = el('img');
     img.src = hero.src;
     img.alt = '';
+    img.decoding = 'async';
+    img.fetchPriority = 'high';
     section.appendChild(img);
   }
   if (hero.title || hero.subtitle) {
@@ -362,7 +367,11 @@ function renderGalleryBody(container, gallery, layoutName) {
       const img = el('img');
       img.src = displaySrc;
       img.alt = item.description || item.title || '';
-      img.loading = 'lazy';
+      // The first few are on screen at load: don't make them wait for the lazy
+      // loader, and let the very first one jump the queue. The rest stay lazy.
+      img.loading = index < 3 ? 'eager' : 'lazy';
+      if (index === 0) img.fetchPriority = 'high';
+      img.decoding = 'async';
       node.appendChild(img);
     } else {
       // A video whose poster the admin hasn't captured yet.

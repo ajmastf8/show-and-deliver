@@ -313,6 +313,7 @@ export function slideshow(root, items, tile, opts = {}) {
     } else {
       const img = document.createElement('img');
       img.src = item.proxy || item.src;
+      img.decoding = 'async';
       img.alt = item.description || item.title || '';
       frame.replaceChildren(img);
     }

@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.3.3 — 2026-10-17
+- **Faster first paint, most noticeably in Safari.** Pictures now decode off the main thread (`decoding="async"`) so large images no longer stall painting and scrolling, and the first few pictures on a page load eagerly with the first at high priority instead of waiting for the lazy loader (the rest stay lazy). The page also starts fetching what it needs sooner: the script imports and the header and home-page data are requested from the page head, so they download while the main script is still loading instead of after it.
+
 ## 2.3.2 — 2026-10-16
 - **The old client-delivery API paths work again, as deprecated aliases.** 2.3.0 renamed them with no fallback, which broke Deadline Editor (its Test Connection answered "404 Not found") and would break any cached page. The old paths (`/api/galleries`, `/api/collections`, `/api/admin/galleries/{id}/videos`, `/api/proofing/…`, `/api/packages/…`, and the rest) are now translated to the new ones, the old multipart field `video` and the `videos` response key still work, and a finalize with no `target` is accepted. Every aliased response carries an `X-API-Deprecated` header naming the new path. They will be removed once the app has moved; `GET /api/videos` stays gone.
 

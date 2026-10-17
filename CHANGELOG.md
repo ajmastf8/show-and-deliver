@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.3.4 — 2026-10-17
+- **Creating a client gallery now says why it failed, and two ways of creating one no longer fail on sites that still have old portfolio data.** The New gallery dialog used to show only "Create failed" whatever the server answered; it now shows the server's own message (or the HTTP status), signs you back in if the session had expired, and warns if the gallery was made but couldn't be added to the chosen collection. Pressing **+ Gallery** under a leftover portfolio collection (one from before the portfolio moved to folders) used to do nothing at all, and **Duplicate** on a leftover portfolio gallery was refused with no message; the first now opens the dialog with no collection preselected and the second makes a client gallery copy and reports any refusal.
+
 ## 2.3.3 — 2026-10-17
 - **Faster first paint, most noticeably in Safari.** Pictures now decode off the main thread (`decoding="async"`) so large images no longer stall painting and scrolling, and the first few pictures on a page load eagerly with the first at high priority instead of waiting for the lazy loader (the rest stay lazy). The page also starts fetching what it needs sooner: the script imports and the header and home-page data are requested from the page head, so they download while the main script is still loading instead of after it.
 

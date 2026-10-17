@@ -1382,8 +1382,15 @@ document.addEventListener('DOMContentLoaded', () => {
       closeDrawerForce(); state.centreGalleryId = null; contentGid = null; await loadData(); renderAll(); toast('Gallery deleted');
     } else if (act === 'duplicate') {
       toast('Creating copy…');
-      const res = await fetch('/api/admin/client/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: g.name + ' (copy)', type: g.type }) });
-      if (res.ok && col) {
+      // Always a client gallery: the server refuses any other type, and a copy of
+      // a leftover portfolio gallery would have nowhere to live here.
+      const res = await fetch('/api/admin/client/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: g.name + ' (copy)', type: 'proofing' }) });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast(data.error || `Duplicate failed (HTTP ${res.status})`);
+        return;
+      }
+      if (col && (col.type || 'proofing') === 'proofing') {
         const ng = await res.json();
         const merged = [...(col.galleryIds || []), ng.id];
         await fetch(`/api/admin/client/collections/${col.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: merged }) });
@@ -2340,8 +2347,12 @@ document.addEventListener('DOMContentLoaded', () => {
   function openNewGallery(collectionId) {
     const modal = $('new-gallery-modal');
     $('ng-name').value = 'Client Gallery';
+    // This dialog only makes client galleries. A portfolio collection left over
+    // from before the portfolio moved to folders can't hold one, and offering it
+    // would leave no type selected, so it is ignored rather than preselected.
     const preCol = collectionId ? state.collections.find(c => c.id === collectionId) : null;
-    const initialType = preCol ? (preCol.type || 'proofing') : 'proofing';
+    const initialType = 'proofing';
+    if (preCol && (preCol.type || 'proofing') !== 'proofing') collectionId = '';
     modal.querySelectorAll('input[name="ng-type"]').forEach(r => r.checked = r.value === initialType);
     populateNgCollections(initialType, collectionId);
     ngState = { downloads: false, commenting: false, useCollection: true };
@@ -2364,7 +2375,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('ng-commenting').addEventListener('click', () => { ngState.commenting = !ngState.commenting; $('ng-commenting').classList.toggle('on'); });
   $('ng-create').addEventListener('click', async () => {
     const name = $('ng-name').value.trim(); if (!name) { $('ng-name').focus(); return; }
-    const type = document.querySelector('input[name="ng-type"]:checked').value;
+    const type = 'proofing';
     const colId = $('ng-collection').value;
     const body = { name, type };
     if (type === 'proofing' && (!colId || !ngState.useCollection)) {
@@ -2377,13 +2388,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     $('new-gallery-modal').hidden = true;
     const res = await fetch('/api/admin/client/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!res.ok) { toast('Create failed'); return; }
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) { checkAuth(); return; }
+      toast(data.error || `Create failed (HTTP ${res.status})`);
+      return;
+    }
     const g = await res.json();
+    let filed = true;
     if (colId) {
       const col = state.collections.find(c => c.id === colId);
-      if (col) await fetch(`/api/admin/client/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(col.galleryIds || []), g.id] }) });
+      if (col) {
+        const put = await fetch(`/api/admin/client/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(col.galleryIds || []), g.id] }) });
+        filed = put.ok;
+      }
     }
     await loadData(); renderAll(); openGallery(g.id);
+    if (!filed) { toast('Gallery created, but it could not be added to the collection'); return; }
     toast('Gallery created');
   });
 

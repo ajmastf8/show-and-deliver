@@ -22,13 +22,31 @@
   };
   window.__socialNetworks = Object.keys(SOCIAL).map(k => [k, SOCIAL[k][0]]);
 
+  // The header is painted from the copy saved on the last visit straight away,
+  // then again only if the server's version differs, so a slow API response
+  // never leaves the page without its header.
+  const HEADER_CACHE_KEY = 'sd-header-v1';
+
   async function loadHeader() {
-    let config;
+    let saved = null;
+    try { saved = localStorage.getItem(HEADER_CACHE_KEY); } catch (_) {}
+    if (saved) {
+      try { paintHeader(JSON.parse(saved)); } catch (_) { saved = null; }
+    }
     try {
       const res = await fetch('/api/header');
-      config = await res.json();
-    } catch (e) { return; }
+      if (!res.ok) return;
+      const text = await res.text();
+      if (text === saved) return;
+      const config = JSON.parse(text);
+      try { localStorage.setItem(HEADER_CACHE_KEY, text); } catch (_) {}
+      paintHeader(config);
+    } catch (e) { /* keep whatever is painted */ }
+  }
 
+  let resizeBound = false;
+
+  function paintHeader(config) {
     // Repaint with the saved theme as soon as it arrives (theme.js has already
     // applied whatever was cached from last time).
     if (window.applySiteTheme) window.applySiteTheme(config.theme);
@@ -151,7 +169,7 @@
         if (siteHeader) document.documentElement.style.setProperty('--header-h', siteHeader.getBoundingClientRect().height + 'px');
       };
       setHeaderHeightVar();
-      window.addEventListener('resize', setHeaderHeightVar);
+      if (!resizeBound) { window.addEventListener('resize', setHeaderHeightVar); resizeBound = true; }
 
       const menuBtn = header.querySelector('.mobile-menu-btn');
       if (menuBtn) {

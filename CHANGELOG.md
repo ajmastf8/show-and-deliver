@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.3.5 — 2026-10-18
+- **Fixed: the home page could sit blank for seconds, or tens of seconds, on a busy host.** `/api/header`, `/api/portfolio` and `/api/portfolio/home` rescanned the portfolio folders on every request, which is slow when the host caps CPU, and the page drew nothing until they answered. Their JSON is now cached for 60 seconds (cleared immediately by any change made through the API; folders dropped in over FTP appear within the minute), and one request rebuilds an expired copy while everyone else keeps getting the old one. The browser also paints the header and home page from the copy it saved on the last visit and swaps in the server's only if it changed, and a first-ever visit shows a placeholder instead of a blank page.
+- **Slow requests can now be traced.** Every API response carries a `Server-Timing` header (boot, cache or build, total; `X-Api-Cache` says hit, miss or stale), and any request over 500 ms is appended to `site-data/data/slow-requests.log` (capped at 256 KB).
+
 ## 2.3.4 — 2026-10-17
 - **Creating a client gallery now says why it failed, and two ways of creating one no longer fail on sites that still have old portfolio data.** The New gallery dialog used to show only "Create failed" whatever the server answered; it now shows the server's own message (or the HTTP status), signs you back in if the session had expired, and warns if the gallery was made but couldn't be added to the chosen collection. Pressing **+ Gallery** under a leftover portfolio collection (one from before the portfolio moved to folders) used to do nothing at all, and **Duplicate** on a leftover portfolio gallery was refused with no message; the first now opens the dialog with no collection preselected and the second makes a client gallery copy and reports any refusal.
 

@@ -631,3 +631,18 @@
 .pf-wm-bl { bottom: 4%; left: 4%; }
 .pf-wm-br { bottom: 4%; right: 4%; }
 .pf-wm-center { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+
+/* Shown while the page waits on its data, so a slow response reads as loading
+   instead of a blank page. Gone the moment anything is rendered into the box. */
+#portfolio:empty:not([data-idle])::before {
+  content: '';
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  max-height: 70vh;
+  border-radius: var(--radius-card, 8px);
+  background: linear-gradient(100deg, rgba(128,128,128,.10) 30%, rgba(128,128,128,.20) 50%, rgba(128,128,128,.10) 70%) 0 0 / 200% 100%;
+  animation: pf-skeleton 1.4s ease-in-out infinite;
+}
+@keyframes pf-skeleton { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { #portfolio:empty:not([data-idle])::before { animation: none; } }

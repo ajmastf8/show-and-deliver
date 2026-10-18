@@ -8,6 +8,10 @@
 // BOOTSTRAP: env, paths, sessions, security headers
 // ============================================================
 
+$GLOBALS['reqStart'] = $_SERVER['REQUEST_TIME_FLOAT'] ?? microtime(true);
+$GLOBALS['reqMarks'] = [];
+const API_SLOW_MS = 500;
+
 define('SITE_DATA', __DIR__ . '/site-data');
 define('DATA_DIR', SITE_DATA . '/data');
 define('UPLOADS_DIR', SITE_DATA . '/uploads');
@@ -276,6 +280,13 @@ if (isset($_COOKIE[session_name()]) || $createsSession) {
     if (($_SERVER['REQUEST_METHOD'] ?? '') === 'GET') session_write_close();
 }
 
+timingMark('boot');
+
+// Any write through the API may change what the cached public responses show.
+if (!in_array($_SERVER['REQUEST_METHOD'] ?? 'GET', ['GET', 'HEAD', 'OPTIONS'], true)) {
+    register_shutdown_function('apiCacheClear');
+}
+
 // Delete session files past their lifetime, at most once a day. Bounded so a
 // huge backlog is cleared over several runs instead of stalling one request.
 function pruneStaleSessions() {
@@ -303,7 +314,98 @@ header('Referrer-Policy: strict-origin-when-cross-origin');
 // HELPERS
 // ============================================================
 
+// --- Request timing ---
+// Every API response carries a Server-Timing header (visible in the browser's
+// network panel and readable from script via PerformanceResourceTiming), and
+// any request slower than API_SLOW_MS is appended to a small capped log, so a
+// stall on the live host can be traced instead of guessed at.
+// Record how long the work since the last mark took, under $label.
+function timingMark($label) {
+    $now = microtime(true);
+    $last = $GLOBALS['reqMarks'] ? end($GLOBALS['reqMarks'])[1] : $GLOBALS['reqStart'];
+    $GLOBALS['reqMarks'][] = [$label, $now, round(($now - $last) * 1000, 1)];
+}
+
+function timingHeader() {
+    $total = round((microtime(true) - $GLOBALS['reqStart']) * 1000, 1);
+    $parts = [];
+    foreach ($GLOBALS['reqMarks'] as [$label, , $ms]) $parts[] = "$label;dur=$ms";
+    $parts[] = "total;dur=$total";
+    return [implode(', ', $parts), $total];
+}
+
+function timingLogSlow($total) {
+    if ($total < API_SLOW_MS) return;
+    $log = DATA_DIR . '/slow-requests.log';
+    if (is_file($log) && filesize($log) > 256 * 1024) @rename($log, $log . '.1');
+    $line = date('c') . ' ' . ($_SERVER['REQUEST_METHOD'] ?? '-') . ' ' . ($_SERVER['REQUEST_URI'] ?? '-')
+        . ' ' . $total . 'ms [' . ($GLOBALS['reqTimingHeader'] ?? '') . "]\n";
+    @file_put_contents($log, $line, FILE_APPEND | LOCK_EX);
+}
+
+// --- Public response cache ---
+// /api/header, /api/portfolio and /api/portfolio/home are identical for every
+// visitor but each one rescans the portfolio folders (and rewrites sidecar
+// files) on every request, which is the slow part on a CPU-capped host. Their
+// JSON is kept in site-data/cache for API_CACHE_TTL seconds; a folder dropped in
+// over FTP shows up within that window, and any write through the API
+// (non-GET /api/ request) clears it at once. When the entry has expired, one
+// request rebuilds it while the rest keep getting the stale copy, so a slow
+// rebuild never stalls a visitor.
+const API_CACHE_TTL = 60;
+
+function apiCacheDir() { return SITE_DATA . '/cache'; }
+
+function apiCacheClear() {
+    foreach (glob(apiCacheDir() . '/api-*.json') ?: [] as $f) @unlink($f);
+}
+
+function respondCachedJson($json, $state) {
+    header('Content-Type: application/json');
+    header('X-Api-Cache: ' . $state);
+    [$timing, $total] = timingHeader();
+    $GLOBALS['reqTimingHeader'] = $timing;
+    header('Server-Timing: ' . $timing);
+    timingLogSlow($total);
+    echo $json;
+    exit;
+}
+
+// $build returns the payload array; it runs only on a miss.
+function respondCached($key, callable $build) {
+    $path = apiCacheDir() . "/api-$key.json";
+    $age = is_file($path) ? time() - (int)@filemtime($path) : null;
+    if ($age !== null && $age < API_CACHE_TTL) {
+        timingMark('cache');
+        respondCachedJson(file_get_contents($path), 'hit');
+    }
+    if (!is_dir(apiCacheDir())) @mkdir(apiCacheDir(), 0755, true);
+    $lock = @fopen("$path.lock", 'c');
+    $mine = $lock && flock($lock, LOCK_EX | LOCK_NB);
+    if (!$mine && $age !== null) {
+        timingMark('cache');
+        respondCachedJson(file_get_contents($path), 'stale');
+    }
+    if ($lock && !$mine) {
+        // Nothing cached yet and someone else is building it: wait, then use theirs.
+        flock($lock, LOCK_EX);
+        if (is_file($path)) {
+            timingMark('cache');
+            respondCachedJson(file_get_contents($path), 'hit');
+        }
+    }
+    $json = json_encode($build());
+    timingMark('build');
+    $tmp = $path . '.' . getmypid() . '.tmp';
+    if (@file_put_contents($tmp, $json) !== false) @rename($tmp, $path);
+    respondCachedJson($json, 'miss');
+}
+
 function respond($data, $status = 200) {
+    [$timing, $total] = timingHeader();
+    $GLOBALS['reqTimingHeader'] = $timing;
+    header('Server-Timing: ' . $timing);
+    timingLogSlow($total);
     // Legacy callers (see legacyClientRoute) still read `videos`.
     if (!empty($GLOBALS['legacyApi']) && is_array($data) && isset($data['items']) && !isset($data['videos'])) $data['videos'] = $data['items'];
     http_response_code($status);
@@ -6124,14 +6226,16 @@ function portfolioHome() {
 // --- Public routes ---
 
 if ($method === 'GET' && $uri === '/api/portfolio') {
-    respond(['categories' => portfolioPublicCategories(), 'index' => readThemeConfig()['index']]);
+    respondCached('portfolio', fn() => ['categories' => portfolioPublicCategories(), 'index' => readThemeConfig()['index']]);
 }
 
 // The home page. Null means nothing has been put there yet, and the page falls
 // back to what it showed before the portfolio existed.
 if ($method === 'GET' && $uri === '/api/portfolio/home') {
-    $found = portfolioHome();
-    respond(['gallery' => $found ? portfolioGalleryPayload(...$found) : null]);
+    respondCached('home', function () {
+        $found = portfolioHome();
+        return ['gallery' => $found ? portfolioGalleryPayload(...$found) : null];
+    });
 }
 
 if ($method === 'GET' && matchRoute('/api/portfolio/c/{cat}', $uri, $params)) {
@@ -8090,9 +8194,11 @@ function readThemeConfig() {
 
 // GET header config (public — used by all pages)
 if ($method === 'GET' && $uri === '/api/header') {
-    $config = expandPortfolioNav(readHeaderConfig());
-    $config['theme'] = readThemeConfig();
-    respond($config);
+    respondCached('header', function () {
+        $config = expandPortfolioNav(readHeaderConfig());
+        $config['theme'] = readThemeConfig();
+        return $config;
+    });
 }
 
 // The admin's own copy of the header config — raw, not run through

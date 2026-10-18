@@ -622,14 +622,35 @@ function renderLocked(catSlug, segments, title) {
 document.addEventListener('DOMContentLoaded', async () => {
   // The homepage shell and the portfolio pages share this script.
   if (!location.pathname.startsWith('/portfolio')) {
+    // Paint the home page from the copy saved on the last visit right away,
+    // then swap in the server's only if it changed, so a slow API response
+    // doesn't leave a blank page.
+    const KEY = 'sd-home-v1';
+    let saved = null;
+    try { saved = localStorage.getItem(KEY); } catch (_) {}
+    const show = gallery => {
+      root.replaceChildren();
+      root.classList.add('pf-home');
+      renderGallery(gallery, { home: true });
+    };
+    if (saved) {
+      try { show(JSON.parse(saved).gallery); } catch (_) { saved = null; root.replaceChildren(); }
+    }
     try {
-      const { gallery } = await load('/api/portfolio/home');
+      const res = await fetch('/api/portfolio/home');
+      if (!res.ok) throw new Error(res.status);
+      const text = await res.text();
+      if (text === saved) return;
+      const { gallery } = JSON.parse(text);
       if (gallery) {
-        root.classList.add('pf-home');
-        renderGallery(gallery, { home: true });
-        return;
+        try { localStorage.setItem(KEY, text); } catch (_) {}
+        show(gallery);
+      } else if (saved) {
+        try { localStorage.removeItem(KEY); } catch (_) {}
+        root.replaceChildren();
       }
     } catch (_) {}
+    if (!root.childElementCount) root.dataset.idle = '1';
     return;
   }
 

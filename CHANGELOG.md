@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.3.6 — 2026-10-18
+- **Removed the scrollbar under the horizontal-scroll layout.** It showed as a bright bar in dark mode. The strip still scrolls by wheel, drag, swipe and arrow keys.
+
 ## 2.3.5 — 2026-10-18
 - **Fixed: the home page could sit blank for seconds, or tens of seconds, on a busy host.** `/api/header`, `/api/portfolio` and `/api/portfolio/home` rescanned the portfolio folders on every request, which is slow when the host caps CPU, and the page drew nothing until they answered. Their JSON is now cached for 60 seconds (cleared immediately by any change made through the API; folders dropped in over FTP appear within the minute), and one request rebuilds an expired copy while everyone else keeps getting the old one. The browser also paints the header and home page from the copy it saved on the last visit and swaps in the server's only if it changed, and a first-ever visit shows a placeholder instead of a blank page.
 - **Slow requests can now be traced.** Every API response carries a `Server-Timing` header (boot, cache or build, total; `X-Api-Cache` says hit, miss or stale), and any request over 500 ms is appended to `site-data/data/slow-requests.log` (capped at 256 KB).

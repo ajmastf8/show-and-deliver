@@ -183,10 +183,13 @@
   height: var(--pf-strip-h, 66vh);
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+  scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
-  padding-bottom: 10px;
 }
+
+/* No scrollbar track: it showed as a bright bar in dark mode. The strip still
+   scrolls by wheel, drag, swipe and arrow keys. */
+.pf-strip::-webkit-scrollbar { display: none; }
 
 .pf-strip .pf-tile {
   flex: 0 0 auto;

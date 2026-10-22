@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.3.7 — 2026-10-22
+- **Captions can now be uploaded as SRT as well as WebVTT, and the Captions dialog has a drop area.** An `.srt` file is converted to WebVTT on upload (no ffmpeg needed), so the player and delivery packages still only ever see `.vtt`. Drop a `.vtt` or `.srt` onto the dialog, or choose one, then pick a language and click Add Caption.
+
 ## 2.3.6 — 2026-10-18
 - **Removed the scrollbar under the horizontal-scroll layout.** It showed as a bright bar in dark mode. The strip still scrolls by wheel, drag, swipe and arrow keys.
 

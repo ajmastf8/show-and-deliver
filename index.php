@@ -629,9 +629,11 @@ function installStaticFfmpeg() {
 define('IMAGE_EXTS', ['jpg', 'jpeg', 'png', 'webp', 'gif']);
 define('VIDEO_EXTS', ['mp4', 'webm', 'mov', 'm4v']);
 define('MEDIA_EXTS', array_merge(VIDEO_EXTS, IMAGE_EXTS));
-// Closed-caption / subtitle sidecar files. WebVTT only — it's the format
-// browsers consume natively via <track>.
+// Closed-caption / subtitle sidecar files. WebVTT is the format browsers
+// consume natively via <track>; SRT is accepted on upload and converted to
+// WebVTT in pure PHP (no ffmpeg on production), so only .vtt is ever stored.
 define('CAPTION_EXT', 'vtt');
+define('CAPTION_UPLOAD_EXTS', ['vtt', 'srt']);
 
 function isImageFile($filename) {
     return in_array(strtolower(pathinfo($filename, PATHINFO_EXTENSION)), IMAGE_EXTS);
@@ -793,6 +795,25 @@ function secondsToVttTs($total) {
     $m = floor($rem / 60);
     $s = $rem - $m * 60;
     return sprintf('%02d:%02d:%06.3f', $h, $m, $s);
+}
+
+// Convert SRT text to WebVTT, or null if it has no cue timing lines. SRT
+// differs only superficially: comma millisecond separator, no header, and
+// numeric cue indexes (which are valid VTT cue identifiers, so left alone).
+function srtToVtt($content) {
+    $content = ltrim($content, "\xEF\xBB\xBF");
+    if (!mb_check_encoding($content, 'UTF-8')) {
+        $content = mb_convert_encoding($content, 'UTF-8', 'Windows-1252');
+    }
+    $content = str_replace(["\r\n", "\r"], "\n", $content);
+    $re = '/^(\s*(?:\d{1,}:)?\d{1,2}:\d{2})[,.](\d{1,3})(\s*-->\s*(?:\d{1,}:)?\d{1,2}:\d{2})[,.](\d{1,3})/m';
+    $count = 0;
+    $out = preg_replace_callback($re, function ($m) {
+        $norm = fn($t) => preg_match('/^\s*\d{1,2}:\d{2}$/', $t) ? '00:' . trim($t) : trim($t);
+        return $norm($m[1]) . '.' . str_pad($m[2], 3, '0') . ' --> ' . $norm(ltrim($m[3], " \t-> ")) . '.' . str_pad($m[4], 3, '0');
+    }, $content, -1, $count);
+    if (!$count) return null;
+    return "WEBVTT\n\n" . trim($out) . "\n";
 }
 
 // Earliest start / latest end (seconds) across all cue timing lines, or null.
@@ -2436,7 +2457,7 @@ if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/items/{i
     if ($file['error'] !== UPLOAD_ERR_OK) respondError('Upload error: ' . $file['error'], 400);
 
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-    if ($ext !== CAPTION_EXT) respondError('Captions must be a .vtt (WebVTT) file', 400);
+    if (!in_array($ext, CAPTION_UPLOAD_EXTS, true)) respondError('Captions must be a .vtt (WebVTT) or .srt file', 400);
     if ($file['size'] > 2 * 1024 * 1024) respondError('Caption file too large (>2MB)', 400);
 
     $lang = strtolower(trim($_POST['lang'] ?? ''));
@@ -2450,9 +2471,12 @@ if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/items/{i
     // Boundary validation: this file is served to browsers and parsed as
     // captions, so confirm it actually starts with the WEBVTT signature
     // (after an optional UTF-8 BOM) rather than trusting the extension.
-    $head = (string)file_get_contents($file['tmp_name'], false, null, 0, 16);
-    if (strncmp(ltrim($head, "\xEF\xBB\xBF"), 'WEBVTT', 6) !== 0) {
-        respondError('File does not look like a valid WebVTT (.vtt) caption file', 400);
+    // SRT is converted to WebVTT further down, after its own validation.
+    if ($ext === CAPTION_EXT) {
+        $head = (string)file_get_contents($file['tmp_name'], false, null, 0, 16);
+        if (strncmp(ltrim($head, "\xEF\xBB\xBF"), 'WEBVTT', 6) !== 0) {
+            respondError('File does not look like a valid WebVTT (.vtt) caption file', 400);
+        }
     }
 
     $videos = readGalleryVideos($params['gid']);
@@ -2480,6 +2504,10 @@ if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/items/{i
     $duration = resolveVideoDuration(UPLOADS_DIR . '/' . ($video['filename'] ?? ''), $video['duration'] ?? 0);
     if (!is_uploaded_file($file['tmp_name'])) respondError('Invalid upload', 400);
     $content = (string)file_get_contents($file['tmp_name']);
+    if ($ext === 'srt') {
+        $content = srtToVtt($content);
+        if ($content === null) respondError('File does not look like a valid SRT (.srt) caption file', 400);
+    }
     [$content, $shiftedHours] = vttAutoShift($content, $duration);
 
     $destName = $video['id'] . '-' . $lang . '-' . time() . '.vtt';

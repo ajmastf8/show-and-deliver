@@ -388,7 +388,7 @@
     <div class="modal-backdrop"></div>
     <div class="modal-inner">
       <h3>Captions <span id="captions-modal-title" style="font-weight:400;color:var(--text-4);"></span></h3>
-      <p class="sub">Upload a WebVTT (.vtt) file per language. Viewers turn captions on with the player's CC button.</p>
+      <p class="sub">Upload a WebVTT (.vtt) or SubRip (.srt) file per language (SRT is converted to WebVTT). Viewers turn captions on with the player's CC button.</p>
       <div id="captions-list" style="display:flex;flex-direction:column;gap:6px;margin-top:12px;"></div>
       <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px;display:flex;flex-direction:column;gap:10px;">
         <label class="setting-group" style="margin:0;">Language
@@ -400,7 +400,10 @@
             <input type="text" id="caption-custom-label" class="setting-input" placeholder="label (e.g. Português)" style="flex:1;">
           </div>
         </label>
-        <input type="file" id="caption-file-input" accept=".vtt,text/vtt" class="setting-input" style="padding:6px;height:auto;">
+        <div id="caption-drop" class="gv-drop" style="display:block;padding:14px;text-align:center;">
+          <div style="font-size:13px;color:var(--text-4);margin-bottom:8px;">Drop a .vtt or .srt file here, or choose one</div>
+          <input type="file" id="caption-file-input" accept=".vtt,.srt,text/vtt,application/x-subrip" class="setting-input" style="padding:6px;height:auto;">
+        </div>
         <div id="caption-upload-status" style="font-size:12px;color:var(--text-4);min-height:16px;"></div>
       </div>
       <div class="modal-actions"><div></div><div class="right">

@@ -2243,10 +2243,21 @@ document.addEventListener('DOMContentLoaded', () => {
     if (res.ok) { if (captionsCtx) await captionsCtx.onChange(); else await loadContent(); renderCaptionsList(); }
     else $('caption-upload-status').textContent = 'Could not remove caption.';
   });
+  const captionDrop = $('caption-drop');
+  captionDrop.addEventListener('dragover', (e) => { e.preventDefault(); captionDrop.classList.add('drag-over'); });
+  captionDrop.addEventListener('dragleave', () => captionDrop.classList.remove('drag-over'));
+  captionDrop.addEventListener('drop', (e) => {
+    e.preventDefault(); captionDrop.classList.remove('drag-over');
+    const file = Array.from(e.dataTransfer.files).find(f => /\.(vtt|srt)$/i.test(f.name));
+    if (!file) { $('caption-upload-status').textContent = 'Only .vtt or .srt files are supported.'; return; }
+    const dt = new DataTransfer(); dt.items.add(file);
+    $('caption-file-input').files = dt.files;
+    $('caption-upload-status').textContent = file.name + ' ready — choose a language and click Add Caption.';
+  });
   $('caption-upload-btn').addEventListener('click', async () => {
     if (!captionsVideoId && !captionsCtx) return;
     const file = $('caption-file-input').files[0];
-    if (!file) { $('caption-upload-status').textContent = 'Choose a .vtt file first.'; return; }
+    if (!file) { $('caption-upload-status').textContent = 'Choose a .vtt or .srt file first.'; return; }
     let lang, label;
     if (captionLangSelect.value === '__custom__') {
       lang = $('caption-custom-code').value.trim().toLowerCase(); label = $('caption-custom-label').value.trim();

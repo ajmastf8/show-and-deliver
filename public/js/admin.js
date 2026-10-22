@@ -1590,17 +1590,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (th && contentGid) { openThumbForItem(th.closest('.admin-video-item').dataset.id); return; }
   });
 
-  // Replace file
+  // Replace file: goes through the same upload queue as drop / Add files, so it
+  // gets the progress row, chunked resume for large files, retries and Pause.
   let replaceVideoId = null;
-  $('replace-file-input').addEventListener('change', () => {
-    const file = $('replace-file-input').files[0];
-    if (!file || !replaceVideoId) return;
-    const fd = new FormData(); fd.append('video', file);
-    const xhr = new XMLHttpRequest();
-    xhr.addEventListener('load', () => { if (xhr.status >= 200 && xhr.status < 300) loadContent(); else toast('Replace failed'); replaceVideoId = null; $('replace-file-input').value = ''; });
-    xhr.addEventListener('error', () => { toast('Replace failed'); replaceVideoId = null; $('replace-file-input').value = ''; });
-    xhr.open('PUT', `/api/admin/galleries/${contentGid}/videos/${replaceVideoId}/replace`);
-    xhr.send(fd);
+  $('replace-file-input').addEventListener('change', (e) => {
+    const file = filterMediaFiles(e.target.files)[0];
+    const vid = replaceVideoId;
+    replaceVideoId = null; e.target.value = '';
+    if (!vid) return;
+    if (!file) { toast('Unsupported file type'); return; }
+    enqueueFiles([file], contentGid, vid);
   });
 
   // ==========================================================================
@@ -1718,14 +1717,14 @@ document.addEventListener('DOMContentLoaded', () => {
   function titleFromFilename(fn) {
     return fn.replace(/\.[^.]+$/, '').replace(/^\d{10,}-/, '').replace(/[_-]/g, ' ').replace(/\s+/g, ' ').trim() || 'Untitled';
   }
-  function enqueueFiles(files, gid) {
+  function enqueueFiles(files, gid, replaceId) {
     gid = gid || state.upload.destination.galleryId;
     if (!gid) { toast('Pick a destination gallery first'); return; }
     files.forEach(file => {
       state.upload.queue.push({
         id: 'u' + Date.now() + Math.random().toString(36).slice(2, 6),
         file, name: file.name, size: file.size, title: titleFromFilename(file.name),
-        galleryId: gid, pct: 0, status: 'waiting', error: '', retries: 0, xhr: null, uploaded: null,
+        galleryId: gid, replaceId: replaceId || null, pct: 0, status: 'waiting', error: '', retries: 0, xhr: null, uploaded: null,
         // Chunked-upload bookkeeping; unused for small multipart uploads.
         uploadId: null, sent: 0, chunkBytes: PREFERRED_CHUNK_BYTES,
       });
@@ -1818,7 +1817,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const uploaded = await xhrSend({
         method: 'POST', url: `/api/admin/uploads/${item.uploadId}/finalize`, item,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ galleryId: item.galleryId, title: item.title }),
+        body: JSON.stringify({ galleryId: item.galleryId, title: item.title, replaceId: item.replaceId }),
       });
       item.uploadId = null;
       item.pct = 100; item.status = 'done'; item.uploaded = uploaded;
@@ -1855,7 +1854,9 @@ document.addEventListener('DOMContentLoaded', () => {
       item.xhr = null; pumpQueue();
     });
     xhr.addEventListener('error', () => { failItem(item, 'Connection dropped at ' + item.pct + '%'); item.xhr = null; pumpQueue(); });
-    xhr.open('POST', `/api/admin/galleries/${item.galleryId}/videos`);
+    xhr.open(item.replaceId ? 'PUT' : 'POST', item.replaceId
+      ? `/api/admin/galleries/${item.galleryId}/videos/${item.replaceId}/replace`
+      : `/api/admin/galleries/${item.galleryId}/videos`);
     xhr.send(fd);
     renderQueues();
   }

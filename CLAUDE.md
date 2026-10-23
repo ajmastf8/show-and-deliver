@@ -198,6 +198,21 @@ site-data/             # Runtime data (gitignored)
   in use by another gallery/collection of the same kind. Galleries and
   collections are separate namespaces (`/gallery/{t}` vs `/collection/{t}`), so
   the same string in both is allowed and harmless.
+- **FTP watch folders.** A gallery may carry an `importFolder` (a single
+  directory name under `site-data/imports/`, validated by
+  `normalizeImportFolder()`, unique per gallery, created when set). Files FTP'd
+  there are *moved* into the library by `syncImportFolder()`, which funnels through
+  `importMediaFile()` -> `registerGalleryItem()` — the same path the manual
+  "Import from server" route uses, so CRC priming and thumbnails stay identical.
+  There is no cron: the sync runs when asked — `POST /api/proofing/{token}/sync`
+  from an open client page (on load, then every 30s while visible) and
+  `POST /api/admin/galleries/{gid}/import-sync` from the open admin gallery. It is
+  throttled, `flock`ed per gallery, and capped per call. A file is only imported
+  once its size matches the previous scan *and* it has been idle ~15s, because FTP
+  writes under the final name mid-transfer. Unreadable images go to
+  `<folder>/_failed/`. The client page shows a "Gallery updated — Refresh" banner
+  when the `version` marker (`galleryVersion()`) changes; the folder name itself
+  is never sent to clients, only `live: true`.
 - **Items** in galleries can be videos or photos, plus section headers. A
   portfolio item may carry a `description` — the caption box rendered under the
   player by `caption-box.js`. It is a portfolio-only feature: the admin exposes

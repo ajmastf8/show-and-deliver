@@ -239,6 +239,7 @@ PUT    /api/admin/client/galleries/{gid}/order                       # {"order":
 GET    /api/admin/client/galleries/{gid}/comments
 POST   /api/admin/client/galleries/{gid}/stats/reset
 POST   /api/admin/client/galleries/{gid}/import                      # from the FTP staging folder
+POST   /api/admin/client/galleries/{gid}/import-sync                 # pull in the gallery's FTP watch folder now
 POST   /api/admin/client/galleries/{gid}/probe                       # re-read metadata
 GET    /api/admin/client/import/files                                # what's waiting in staging
 ```
@@ -300,6 +301,7 @@ credential, and a password (when set) is checked through `unlock`.
 
 ```
 GET  /api/client/galleries/{token}                     # gallery + items + comments
+POST /api/client/galleries/{token}/sync                # import from the FTP watch folder; returns {"version"}
 POST /api/client/galleries/{token}/unlock              # {"password": "..."}
 POST /api/client/galleries/{token}/comments
 POST /api/client/galleries/{token}/send-review         # email the comments to you

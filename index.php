@@ -483,6 +483,39 @@ function normalizeShareToken($raw) {
 
 define('SHARE_TOKEN_RULES', 'Links must be 6-64 characters, using only letters, numbers, dashes and underscores.');
 
+// A gallery's FTP watch folder is a single directory name under IMPORT_DIR. It
+// becomes a filesystem path, so it gets the same treatment as a share token: a
+// closed character set with no slashes or dots, which rules out traversal and
+// the hidden/"_failed" names the importer reserves. Returns the trimmed name,
+// or null if it isn't usable. An empty value means "no watch folder" and is
+// handled by the callers, not here.
+function normalizeImportFolder($raw) {
+    if (!is_string($raw)) return null;
+    $f = trim($raw);
+    if ($f === '' || strlen($f) > 64) return null;
+    if (!preg_match('/^[A-Za-z0-9][A-Za-z0-9_-]*$/', $f)) return null;
+    return $f;
+}
+
+define('IMPORT_FOLDER_RULES', 'Folder names can be up to 64 characters, using only letters, numbers, dashes and underscores.');
+
+// Validate a watch-folder request against the other galleries and create the
+// directory so FTP has somewhere to land. Returns [folder|null, error|null];
+// folder is null for "clear it".
+function resolveImportFolder($raw, $galleryId, array $galleries) {
+    if ($raw === null || (is_string($raw) && trim($raw) === '')) return [null, null];
+    $folder = normalizeImportFolder($raw);
+    if ($folder === null) return [null, IMPORT_FOLDER_RULES];
+    foreach ($galleries as $other) {
+        if (($other['id'] ?? '') !== $galleryId && strcasecmp($other['importFolder'] ?? '', $folder) === 0) {
+            return [null, 'Another gallery is already watching that folder.'];
+        }
+    }
+    $path = IMPORT_DIR . '/' . $folder;
+    if (!is_dir($path) && !@mkdir($path, 0775, true)) return [null, 'Could not create the folder on the server.'];
+    return [$folder, null];
+}
+
 function requireAuth() {
     // Browser path: session cookie set by /api/auth/login. Release the session
     // lock once auth is confirmed (we don't write to it here) so concurrent
@@ -2028,6 +2061,12 @@ if ($method === 'POST' && $uri === '/api/admin/client/galleries') {
         'createdAt' => date('c'),
     ];
 
+    if (!empty($input['importFolder'])) {
+        [$folder, $err] = resolveImportFolder($input['importFolder'], $id, $galleries);
+        if ($err) respondError($err, 400);
+        $gallery['importFolder'] = $folder;
+    }
+
     $dir = ensureGalleryDir($id);
     jsonWrite("$dir/videos.json", []);
     jsonWrite("$dir/comments.json", []);
@@ -2057,6 +2096,11 @@ if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{id}', $uri, $p
     if (isset($input['expiresAt'])) $gallery['expiresAt'] = $input['expiresAt'];
     if (isset($input['active'])) $gallery['active'] = $input['active'];
     if (isset($input['favorite'])) $gallery['favorite'] = $input['favorite'];
+    if (array_key_exists('importFolder', $input)) {
+        [$folder, $err] = resolveImportFolder($input['importFolder'], $gallery['id'], $galleries);
+        if ($err) respondError($err, 400);
+        if ($folder === null) unset($gallery['importFolder']); else $gallery['importFolder'] = $folder;
+    }
     if (!empty($input['regenerateToken'])) {
         $gallery['token'] = generateToken();
     } elseif (array_key_exists('token', $input)) {
@@ -2789,6 +2833,134 @@ if ($method === 'GET' && $uri === '/api/admin/client/import/files') {
     respond(['path' => IMPORT_DIR, 'files' => $files]);
 }
 
+// Move a file out of an import folder into the library and register it as an
+// item in the gallery. Shared by the manual "Import from server" route and the
+// automatic watch-folder sync so the two can't drift: both go through
+// registerGalleryItem(), which probes, makes the thumbnail/proxy and primes the
+// CRC cache. The source is moved, not copied; the library copy is the only one.
+// Returns the item, or null if the file couldn't be moved or isn't a readable image.
+function importMediaFile(string $gid, string $srcPath, string $originalName): ?array {
+    $safeName = basename($originalName);
+    $destName = time() . '-' . safeFilename($safeName);
+    $destPath = UPLOADS_DIR . '/' . $destName;
+    // A truncated or corrupt photo would register as an item with no thumbnail.
+    if (isImageFile($safeName) && !probeImage($srcPath)) return null;
+    if (!@rename($srcPath, $destPath)) {
+        // rename() fails across filesystems; fall back to copy + delete.
+        if (!@copy($srcPath, $destPath)) return null;
+        @unlink($srcPath);
+    }
+
+    $title = preg_replace('/\.[^.]+$/', '', $safeName);
+    $title = str_replace(['_', '-'], ' ', $title);
+    $title = trim(preg_replace('/\s+/', ' ', $title)) ?: 'Untitled';
+
+    $item = registerGalleryItem($gid, $destName, $title);
+    if ($item['type'] === 'video') {
+        // Grab a poster frame where ffmpeg exists. Not every host has it, so a
+        // miss just leaves the item without one.
+        $thumbFilename = $item['id'] . '.jpg';
+        if (generateVideoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename)) {
+            $item['thumbnail'] = $thumbFilename;
+            jsonUpdate(galleryDir($gid) . '/videos.json', function ($videos) use ($item) {
+                foreach ($videos as &$v) {
+                    if ($v['id'] === $item['id']) { $v['thumbnail'] = $item['thumbnail']; break; }
+                }
+                return $videos;
+            });
+        }
+    }
+    return $item;
+}
+
+// Watch-folder sync: pull whatever has finished arriving in a gallery's FTP
+// folder into the gallery. The client page calls this while it is open (and so
+// does the admin), so it has to be cheap when there is nothing to do and safe
+// when several visitors trigger it at once:
+//   - a non-blocking flock means overlapping calls skip rather than double-import;
+//   - a state file throttles scans and remembers each file's size from last time.
+// A file is only imported once it is idle: its size matches the previous scan and
+// it hasn't changed for a few seconds. FTP writes a file under its final name
+// while it is still growing, and importing it mid-transfer would register a
+// truncated image. Each call is capped so a big drop is worked off over several
+// calls instead of one request that outlives its time limit.
+define('IMPORT_SCAN_MIN_INTERVAL', 10);
+define('IMPORT_SETTLE_SECONDS', 15);
+define('IMPORT_BATCH_MAX_FILES', 12);
+define('IMPORT_BATCH_MAX_SECONDS', 40);
+
+function syncImportFolder(array $gallery, bool $force = false): array {
+    $result = ['imported' => 0, 'pending' => 0, 'failed' => 0, 'busy' => false];
+    $folder = normalizeImportFolder($gallery['importFolder'] ?? '');
+    if ($folder === null) return $result;
+    $dir = IMPORT_DIR . '/' . $folder;
+    if (!is_dir($dir)) return $result;
+
+    $stateDir = DATA_DIR . '/import-state';
+    if (!is_dir($stateDir)) @mkdir($stateDir, 0755, true);
+    $lock = @fopen($stateDir . '/' . $gallery['id'] . '.lock', 'c');
+    if (!$lock) return $result;
+    if (!flock($lock, LOCK_EX | LOCK_NB)) { fclose($lock); $result['busy'] = true; return $result; }
+
+    try {
+        $statePath = $stateDir . '/' . $gallery['id'] . '.json';
+        $state = jsonRead($statePath) ?: [];
+        if (!$force && (time() - (int)($state['scannedAt'] ?? 0)) < IMPORT_SCAN_MIN_INTERVAL) return $result;
+        @set_time_limit(IMPORT_BATCH_MAX_SECONDS + 60);
+        $deadline = time() + IMPORT_BATCH_MAX_SECONDS;
+        $previous = $state['files'] ?? [];
+        $seen = [];
+
+        $names = [];
+        foreach (scandir($dir) ?: [] as $f) {
+            if ($f[0] === '.' || !is_file($dir . '/' . $f)) continue;
+            if (!in_array(strtolower(pathinfo($f, PATHINFO_EXTENSION)), MEDIA_EXTS)) continue;
+            $names[] = $f;
+        }
+        // Camera filenames carry the shoot order; natural order keeps IMG_2 before IMG_10.
+        usort($names, 'strnatcasecmp');
+
+        foreach ($names as $f) {
+            $path = $dir . '/' . $f;
+            clearstatcache(true, $path);
+            $size = (int)@filesize($path);
+            // ctime moves on any write, even when the FTP client preserved the source mtime.
+            $age = time() - max((int)@filemtime($path), (int)@filectime($path));
+            $seen[$f] = $size;
+            $idle = $size > 0 && ($previous[$f] ?? null) === $size && $age >= IMPORT_SETTLE_SECONDS;
+            if (!$idle || $result['imported'] >= IMPORT_BATCH_MAX_FILES || time() >= $deadline) {
+                $result['pending']++;
+                continue;
+            }
+
+            if (importMediaFile($gallery['id'], $path, $f)) {
+                $result['imported']++;
+            } else {
+                // Park it so it isn't retried on every scan; the owner can look at it.
+                $failedDir = $dir . '/_failed';
+                if (!is_dir($failedDir)) @mkdir($failedDir, 0775, true);
+                @rename($path, $failedDir . '/' . $f);
+                $result['failed']++;
+            }
+            unset($seen[$f]);
+        }
+        jsonWrite($statePath, ['scannedAt' => time(), 'files' => $seen]);
+    } finally {
+        flock($lock, LOCK_UN);
+        fclose($lock);
+    }
+    return $result;
+}
+
+// Cheap change marker for a gallery's contents. The client page compares it
+// between polls to decide whether to show "gallery updated".
+function galleryVersion($gid): string {
+    $path = galleryDir($gid) . '/videos.json';
+    clearstatcache(true, $path);
+    $items = array_filter(readGalleryVideos($gid), fn($v) => ($v['type'] ?? '') !== 'header' && ($v['visible'] ?? true) !== false);
+    return count($items) . '-' . (int)@filemtime($path);
+}
+
 // Import: import files
 if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/import', $uri, $params)) {
     requireAuth();
@@ -2798,7 +2970,6 @@ if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/import',
     $filenames = $input['filenames'] ?? [];
     if (!$filenames) respondError('No files selected', 400);
 
-    $videos = readGalleryVideos($params['gid']);
     $imported = [];
     $errors = [];
 
@@ -2810,59 +2981,27 @@ if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/import',
         $ext = strtolower(pathinfo($safeName, PATHINFO_EXTENSION));
         if (!in_array($ext, MEDIA_EXTS)) { $errors[] = ['name' => $safeName, 'error' => 'Not a supported media format']; continue; }
 
-        $destName = time() . '-' . safeFilename($safeName);
-        $destPath = UPLOADS_DIR . '/' . $destName;
-        rename($srcPath, $destPath);
-
-        $title = preg_replace('/\.[^.]+$/', '', $safeName);
-        $title = str_replace(['_', '-'], ' ', $title);
-        $title = trim(preg_replace('/\s+/', ' ', $title)) ?: 'Untitled';
-
-        $isPhoto = isImageFile($destName);
-        $itemId = generateId($isPhoto ? 'p_' : 'v_');
-        $item = [
-            'id' => $itemId,
-            'type' => $isPhoto ? 'photo' : 'video',
-            'title' => $title,
-            'filename' => $destName,
-            'visible' => true,
-            'createdAt' => date('c'),
-        ];
-
-        if ($isPhoto) {
-            $meta = probeImage($destPath);
-            if ($meta) { $item['width'] = $meta['width']; $item['height'] = $meta['height']; }
-            $thumbFilename = $itemId . '.jpg';
-            $proxyFilename = $itemId . '_proxy.jpg';
-            if (generatePhotoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename)) $item['thumbnail'] = $thumbFilename;
-            if (generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename)) $item['proxy'] = $proxyFilename;
-        } else {
-            $meta = probeVideo($destPath);
-            if ($meta) {
-                $item['width'] = $meta['width'];
-                $item['height'] = $meta['height'];
-            }
-            $duration = (float)($meta['duration'] ?? 0);
-            if ($duration <= 0) $duration = mp4DurationSeconds($destPath);
-            if ($duration > 0) $item['duration'] = $duration;
-            // Generate video thumbnail
-            $thumbFilename = $itemId . '.jpg';
-            if (generateVideoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename)) {
-                $item['thumbnail'] = $thumbFilename;
-            }
-            $caps = extractEmbeddedCaptions($destPath, $itemId, $duration);
-            if ($caps) $item['captions'] = $caps;
-        }
-
-        $videos[] = $item;
-        $imported[] = $item;
-        // Persist after each file so a fatal on a later (large) image doesn't
-        // discard the ones already processed — their originals are already moved
-        // out of the import folder by the rename above.
-        writeGalleryVideos($params['gid'], $videos);
+        // Each file is saved to the gallery as it is registered, so a fatal on
+        // a later (large) image doesn't discard the ones already processed.
+        $item = importMediaFile($params['gid'], $srcPath, $safeName);
+        if ($item) $imported[] = $item;
+        else $errors[] = ['name' => $safeName, 'error' => 'Could not read or move the file'];
     }
 
     respond(['imported' => $imported, 'errors' => $errors]);
+}
+
+// Watch-folder sync for the admin: runs immediately (no throttle) and reports counts.
+if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/import-sync', $uri, $params)) {
+    requireAuth();
+    $gallery = null;
+    foreach (readGalleries() as $g) {
+        if ($g['id'] === $params['gid']) { $gallery = $g; break; }
+    }
+    if (!$gallery) respondError('Not found', 404);
+    $res = syncImportFolder($gallery, true);
+    $res['version'] = galleryVersion($gallery['id']);
+    respond($res);
 }
 
 // Probe/backfill metadata
@@ -2971,6 +3110,9 @@ function galleryPayload($gallery) {
             'type' => $gallery['type'] ?? 'proofing',
             'downloadsEnabled' => $gallery['downloadsEnabled'],
             'commentingEnabled' => $gallery['commentingEnabled'] ?? false,
+            // Whether the page should poll for FTP arrivals. The folder name stays private.
+            'live' => !empty($gallery['importFolder']),
+            'version' => galleryVersion($gallery['id']),
         ],
         'items' => $videos,
         'comments' => $comments,
@@ -2985,6 +3127,21 @@ if ($method === 'GET' && matchRoute('/api/client/galleries/{token}', $uri, $para
     }
     recordView(galleryStatsPath($gallery['id']));
     respond(galleryPayload($gallery));
+}
+
+// Called by the open gallery page: pulls in anything that has arrived in the
+// gallery's FTP folder and reports a version marker so the page can offer a
+// refresh. Throttled and locked inside syncImportFolder(); does nothing for
+// galleries without a watch folder. Returns no item data, only the marker.
+if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/sync', $uri, $params)) {
+    $gallery = getProofingGallery($params['token']);
+    $res = ['version' => galleryVersion($gallery['id'])];
+    if (!empty($gallery['importFolder'])) {
+        session_write_close();
+        syncImportFolder($gallery);
+        $res['version'] = galleryVersion($gallery['id']);
+    }
+    respond($res);
 }
 
 if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/unlock', $uri, $params)) {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.4.0 — 2026-10-23
+- **Galleries can watch an FTP folder and fill themselves.** Give a client gallery an FTP import folder (when you create it, or later in its settings) and anything uploaded to that folder under `site-data/imports/` is moved into the gallery automatically — photos and videos alike, with thumbnails, proxies and delivery checksums made as usual. It runs while someone has the gallery open (the client's page, or the gallery in admin), so there is nothing to set up on the server; reopening a gallery later picks up whatever arrived in the meantime. Files still being uploaded are left alone until they stop growing, and unreadable images are set aside in a `_failed` folder. A client with the gallery open sees a "Gallery updated" banner with a Refresh button when new items land.
+- Importing from the server by hand now registers files the same way as every other upload, so manually imported files get their delivery checksums up front too.
+
 ## 2.3.7 — 2026-10-22
 - **Captions can now be uploaded as SRT as well as WebVTT, and the Captions dialog has a drop area.** An `.srt` file is converted to WebVTT on upload (no ffmpeg needed), so the player and delivery packages still only ever see `.vtt`. Drop a `.vtt` or `.srt` onto the dialog, or choose one, then pick a language and click Add Caption.
 

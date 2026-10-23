@@ -1110,11 +1110,39 @@ document.addEventListener('DOMContentLoaded', () => {
     closeDrawerForce();
     setScreen('library');
     renderCentre();
+    watchImportFolder();
+  }
+
+  // A gallery with an FTP watch folder only imports when something asks, so the
+  // open gallery asks: once on entry, then every 30s while it stays open.
+  let importWatchTimer = null;
+  async function syncImportOnce(gid) {
+    try {
+      const res = await fetch(`/api/admin/client/galleries/${gid}/import-sync`, { method: 'POST' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.imported && state.centreGalleryId === gid) {
+        await loadContent();
+        refreshCountsSoon();
+        toast(`Imported ${data.imported} from FTP folder`);
+      }
+    } catch (_) { /* next tick retries */ }
+  }
+  function watchImportFolder() {
+    clearInterval(importWatchTimer);
+    importWatchTimer = null;
+    const gid = state.centreGalleryId;
+    const g = gid && state.galleries.find(x => x.id === gid);
+    if (!g || !g.importFolder) return;
+    syncImportOnce(gid);
+    importWatchTimer = setInterval(() => { if (!document.hidden) syncImportOnce(gid); }, 30000);
   }
   function backToLibrary() {
     if (state.drawer.galleryId && state.drawer.dirty && !confirm('Discard unsaved changes?')) return;
     state.centreGalleryId = null;
     contentGid = null;
+    clearInterval(importWatchTimer);
+    importWatchTimer = null;
     closeDrawerForce();
     renderCentre();
   }
@@ -1172,6 +1200,7 @@ document.addEventListener('DOMContentLoaded', () => {
       downloadsEnabled: eff.downloadsEnabled,
       commentingEnabled: eff.commentingEnabled,
       expiresAt: eff.expiresAt ? eff.expiresAt.split('T')[0] : '',
+      importFolder: g.importFolder || '',
     };
   }
 
@@ -1259,6 +1288,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     html += `<div class="drawer-block">
+      <div class="editable-row"><span class="er-key">FTP folder</span><span class="er-ctl"><input type="text" class="d-input" data-field="importFolder" maxlength="64" placeholder="None" autocomplete="off" spellcheck="false"></span></div>
+      <div class="sr-sub" style="margin-top:6px;">Files FTP’d into this folder are added automatically.</div>
+    </div>`;
+
+    html += `<div class="drawer-block">
       <div class="switch-row"><div class="sr-text">Active</div><button class="switch${d.active ? ' on' : ''}" data-switch="active"></button></div>
     </div>`;
 
@@ -1297,6 +1331,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const d = state.drawer.draft;
     const nameInput = body.querySelector('[data-field="name"]');
     if (nameInput) nameInput.value = d.name || '';
+    const folderInput = body.querySelector('[data-field="importFolder"]');
+    if (folderInput) folderInput.value = d.importFolder || '';
     body.querySelectorAll('[data-switch]').forEach(sw => sw.addEventListener('click', () => {
       const key = sw.getAttribute('data-switch');
       if (key === 'useCollection') { d.override = !d.override; state.drawer.dirty = true; renderDrawer(); return; }
@@ -1340,7 +1376,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (act === 'save') {
       const name = (d.name || '').trim();
       if (!name) { toast('Name cannot be empty'); return; }
-      const body = { name, active: d.active };
+      const body = { name, active: d.active, importFolder: (d.importFolder || '').trim() };
       if (g.type === 'proofing') {
         if (col) {
           body.overrideCollectionSettings = d.override;
@@ -1362,7 +1398,10 @@ document.addEventListener('DOMContentLoaded', () => {
         state.drawer.dirty = false;
         await loadData(); initDraft(); renderAll(); renderDrawer();
         toast('Saved');
-      } else toast('Save failed');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast(err.error || 'Save failed');
+      }
     } else if (act === 'delete') {
       // Losing your last portfolio gallery empties the public portfolio page, so
       // say so up front rather than refusing the delete — it is recoverable with
@@ -2368,6 +2407,7 @@ document.addEventListener('DOMContentLoaded', () => {
     populateNgCollections(initialType, collectionId);
     ngState = { downloads: false, commenting: false, useCollection: true };
     $('ng-password').value = ''; $('ng-password').placeholder = 'No password';
+    $('ng-folder').value = '';
     $('ng-expires').value = '';
     $('ng-downloads').classList.remove('on'); $('ng-commenting').classList.remove('on');
     updateNgSettingsUI();
@@ -2389,6 +2429,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const type = 'proofing';
     const colId = $('ng-collection').value;
     const body = { name, type };
+    const folder = $('ng-folder').value.trim();
+    if (folder) body.importFolder = folder;
     if (type === 'proofing' && (!colId || !ngState.useCollection)) {
       body.overrideCollectionSettings = !!colId;
       const pw = $('ng-password').value.trim();
@@ -2397,14 +2439,15 @@ document.addEventListener('DOMContentLoaded', () => {
       body.commentingEnabled = ngState.commenting;
       body.expiresAt = $('ng-expires').value ? new Date($('ng-expires').value + 'T23:59:59').toISOString() : null;
     }
-    $('new-gallery-modal').hidden = true;
     const res = await fetch('/api/admin/client/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) {
+      // Keep the modal open so a bad folder name can be fixed without retyping the rest.
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) { checkAuth(); return; }
       toast(data.error || `Create failed (HTTP ${res.status})`);
       return;
     }
+    $('new-gallery-modal').hidden = true;
     const g = await res.json();
     let filed = true;
     if (colId) {

@@ -180,6 +180,70 @@ document.addEventListener('DOMContentLoaded', () => {
     if (galleryData.gallery.commentingEnabled && !viewerName) {
       showNameModal();
     }
+
+    startLiveSync();
+  }
+
+  // ============ Live Updates (FTP watch folder) ============
+  //
+  // A gallery with a watch folder takes in whatever the photographer uploads by
+  // FTP. The import only runs while someone is asking for it, so an open page
+  // asks: once on load (which also catches anything that arrived while nobody was
+  // looking), then every 30 seconds while the tab is visible. The server answers
+  // with a version marker; when it changes we offer a refresh instead of
+  // re-rendering under someone who may be mid-lightbox.
+
+  let liveTimer = null;
+  let liveVersion = null;
+  let liveBusy = false;
+  const LIVE_INTERVAL_MS = 30000;
+
+  function startLiveSync() {
+    if (liveTimer || !galleryData || !galleryData.gallery.live) return;
+    liveVersion = galleryData.gallery.version;
+    pollLiveSync();
+    liveTimer = setInterval(() => { if (!document.hidden) pollLiveSync(); }, LIVE_INTERVAL_MS);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) pollLiveSync(); });
+  }
+
+  async function pollLiveSync() {
+    if (liveBusy) return;
+    liveBusy = true;
+    try {
+      const res = await fetch(`/api/client/galleries/${token}/sync`, { method: 'POST' });
+      if (!res.ok) return;
+      const { version } = await res.json();
+      if (version && version !== liveVersion) {
+        liveVersion = version;
+        showUpdateBanner();
+      }
+    } catch (_) {
+      // Offline or a blip; the next tick tries again.
+    } finally {
+      liveBusy = false;
+    }
+  }
+
+  function showUpdateBanner() {
+    let banner = document.getElementById('live-update-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'live-update-banner';
+      banner.className = 'live-update-banner';
+      banner.innerHTML = '<span>Gallery updated</span><button type="button" class="live-update-btn">Refresh</button>';
+      banner.querySelector('button').addEventListener('click', async () => {
+        const res = await fetch(`/api/client/galleries/${token}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.passwordRequired) return;
+        galleryData = data;
+        allComments = data.comments || [];
+        liveVersion = data.gallery.version;
+        renderVideoList();
+        banner.remove();
+      });
+      document.body.appendChild(banner);
+    }
   }
 
   function renderVideoList() {

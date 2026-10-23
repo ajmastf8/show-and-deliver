@@ -671,8 +671,8 @@ function generatePhotoThumbnail($srcPath, $thumbPath) {
     $dst = imagecreatetruecolor($newW, $newH);
     imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
     imagejpeg($dst, $thumbPath, 80);
-    imagedestroy($src);
-    imagedestroy($dst);
+    // No imagedestroy(): GD images are objects freed on scope exit, and the call
+    // has been a no-op since PHP 8.0 and is deprecated in 8.5.
     return true;
 }
 
@@ -690,8 +690,8 @@ function generatePhotoProxy($srcPath, $proxyPath) {
     $dst = imagecreatetruecolor($newW, $newH);
     imagecopyresampled($dst, $src, 0, 0, 0, 0, $newW, $newH, $origW, $origH);
     imagejpeg($dst, $proxyPath, 82);
-    imagedestroy($src);
-    imagedestroy($dst);
+    // No imagedestroy(): GD images are objects freed on scope exit, and the call
+    // has been a no-op since PHP 8.0 and is deprecated in 8.5.
     return true;
 }
 

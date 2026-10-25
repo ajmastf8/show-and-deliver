@@ -350,6 +350,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================================================
   function setScreen(screen) {
     state.screen = screen;
+    setRailOpen(false);
     $('screen-library').hidden = screen !== 'library';
     $('screen-upload').hidden = screen !== 'upload';
     $('screen-portfolio').hidden = screen !== 'portfolio';
@@ -579,7 +580,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setScreen('library');
         clearSelection();
         renderRail(); renderCentre();
-        if (window.innerWidth < 1100) rail.classList.remove('open');
+        setRailOpen(false);
       });
     });
     rail.querySelectorAll('[data-new-collection]').forEach(el => {
@@ -2964,18 +2965,69 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================================================
   // Narrow-screen rail toggle
   // ==========================================================================
+  // The rail of whichever tab is showing slides over the content below 1100px,
+  // with a scrim behind it that closes it again.
+  function activeRail() { return state.screen === 'portfolio' ? $('pfa-rail') : $('rail'); }
+  function setRailOpen(open) {
+    const narrow = window.innerWidth < 1100;
+    ['rail', 'pfa-rail'].forEach(id => $(id).classList.toggle('open', narrow && open && $(id) === activeRail()));
+    let scrim = $('rail-scrim');
+    if (narrow && open) {
+      if (!scrim) {
+        scrim = document.createElement('div');
+        scrim.id = 'rail-scrim';
+        scrim.className = 'rail-scrim';
+        scrim.addEventListener('click', () => setRailOpen(false));
+        document.body.appendChild(scrim);
+      }
+    } else if (scrim) scrim.remove();
+  }
+  // Account links collapse into a ⋯ menu on phones. The items just press the
+  // real buttons, so their handlers (and labels, like the theme toggle) stay put.
+  const MORE_ITEMS = ['nav-uploads', 'account-theme', 'account-password', 'account-logout'];
+  function ensureMoreMenu() {
+    if ($('more-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'more-wrap'; wrap.className = 'menu-wrap';
+    wrap.innerHTML = '<button type="button" class="account-btn" id="more-btn" aria-label="More" aria-haspopup="true" style="width:38px;height:38px;">&#8943;</button><div class="menu" id="more-menu" hidden></div>';
+    const menu = wrap.querySelector('#more-menu');
+    wrap.querySelector('#more-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!menu.hidden) { menu.hidden = true; return; }
+      menu.innerHTML = '';
+      MORE_ITEMS.forEach(id => {
+        const src = $(id);
+        if (!src || src.hidden) return;
+        const b = document.createElement('button');
+        b.textContent = src.textContent.trim();
+        b.addEventListener('click', () => { menu.hidden = true; src.click(); });
+        menu.appendChild(b);
+      });
+      menu.hidden = false;
+    });
+    document.addEventListener('click', () => { menu.hidden = true; });
+    const right = document.querySelector('.topbar-right');
+    right.insertBefore(wrap, right.querySelector('.menu-wrap'));
+  }
   function ensureRailToggle() {
     if ($('rail-toggle')) return;
     const btn = document.createElement('button');
     btn.id = 'rail-toggle'; btn.className = 'account-btn'; btn.textContent = '☰';
+    btn.setAttribute('aria-label', 'Menu');
     btn.style.marginRight = '4px';
-    btn.addEventListener('click', (e) => { e.stopPropagation(); $('rail').classList.toggle('open'); });
+    btn.addEventListener('click', (e) => { e.stopPropagation(); setRailOpen(!activeRail().classList.contains('open')); });
     document.querySelector('.topbar').insertBefore(btn, document.querySelector('.brand'));
+    // Picking something in the portfolio rail closes it (the library's rail does
+    // so in its own handlers); expanding a group or opening a link does not.
+    $('pfa-rail').addEventListener('click', (e) => {
+      if (window.innerWidth < 1100 && e.target.closest('.rail-row') && !e.target.closest('summary, .rail-twist, .rail-open')) setRailOpen(false);
+    });
   }
   function syncRailToggle() {
     const t = $('rail-toggle');
+    ensureMoreMenu();
     if (window.innerWidth < 1100) { ensureRailToggle(); if ($('rail-toggle')) $('rail-toggle').style.display = ''; }
-    else if (t) t.style.display = 'none';
+    else { if (t) t.style.display = 'none'; setRailOpen(false); }
   }
   window.addEventListener('resize', syncRailToggle);
 

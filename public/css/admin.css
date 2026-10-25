@@ -2113,3 +2113,199 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 .pfa-metarow span:first-child { flex: 0 0 130px; color: var(--text-5); }
 .pfa-metarow span:last-child { color: var(--text); word-break: break-word; }
 @media (max-width: 900px) { .pfa-item-view { grid-template-columns: 1fr; } }
+
+/* ==========================================================================
+   Phones and small tablets
+   Appended last so each rule overrides the desktop one it adapts. Three
+   concerns: touch (no hover), narrow (<= 900 top bar, <= 760 content), and
+   the sidebars becoming slide-over panels with a scrim.
+   ========================================================================== */
+
+/* ---------- Touch: nothing may depend on hover ---------- */
+@media (hover: none) {
+  .gallery-row .row-check { opacity: 1; }
+  .gallery-row .g-name-cell { padding-left: 34px; }
+  .gallery-row .row-open,
+  .gallery-row .fav-star { opacity: 1; }
+  .grid-card .row-open,
+  .grid-card .fav-star,
+  .grid-card .gc-check,
+  .pfa-open { opacity: 1; }
+  .rail-row .rail-open { width: auto; margin-left: 8px; opacity: 1; }
+  .thumb-play-icon { opacity: 1; background: rgba(0,0,0,.3); }
+}
+@media (pointer: coarse) {
+  .btn-primary, .btn-ghost { min-height: 40px; }
+  .menu button { height: 44px; }
+  .rail-row, .rail-row.compact { height: 44px; }
+  .ctrl, .link-btn, .topbar-link { padding-top: 8px; padding-bottom: 8px; }
+  .row-check { width: 20px; height: 20px; }
+  .row-check::after { content: ''; position: absolute; inset: -12px; }
+  .switch { flex: none; }
+}
+
+/* ---------- Slide-over sidebar scrim ---------- */
+.rail-scrim {
+  position: fixed;
+  inset: var(--topbar-h) 0 0 0;
+  background: rgba(0,0,0,.5);
+  z-index: 49;
+}
+
+/* ---------- Narrow: <= 1099 the rail is a panel, in both tabs ---------- */
+@media (max-width: 1099px) {
+  /* The portfolio tab used to hide its rail outright, leaving no way to the
+     other galleries; it now slides over like the library's. */
+  .pfa-layout .rail { display: block; }
+  /* The rail and drawer are fixed here, so they no longer occupy grid tracks;
+     leaving the old 0-width first track put the list in a zero-width column. */
+  .library-layout, .library-layout.drawer-open { grid-template-columns: minmax(0, 1fr); }
+  .rail { width: min(var(--rail-w), 86vw); }
+  .library-layout { min-height: calc(100vh - var(--topbar-h)); }
+}
+@supports (height: 100dvh) {
+  @media (max-width: 1099px) {
+    .library-layout { min-height: calc(100dvh - var(--topbar-h)); }
+    .pfa-layout { height: calc(100dvh - var(--topbar-h)); }
+    .drawer { height: calc(100dvh - var(--topbar-h)); }
+  }
+}
+
+/* ---------- <= 900: compact top bar; two rows on phones ---------- */
+#more-wrap { display: none; }
+@media (max-width: 900px) {
+  .topbar { flex-wrap: wrap; align-content: center; gap: 8px 10px; padding: 8px 14px; }
+  #rail-toggle { order: 0; width: 38px; height: 38px; margin-right: 0 !important; }
+  .brand { order: 1; flex: 0 1 auto; min-width: 0; }
+  .brand-mast { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; letter-spacing: .14em; }
+  .brand-delivery { display: none; }
+  .topbar-tabs { order: 2; margin-left: 0; flex: 0 0 auto; }
+  .topbar-tab { height: 38px; padding: 0 12px; }
+  .topbar-search { order: 3; flex: 1 1 0; min-width: 0; max-width: none; }
+  .topbar-search input { height: 38px; }
+  .topbar-right { order: 4; gap: 8px; margin-left: auto; }
+  .topbar-right .topbar-link { display: none; }
+  #more-wrap { display: block; }
+  #new-btn { height: 38px; padding: 0 14px; }
+  .menu { width: min(260px, calc(100vw - 28px)); }
+}
+@media (max-width: 760px) {
+  :root { --topbar-h: 100px; }
+  .brand { flex: 1 1 0; }
+  .topbar-right { order: 2; margin-left: 0; }
+  .topbar-tabs { order: 3; }
+  .topbar-search { order: 4; }
+}
+
+/* iOS zooms the page when a focused field is under 16px. */
+@media (max-width: 900px) {
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),
+  select, textarea { font-size: 16px; }
+}
+
+/* ---------- <= 760: content ---------- */
+@media (max-width: 760px) {
+  .auth-card { padding: 26px 20px; }
+
+  /* Library header: title over a wrapping control row. */
+  .centre-header { flex-direction: column; align-items: stretch; gap: 12px; padding: 18px 16px 10px; }
+  .centre-header h1 { font-size: 20px; letter-spacing: .1em; word-break: break-word; }
+  .centre-controls { flex-wrap: wrap; gap: 4px 18px; }
+
+  /* Table: name, items, access. Views and expiry are in the drawer. */
+  .col-head, .gallery-row { grid-template-columns: minmax(0, 1fr) 48px 78px; margin: 0 16px; }
+  .col-head > :nth-child(3), .col-head > :nth-child(5),
+  .gallery-row > .cell:nth-child(3), .gallery-row > .cell:nth-child(5) { display: none; }
+  .gallery-row { height: 60px; }
+  .group-head { padding: 14px 16px 0; }
+  .g-tag { display: none; }
+  .gallery-row .row-open { display: none; }
+  .g-thumb { width: 44px; height: 28px; }
+  .g-name { margin-left: 12px; font-size: 14px; }
+  .cell { font-size: 12.5px; }
+
+  /* Bulk bar spans the width and scrolls sideways if its actions overflow. */
+  .bulk-bar {
+    left: 12px; right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    transform: translateY(12px);
+    gap: 14px;
+    padding: 0 14px;
+    overflow-x: auto;
+  }
+  .bulk-bar.show { transform: translateY(0); }
+
+  /* Drawer: the whole screen under the top bar. */
+  .drawer { width: 100%; max-width: 100%; }
+  .drawer-header { padding: 20px 16px 16px; }
+  .drawer-body { padding: 18px 16px 28px; }
+  .drawer-title { font-size: 20px; }
+  .drawer-tabs { overflow-x: auto; }
+  .drawer-footer { flex-wrap: wrap; gap: 14px 22px; }
+
+  /* Upload */
+  .upload-wrap, .settings-wrap { padding: 20px 16px 48px; }
+  .dest-row { gap: 10px; }
+  .dest-select { flex: 1 1 40%; min-width: 0; min-height: 36px; }
+  .dest-slash { display: none; }
+  .dest-import { margin-left: 0; }
+  .drop-zone { height: auto; min-height: 160px; padding: 20px 16px; gap: 12px; }
+  .drop-zone .dz-title { font-size: 20px; letter-spacing: .1em; }
+  .drop-zone .dz-hint { font-size: 12.5px; }
+  .queue-row { grid-template-columns: 48px minmax(0, 1fr) 64px; grid-template-rows: auto auto; gap: 6px 12px; height: auto; padding: 10px 0; }
+  .queue-row .qr-thumb { width: 48px; height: 30px; grid-row: 1; }
+  .queue-row .qr-track { grid-column: 1 / -1; grid-row: 2; }
+  .queue-row .qr-status { display: none; }
+  .queue-head { flex-wrap: wrap; gap: 8px 14px; }
+
+  /* Settings */
+  .settings-tabs { gap: 20px; overflow-x: auto; white-space: nowrap; }
+  .settings-title-row { flex-wrap: wrap; gap: 10px; }
+  .settings-actions { flex-wrap: wrap; }
+
+  /* Portfolio */
+  .pfa-scroll { padding: 12px 14px 60px; }
+  .pfa-items { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+  .pfa-cards { gap: 12px; }
+  .pfa-editor.with-rail .pfa-rail { width: 100%; }
+  .pfa-item-row-name { font-size: 13px; }
+  .pfa-layouts, .pfa-presets { flex-wrap: wrap; }
+  .pfa-modal-card { width: 100%; max-height: 92dvh; padding: 18px 16px; border-radius: 12px 12px 0 0; align-self: flex-end; }
+  .pfa-modal { align-items: flex-end; }
+  .pfa-metarow span:first-child { flex-basis: 96px; }
+
+  /* Item preview player */
+  .preview-modal { padding: 10px; }
+  .preview-stage { height: 60vh; }
+  .preview-nav { width: 38px; height: 54px; }
+  .preview-nav.prev { left: 0; }
+  .preview-nav.next { right: 0; }
+  .thumb-picker-inner { padding: 16px; }
+  #thumb-canvas { width: 100%; height: auto; aspect-ratio: 16 / 9; }
+
+  .toast { max-width: calc(100vw - 24px); bottom: calc(16px + env(safe-area-inset-bottom)); }
+}
+
+/* ---------- <= 640: dialogs become bottom sheets ---------- */
+@media (max-width: 640px) {
+  .modal { padding: 0; align-items: flex-end; }
+  .modal-inner, .modal-inner.wide {
+    max-width: none !important;
+    max-height: 92vh;
+    padding: 20px 16px calc(20px + env(safe-area-inset-bottom));
+    border-radius: 12px 12px 0 0;
+    border-bottom: 0;
+  }
+  .modal-actions { flex-wrap: wrap; }
+  .modal-actions .right { flex: 1 1 auto; justify-content: flex-end; }
+  /* The inline-styled button rows (link, send, token) wrap under their input. */
+  .modal-inner .setting-group > div[style*="display:flex"],
+  .token-reveal-row { flex-wrap: wrap; }
+  .modal-inner .setting-group > div[style*="display:flex"] > .setting-input,
+  .token-reveal-row > .setting-input { flex: 1 1 100%; min-width: 0; }
+  .modal-inner .setting-group input[type="date"] { max-width: none !important; }
+  .import-file-row { padding: 12px; }
+}
+@supports (height: 100dvh) {
+  @media (max-width: 640px) { .modal-inner, .modal-inner.wide { max-height: 92dvh; } }
+}

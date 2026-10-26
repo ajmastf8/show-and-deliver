@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.5.1 — 2026-10-26
+- **Fixed: the per-item Download button was missing in the client gallery viewer on Android Chrome.** The full-screen viewer was sized with `100vh`, which on mobile is the *large* viewport — the height with the browser's toolbars retracted — so while the address bar was showing the viewer extended below the screen and its bottom title bar (where Download sits) was cut off. It now uses `100dvh`, which tracks the visible viewport. "Download All" in the gallery header was never affected, which is why only the in-viewer button appeared to be gone.
+
 ## 2.5.0 — 2026-10-26
 Client delivery galleries get a block of per-gallery options in Settings (not inherited from collections).
 - **Order.** Show items in your own drag order, or sorted by file name (natural order, so `IMG_2` comes before `IMG_10`), capture time (from the photo's EXIF, or a video's recorded date; ascending or descending) or date added. Section headers keep their place. The client page, Download All and delivery zips follow it, and the admin item list shows the order with dragging turned off while a sort is active. Capture times are recorded at upload; older galleries get theirs filled in the first time they are needed.

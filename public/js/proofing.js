@@ -45,6 +45,47 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentVideoId = null;
   let allComments = [];
 
+  // Favorites
+  const favCounter = document.getElementById('fav-counter');
+  const favSendBtn = document.getElementById('fav-send-btn');
+  const lightboxFavBtn = document.getElementById('lightbox-fav-btn');
+  const lightboxDownloadWebBtn = document.getElementById('lightbox-download-web-btn');
+  const favModal = document.getElementById('fav-modal');
+  const favForm = document.getElementById('fav-form');
+  const favNameInput = document.getElementById('fav-name');
+  const favNoteInput = document.getElementById('fav-note');
+  const favError = document.getElementById('fav-error');
+  const favSubmit = document.getElementById('fav-submit');
+  let favs = [];            // ids this browser has picked, in the order picked
+  let favSubmitted = null;  // ids as last sent, or null if never sent
+  let favSaving = Promise.resolve();
+
+  // A random id this browser keeps, so picks survive a reload without an account.
+  function favClientId() {
+    const key = 'proofing-client-' + token;
+    let id = localStorage.getItem(key);
+    if (!id || !/^[A-Za-z0-9_-]{8,64}$/.test(id)) {
+      const bytes = new Uint8Array(18);
+      (window.crypto || window.msCrypto).getRandomValues(bytes);
+      id = Array.from(bytes, b => b.toString(36).padStart(2, '0')).join('').slice(0, 32);
+      localStorage.setItem(key, id);
+    }
+    return id;
+  }
+  const clientId = favClientId();
+  const favsOn = () => !!(galleryData && galleryData.gallery.selection && galleryData.gallery.selection.enabled);
+  const favLimit = () => (galleryData && galleryData.gallery.selection && galleryData.gallery.selection.limit) || 0;
+
+  // With a watermark on, photo previews come from a route that stamps them.
+  function previewUrl(item, kind) {
+    if (galleryData.gallery.watermark && item.type === 'photo') {
+      return `/api/client/galleries/${token}/preview/${encodeURIComponent(item.id)}/${kind}`;
+    }
+    return kind === 'thumb'
+      ? '/thumbnails/' + encodeURIComponent(item.thumbnail)
+      : '/proxies/' + encodeURIComponent(item.proxy);
+  }
+
   // Name modal: show if no saved name, otherwise set display name
   if (viewerName) {
     viewerDisplayName.textContent = viewerName;
@@ -168,6 +209,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     renderVideoList();
+    initFavorites();
 
     // Deep link: open specific video if hash is #video-{id}
     const hashMatch = window.location.hash.match(/^#video-(.+)$/);
@@ -266,9 +308,7 @@ document.addEventListener('DOMContentLoaded', () => {
       card.dataset.id = item.id;
 
       const isPhoto = item.type === 'photo';
-      const thumbSrc = item.thumbnail
-        ? '/thumbnails/' + encodeURIComponent(item.thumbnail)
-        : '';
+      const thumbSrc = item.thumbnail ? previewUrl(item, 'thumb') : '';
 
       const commentLabel = commentCount > 0
         ? `<span class="proofing-card-comments">${commentCount} comment${commentCount !== 1 ? 's' : ''}</span>`
@@ -303,22 +343,25 @@ document.addEventListener('DOMContentLoaded', () => {
       if (thumbSrc) {
         thumbContent = `<img src="${thumbSrc}" alt="${escapeHtml(item.title)}" loading="lazy">`;
       } else if (isPhoto) {
-        thumbContent = `<img src="/uploads/${encodeURIComponent(item.filename)}" alt="${escapeHtml(item.title)}" loading="lazy">`;
+        thumbContent = `<img src="/uploads/${encodeURIComponent(item.filename || '')}" alt="${escapeHtml(item.title)}" loading="lazy">`;
       } else {
-        thumbContent = `<video src="/uploads/${encodeURIComponent(item.filename)}" muted preload="metadata"></video>`;
+        thumbContent = `<video src="/uploads/${encodeURIComponent(item.filename || '')}" muted preload="metadata"></video>`;
       }
 
       card.innerHTML = `
         <div class="proofing-thumb-wrapper">
           ${thumbContent}
+          ${favsOn() ? `<button type="button" class="fav-heart${favs.includes(item.id) ? ' on' : ''}" data-fav="${escapeHtml(item.id)}" aria-label="Favorite" aria-pressed="${favs.includes(item.id)}">${favs.includes(item.id) ? '&#9829;' : '&#9825;'}</button>` : ''}
           ${durationLabel ? `<span class="proofing-thumb-duration">${Math.floor(item.duration / 60)}:${Math.floor(item.duration % 60).toString().padStart(2, '0')}</span>` : ''}
         </div>
-        <div class="proofing-card-info">
+        ${item.title || resLabel || commentLabel ? `<div class="proofing-card-info">
           <span class="proofing-card-title">${escapeHtml(item.title)}</span>
           <div class="proofing-card-meta">${resLabel}${commentLabel}</div>
-        </div>
+        </div>` : ''}
       `;
 
+      const heart = card.querySelector('.fav-heart');
+      if (heart) heart.addEventListener('click', (e) => { e.stopPropagation(); toggleFav(item.id); });
       card.addEventListener('click', () => openLightbox(item.id));
       videoListEl.appendChild(card);
     });
@@ -483,8 +526,8 @@ document.addEventListener('DOMContentLoaded', () => {
       lightboxVideo.src = '';
       lightboxVideo.style.display = 'none';
       lightboxPhoto.src = item.proxy
-        ? '/proxies/' + encodeURIComponent(item.proxy)
-        : '/uploads/' + encodeURIComponent(item.filename);
+        ? previewUrl(item, 'proxy')
+        : '/uploads/' + encodeURIComponent(item.filename || '');
       lightboxPhoto.style.display = '';
       hideSpinner();
       // Hide timestamp UI
@@ -495,7 +538,7 @@ document.addEventListener('DOMContentLoaded', () => {
       lightboxPhoto.src = '';
       lightboxVideo.style.display = '';
       showSpinner();
-      lightboxVideo.src = '/uploads/' + encodeURIComponent(item.filename);
+      lightboxVideo.src = '/uploads/' + encodeURIComponent(item.filename || '');
       setCaptionTracks(lightboxVideo, item.captions);
       lightboxVideo.load();
       // Show timestamp UI
@@ -508,13 +551,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (galleryData.gallery.downloadsEnabled) {
+      // "Client chooses" offers both sizes for a photo; otherwise one button
+      // and the server applies the gallery's setting.
+      const both = galleryData.gallery.downloadMode === 'both' && currentItemIsPhoto && item.proxy;
       lightboxDownloadBtn.style.display = '';
+      lightboxDownloadBtn.textContent = both ? 'Download original' : 'Download';
       lightboxDownloadBtn.onclick = () => {
         window.location.href = `/api/client/galleries/${token}/download/${videoId}`;
       };
+      lightboxDownloadWebBtn.style.display = both ? '' : 'none';
+      lightboxDownloadWebBtn.onclick = () => {
+        window.location.href = `/api/client/galleries/${token}/download/${videoId}?size=web`;
+      };
     } else {
       lightboxDownloadBtn.style.display = 'none';
+      lightboxDownloadWebBtn.style.display = 'none';
     }
+    updateLightboxFav();
 
     // Transcripts button: only for videos that actually have caption tracks,
     // and only when downloads are enabled for the gallery.
@@ -748,6 +801,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function openDownloadModal(title, msg) {
+    downloadProgressBar.parentElement.style.display = '';
     downloadModalTitle.textContent = title;
     downloadModalMsg.textContent = msg;
     downloadModalDetail.textContent = '';
@@ -836,7 +890,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const captions = (item.captions || []).filter(c => c.filename);
     if (!captions.length) return;
 
-    const titleBase = sanitizeName(item.title, sanitizeName(item.filename.replace(/\.[^.]+$/, ''), 'transcript'));
+    const titleBase = sanitizeName(item.title, sanitizeName((item.filename || '').replace(/\.[^.]+$/, ''), 'transcript'));
 
     const used = new Set();
     const entries = captions.map(c => ({
@@ -879,16 +933,35 @@ document.addEventListener('DOMContentLoaded', () => {
   // The server caps how large a generated response can be, so a big gallery
   // arrives as numbered parts. One part is a plain download; several get a small
   // chooser so it's clear what to click.
-  downloadAllBtn.addEventListener('click', async () => {
+  downloadAllBtn.addEventListener('click', () => {
     if (downloadActive) return;
     if (!galleryData || !galleryData.items) return;
 
     const mediaItems = galleryData.items.filter(v => v.type === 'photo' || v.type === 'video');
     if (mediaItems.length === 0) return;
 
+    // "Client chooses": ask which size before preparing anything. Videos are
+    // always originals, so a gallery of only videos has nothing to choose.
+    if (galleryData.gallery.downloadMode === 'both' && mediaItems.some(v => v.type === 'photo' && v.proxy)) {
+      setDownloadActive(true);
+      openDownloadModal('Choose a size', 'Originals are the full-resolution files. Web size is a 2048px JPEG of each photo, much smaller; videos are always the original.');
+      downloadProgressBar.parentElement.style.display = 'none';
+      downloadModalDetail.innerHTML =
+        '<button class="dl-part-btn" data-dl-size="original">Original files</button>' +
+        '<button class="dl-part-btn" data-dl-size="web">Web size photos</button>';
+      downloadModalDetail.querySelectorAll('[data-dl-size]').forEach(btn => {
+        btn.addEventListener('click', () => runDownloadAll(btn.getAttribute('data-dl-size')));
+      });
+      return;
+    }
     setDownloadActive(true);
+    runDownloadAll('');
+  });
+
+  async function runDownloadAll(size) {
+    const qs = size === 'web' ? '?size=web' : '';
     // Fire-and-forget: record that a "Download All" run started.
-    fetch(`/api/client/galleries/${token}/events/download-all`, { method: 'POST', keepalive: true })
+    fetch(`/api/client/galleries/${token}/events/download-all${qs}`, { method: 'POST', keepalive: true })
       .catch(() => {});
 
     openDownloadModal('Preparing your download', 'Getting your files ready…');
@@ -897,7 +970,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let plan;
     try {
-      const res = await fetch(`/api/client/galleries/${token}/zip`);
+      const res = await fetch(`/api/client/galleries/${token}/zip${qs}`);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       plan = await res.json();
     } catch (e) {
@@ -945,7 +1018,7 @@ document.addEventListener('DOMContentLoaded', () => {
     downloadCancelBtn.style.display = '';
     downloadCancelBtn.textContent = 'Done';
     downloadCancelBtn.disabled = false;
-  });
+  }
 
   // Navigating an iframe rather than the tab keeps the page (and its download
   // buttons) alive while the browser saves the file.
@@ -957,6 +1030,126 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => frame.remove(), 120000);
   }
 
+
+  // ============ Favorites ============
+
+  async function initFavorites() {
+    if (!favsOn()) { favCounter.hidden = true; favSendBtn.hidden = true; return; }
+    try {
+      const res = await fetch(`/api/client/galleries/${token}/selection?clientId=${encodeURIComponent(clientId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        favs = data.ids || [];
+        favSubmitted = data.submittedAt ? (data.submittedIds || []) : null;
+        if (data.name && !viewerName) favNameInput.value = data.name;
+      }
+    } catch (_) { /* start empty; picks still save as they are made */ }
+    renderVideoList();
+    updateFavUI();
+  }
+
+  function updateFavUI() {
+    if (!favsOn()) return;
+    const limit = favLimit();
+    favCounter.hidden = false;
+    favCounter.textContent = limit ? `${favs.length} of ${limit} picked` : `${favs.length} picked`;
+    favSendBtn.hidden = false;
+    const same = favSubmitted && favSubmitted.length === favs.length && favs.every(id => favSubmitted.includes(id));
+    favSendBtn.disabled = favs.length === 0;
+    favSendBtn.textContent = same ? 'Picks sent' : favSubmitted ? 'Send updated picks' : 'Send my picks';
+    document.querySelectorAll('.fav-heart').forEach(h => {
+      const on = favs.includes(h.dataset.fav);
+      h.classList.toggle('on', on);
+      h.innerHTML = on ? '&#9829;' : '&#9825;';
+      h.setAttribute('aria-pressed', on);
+    });
+    updateLightboxFav();
+  }
+
+  function updateLightboxFav() {
+    if (!favsOn() || !currentVideoId) { lightboxFavBtn.hidden = true; return; }
+    const on = favs.includes(currentVideoId);
+    lightboxFavBtn.hidden = false;
+    lightboxFavBtn.classList.toggle('on', on);
+    lightboxFavBtn.innerHTML = on ? '&#9829; Favorited' : '&#9825; Favorite';
+  }
+  lightboxFavBtn.addEventListener('click', () => { if (currentVideoId) toggleFav(currentVideoId); });
+
+  function toggleFav(id) {
+    const before = favs.slice();
+    const limit = favLimit();
+    if (favs.includes(id)) {
+      favs = favs.filter(x => x !== id);
+    } else {
+      if (limit && favs.length >= limit) {
+        alert(`You can pick up to ${limit}. Remove one to choose another.`);
+        return;
+      }
+      favs = favs.concat(id);
+    }
+    updateFavUI();
+    saveFavs(before);
+  }
+
+  // Saves run one after another so a quick double-tap can't land out of order.
+  function saveFavs(rollbackTo) {
+    const ids = favs.slice();
+    favSaving = favSaving.then(async () => {
+      try {
+        const res = await fetch(`/api/client/galleries/${token}/selection`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientId, ids }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          favs = rollbackTo;
+          updateFavUI();
+          alert(err.error || 'Could not save that pick. Please try again.');
+        }
+      } catch (_) {
+        favs = rollbackTo;
+        updateFavUI();
+        alert('Could not save that pick. Check your connection and try again.');
+      }
+    });
+  }
+
+  favSendBtn.addEventListener('click', () => {
+    favNameInput.value = viewerName || favNameInput.value || '';
+    document.getElementById('fav-modal-summary').textContent =
+      `You picked ${favs.length} ${favs.length === 1 ? 'photo' : 'photos'}. We'll let the photographer know.`;
+    favError.textContent = '';
+    favSubmit.disabled = false;
+    favModal.style.display = 'flex';
+    setTimeout(() => favNameInput.focus(), 50);
+  });
+  document.getElementById('fav-cancel').addEventListener('click', () => { favModal.style.display = 'none'; });
+  favForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const name = favNameInput.value.trim();
+    if (!name) return;
+    favSubmit.disabled = true;
+    favError.textContent = '';
+    try {
+      await favSaving;
+      const res = await fetch(`/api/client/galleries/${token}/selection/submit`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientId, name, note: favNoteInput.value.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { favError.textContent = data.error || 'Could not send. Please try again.'; favSubmit.disabled = false; return; }
+      favSubmitted = favs.slice();
+      if (!viewerName) { viewerName = name; localStorage.setItem('proofing-name', name); viewerDisplayName.textContent = name; }
+      favModal.style.display = 'none';
+      updateFavUI();
+      alert(data.emailed === false
+        ? 'Your picks are saved. We could not send the notification email, so please let the photographer know.'
+        : 'Thank you. Your picks have been sent.');
+    } catch (_) {
+      favError.textContent = 'Could not connect. Please try again.';
+      favSubmit.disabled = false;
+    }
+  });
 
   // ============ Helpers ============
 

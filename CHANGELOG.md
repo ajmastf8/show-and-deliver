@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.5.0 — 2026-10-26
+Client delivery galleries get a block of per-gallery options in Settings (not inherited from collections).
+- **Order.** Show items in your own drag order, or sorted by file name (natural order, so `IMG_2` comes before `IMG_10`), capture time (from the photo's EXIF, or a video's recorded date; ascending or descending) or date added. Section headers keep their place. The client page, Download All and delivery zips follow it, and the admin item list shows the order with dragging turned off while a sort is active. Capture times are recorded at upload; older galleries get theirs filled in the first time they are needed.
+- **Favorites.** Clients heart photos, up to an optional limit, and press Send my picks. You get an email with the file names and any note, and a new Favorites tab in the gallery drawer lists each visitor's picks with Copy file names (paste into Lightroom's filter) and Clear. Picks are private to the visitor's browser until sent, can be changed and re-sent, and need no account.
+- **Download as.** Originals, web size (the 2048px JPEG of each photo, far smaller), or let the client choose, for single downloads and Download All. Videos are always the original.
+- **Watermark previews.** Stamps the site watermark on thumbnails and the viewer, generated once per photo and kept. Downloads stay clean. It deters casual saving; it does not make previews un-fetchable.
+- **Show file names.** Turn off to hide titles and camera file names from the client page.
+- **Cover.** Choose a gallery's cover with the star next to any item; it shows in the library and in collections.
+- **Activity.** The drawer shows views, whole-gallery and single downloads, the last download, and the most recent downloads with file names and size, plus how many visitors sent favorites.
+
 ## 2.4.1 — 2026-10-25
 - **The admin now works on a phone.** Below 1100px the library list was a blank screen (its sidebar left the layout but the list was still placed in a zero-width column), and the Portfolio tab had no way to open its sidebar at all. Both are fixed: the ☰ button opens whichever tab's sidebar as a slide-over with a scrim, and picking something closes it. On phones the top bar becomes two rows with the account links (Uploads, theme, password, logout) in a ⋯ menu; the gallery list shows name, items and access; row checkboxes, favorite stars and open links are always visible on touch screens instead of appearing on hover; the bulk bar fits the width and scrolls sideways; dialogs open as bottom sheets with link/copy button rows wrapping under their fields; the upload queue, drawer, preview player and portfolio grids reflow; and form fields are 16px so iOS no longer zooms in when you tap one.
 

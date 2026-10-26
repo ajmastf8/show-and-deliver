@@ -221,6 +221,31 @@ A client gallery is always type `proofing`; sending any other `type` is a
 
 Attach a gallery to a collection with the collection's `galleryIds` (above).
 
+### Gallery options
+
+These belong to the gallery itself and are never inherited from a collection.
+Send any of them to `POST` or `PUT` a gallery:
+
+| Field | Values | Meaning |
+|---|---|---|
+| `sort` | `{"by": "custom\|name\|captured\|added", "dir": "asc\|desc"}` | How clients (and the admin list) see the items. `custom` is your drag order; `name` is the uploaded file name in natural order (`IMG_2` before `IMG_10`); `captured` is the EXIF date, or a video's recorded date, falling back to when it was added; `added` is upload time. Section headers keep their place and items sort within each section. |
+| `downloadMode` | `original` (default), `web`, `both` | What a client downloads. `web` is the 2048px JPEG of each photo; videos are always the original. With `both` the client picks, and the page asks. |
+| `selection` | `{"enabled": true, "limit": 0}` | Lets clients mark favorites and send them to you. `limit` caps how many (0 means no cap). |
+| `watermark` | `true` / `false` | Stamp the site watermark (Portfolio > Site design) on the thumbnails and the viewer. Downloads are not marked. |
+| `showTitles` | `true` (default) / `false` | `false` blanks titles and file names on the client page. |
+| `coverId` | an item id, or `""` to clear | The item whose thumbnail represents the gallery in lists and collections. Default is the first item in the gallery's sort order. |
+
+Capture times are recorded as each file is uploaded. Galleries that predate
+this get them filled in the first time something asks (the first
+`sort: captured` request, or opening the gallery in the admin), without
+changing the gallery's version marker.
+
+```
+GET    /api/admin/client/galleries/{gid}/activity           # views, downloads, recent downloads, favorites sent
+GET    /api/admin/client/galleries/{gid}/selections          # what each visitor picked, with file names
+DELETE /api/admin/client/galleries/{gid}/selections/{clientId}
+```
+
 ## Items
 
 ```
@@ -305,10 +330,14 @@ POST /api/client/galleries/{token}/sync                # import from the FTP wat
 POST /api/client/galleries/{token}/unlock              # {"password": "..."}
 POST /api/client/galleries/{token}/comments
 POST /api/client/galleries/{token}/send-review         # email the comments to you
-GET  /api/client/galleries/{token}/download/{itemId}   # one original file
-GET  /api/client/galleries/{token}/zip                 # the zip plan (parts + URLs)
+GET  /api/client/galleries/{token}/download/{itemId}   # one file; add ?size=web for the 2048px version
+GET  /api/client/galleries/{token}/zip                 # the zip plan (parts + URLs); add ?size=web for web-size photos
 GET  /api/client/galleries/{token}/zip/{index}         # one zip part, streamed
 POST /api/client/galleries/{token}/events/download-all # count a Download All
+GET  /api/client/galleries/{token}/preview/{itemId}/{thumb|proxy}   # watermarked preview of a photo
+GET  /api/client/galleries/{token}/selection?clientId=  # this visitor's favorites (when enabled)
+PUT  /api/client/galleries/{token}/selection            # {"clientId": "...", "ids": [...]}; 409 past the limit
+POST /api/client/galleries/{token}/selection/submit     # {"clientId", "name", "note"}; emails you the list
 
 GET  /api/client/collections/{token}                   # collection + member galleries
 POST /api/client/collections/{token}/unlock

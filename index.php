@@ -32,6 +32,14 @@ define('HEADER_CONFIG_PATH', DATA_DIR . '/header.json');
 // Up here with the other paths: the portfolio index routes read it long before
 // the theme section of this file is reached.
 define('THEME_CONFIG_PATH', DATA_DIR . '/theme.json');
+// Client gallery options (see "CLIENT GALLERY OPTIONS" below). Constants live up
+// here because routes above that section run before it is reached.
+define('GALLERY_SORTS', ['custom', 'name', 'captured', 'added']);
+define('GALLERY_DOWNLOAD_MODES', ['original', 'web', 'both']);
+// Backfilling capture times reads every photo's EXIF once; stop after this long
+// and carry on with the next request rather than outlive the PHP time limit.
+define('GALLERY_META_BUDGET_SECONDS', 15);
+define('WM_CACHE_DIR', SITE_DATA . '/wm-cache');
 // Plain pages (about, contact), and the reserved portfolio folder their
 // pictures live in so /media/ serves them with no new rewrite rules.
 define('PAGES_PATH', DATA_DIR . '/pages.json');
@@ -1261,21 +1269,34 @@ function recordView($statsPath) {
     });
 }
 
-function recordItemDownload($statsPath, $videoId) {
-    jsonUpdate($statsPath, function($stats) use ($videoId) {
+// Keeps the last 50 download events (what, when, which size) for the admin's
+// activity panel, and the time of the latest one.
+function appendDownloadLog(array &$dl, array $entry) {
+    $log = $dl['log'] ?? [];
+    $log[] = $entry;
+    if (count($log) > 50) $log = array_slice($log, -50);
+    $dl['log'] = $log;
+    $dl['lastAt'] = $entry['at'];
+}
+
+function recordItemDownload($statsPath, $videoId, $variant = 'original') {
+    jsonUpdate($statsPath, function($stats) use ($videoId, $variant) {
         $dl = $stats['downloads'] ?? [];
         $items = $dl['items'] ?? [];
         $items[$videoId] = ($items[$videoId] ?? 0) + 1;
         $dl['items'] = $items;
+        $dl['itemTotal'] = ($dl['itemTotal'] ?? 0) + 1;
+        appendDownloadLog($dl, ['at' => date('c'), 'kind' => 'item', 'itemId' => $videoId, 'size' => $variant]);
         $stats['downloads'] = $dl;
         return $stats;
     });
 }
 
-function recordDownloadAll($statsPath) {
-    jsonUpdate($statsPath, function($stats) {
+function recordDownloadAll($statsPath, $variant = 'original') {
+    jsonUpdate($statsPath, function($stats) use ($variant) {
         $dl = $stats['downloads'] ?? [];
         $dl['downloadAll'] = ($dl['downloadAll'] ?? 0) + 1;
+        appendDownloadLog($dl, ['at' => date('c'), 'kind' => 'all', 'size' => $variant]);
         $stats['downloads'] = $dl;
         return $stats;
     });
@@ -1293,6 +1314,8 @@ function publicStats($stats) {
         ],
         'downloads' => [
             'downloadAll' => $downloads['downloadAll'] ?? 0,
+            'itemTotal' => $downloads['itemTotal'] ?? 0,
+            'lastAt' => $downloads['lastAt'] ?? null,
             'items' => $downloads['items'] ?? (object)[],
         ],
     ];
@@ -2016,9 +2039,10 @@ if ($method === 'GET' && $uri === '/api/admin/client/galleries') {
     }
     $galleries = array_map(function($g) use ($galColMap) {
         $s = sanitizeGallery($g);
-        $items = array_values(array_filter(readGalleryVideos($g['id']), fn($v) => ($v['type'] ?? '') !== 'header'));
+        $all = readGalleryVideos($g['id']);
+        $items = array_values(array_filter($all, fn($v) => ($v['type'] ?? '') !== 'header'));
         $s['videoCount'] = count($items);
-        $s['thumbnail'] = $items[0]['thumbnail'] ?? null;
+        $s['thumbnail'] = galleryCoverThumb($g, $all);
         $s['commentCount'] = $g['type'] === 'proofing' ? count(readGalleryComments($g['id'])) : 0;
         $s['collectionId'] = $galColMap[$g['id']]['id'] ?? null;
         $s['collectionName'] = $galColMap[$g['id']]['name'] ?? null;
@@ -2096,6 +2120,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{id}', $uri, $p
     if (isset($input['expiresAt'])) $gallery['expiresAt'] = $input['expiresAt'];
     if (isset($input['active'])) $gallery['active'] = $input['active'];
     if (isset($input['favorite'])) $gallery['favorite'] = $input['favorite'];
+    applyGalleryOptionsInput($gallery, $input);
     if (array_key_exists('importFolder', $input)) {
         [$folder, $err] = resolveImportFolder($input['importFolder'], $gallery['id'], $galleries);
         if ($err) respondError($err, 400);
@@ -2183,9 +2208,15 @@ if ($method === 'DELETE' && matchRoute('/api/admin/client/galleries/{id}', $uri,
 
 if ($method === 'GET' && matchRoute('/api/admin/client/galleries/{gid}/items', $uri, $params)) {
     requireAuth();
+    $gallery = null;
+    foreach (readGalleries() as $g) { if ($g['id'] === $params['gid']) { $gallery = $g; break; } }
+    $videos = readGalleryVideos($params['gid']);
+    if ($gallery) $videos = applyGallerySort($gallery, $videos);
     respond([
-        'items' => readGalleryVideos($params['gid']),
+        'items' => $videos,
         'stats' => publicStats(readGalleryStats($params['gid'])),
+        'sort' => $gallery ? galleryOptions($gallery)['sort'] : ['by' => 'custom', 'dir' => 'asc'],
+        'coverId' => $gallery ? galleryOptions($gallery)['coverId'] : null,
     ]);
 }
 
@@ -2194,6 +2225,351 @@ if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/stats/re
     $statsFile = galleryStatsPath($params['gid']);
     if (file_exists($statsFile)) unlink($statsFile);
     respond(['ok' => true]);
+}
+
+// ============================================================
+// CLIENT GALLERY OPTIONS
+//
+// Per-gallery choices that live beside the inherited password/downloads/expiry
+// (they are never inherited from a collection):
+//   sort          how the client sees items: custom (drag order), name, capture time, date added
+//   downloadMode  original | web (2048px proxy) | both
+//   selection     clients can mark favorites, optionally capped, and send them in
+//   watermark     previews (thumbnails and lightbox) carry the site watermark
+//   showTitles    off hides file names/titles from the client page
+//   coverId       the item whose thumbnail represents the gallery in lists
+// ============================================================
+
+
+function galleryOptions(array $g): array {
+    $sort = is_array($g['sort'] ?? null) ? $g['sort'] : [];
+    $sel = is_array($g['selection'] ?? null) ? $g['selection'] : [];
+    return [
+        'sort' => [
+            'by' => in_array($sort['by'] ?? '', GALLERY_SORTS, true) ? $sort['by'] : 'custom',
+            'dir' => ($sort['dir'] ?? '') === 'desc' ? 'desc' : 'asc',
+        ],
+        'downloadMode' => in_array($g['downloadMode'] ?? '', GALLERY_DOWNLOAD_MODES, true) ? $g['downloadMode'] : 'original',
+        'selection' => ['enabled' => !empty($sel['enabled']), 'limit' => max(0, min(100000, (int)($sel['limit'] ?? 0)))],
+        'watermark' => !empty($g['watermark']),
+        'showTitles' => ($g['showTitles'] ?? true) !== false,
+        'coverId' => (is_string($g['coverId'] ?? null) && $g['coverId'] !== '') ? $g['coverId'] : null,
+    ];
+}
+
+// Copies the option fields present in $input onto $gallery, validated.
+function applyGalleryOptionsInput(array &$gallery, array $input): void {
+    if (isset($input['sort']) && is_array($input['sort'])) {
+        $gallery['sort'] = galleryOptions(['sort' => $input['sort']])['sort'];
+    }
+    if (isset($input['downloadMode']) && in_array($input['downloadMode'], GALLERY_DOWNLOAD_MODES, true)) {
+        $gallery['downloadMode'] = $input['downloadMode'];
+    }
+    if (isset($input['selection']) && is_array($input['selection'])) {
+        $gallery['selection'] = galleryOptions(['selection' => $input['selection']])['selection'];
+    }
+    if (array_key_exists('watermark', $input)) $gallery['watermark'] = !empty($input['watermark']);
+    if (array_key_exists('showTitles', $input)) $gallery['showTitles'] = !empty($input['showTitles']);
+    if (array_key_exists('coverId', $input)) {
+        if (is_string($input['coverId']) && $input['coverId'] !== '') $gallery['coverId'] = $input['coverId'];
+        else unset($gallery['coverId']);
+    }
+}
+
+// The file name the photographer uploaded, recovered from the stored name
+// (uploads are saved as "<unix time>-<name>").
+function galleryItemFileName(array $v): string {
+    return (string)preg_replace('/^\d{9,}-/', '', (string)($v['filename'] ?? ''));
+}
+
+// Seconds since the Unix epoch from an MP4/MOV's movie header, or 0.
+function mp4CreationTime($path): int {
+    $fh = @fopen($path, 'rb');
+    if (!$fh) return 0;
+    try {
+        return mp4FindCreation($fh, @filesize($path) ?: 0, 0);
+    } finally {
+        fclose($fh);
+    }
+}
+function mp4FindCreation($fh, $end, $start): int {
+    $pos = $start;
+    while ($pos + 8 <= $end) {
+        fseek($fh, $pos);
+        $hdr = fread($fh, 8);
+        if (strlen($hdr) < 8) break;
+        $size = unpack('N', substr($hdr, 0, 4))[1];
+        $type = substr($hdr, 4, 4);
+        $headerLen = 8;
+        if ($size === 1) {
+            $p = unpack('Nhi/Nlo', fread($fh, 8));
+            $size = $p['hi'] * 4294967296 + $p['lo'];
+            $headerLen = 16;
+        } elseif ($size === 0) {
+            $size = $end - $pos;
+        }
+        if ($size < $headerLen) break;
+        $contentStart = $pos + $headerLen;
+        $contentEnd = $pos + $size;
+        if ($type === 'moov') {
+            $t = mp4FindCreation($fh, min($contentEnd, $end), $contentStart);
+            if ($t) return $t;
+        } elseif ($type === 'mvhd') {
+            fseek($fh, $contentStart);
+            $ver = ord(fread($fh, 1));
+            fread($fh, 3);
+            if ($ver === 1) {
+                $p = unpack('Nhi/Nlo', fread($fh, 8));
+                $mac = $p['hi'] * 4294967296 + $p['lo'];
+            } else {
+                $mac = unpack('N', fread($fh, 4))[1];
+            }
+            // QuickTime counts from 1904; an unset clock reads as 0 (or the epoch itself).
+            return $mac > 2082844800 ? (int)($mac - 2082844800) : 0;
+        }
+        $pos = $contentEnd;
+    }
+    return 0;
+}
+
+// When an item was captured: EXIF for photos, the movie header for videos.
+// 0 means the file doesn't say.
+function galleryCaptureTime(string $path, string $type): int {
+    if ($type === 'video') {
+        return preg_match('/\.(mp4|m4v|mov)$/i', $path) ? mp4CreationTime($path) : 0;
+    }
+    return (int)portfolioItemCaptureTime($path);
+}
+
+// Items uploaded before capture times were recorded get theirs filled in the
+// first time something needs them. The key is written even when the file has no
+// date (as 0) so it is never re-read. The file's mtime is put back afterwards:
+// galleryVersion() uses it, and a silent backfill must not tell open client
+// pages that the gallery changed.
+function ensureGalleryItemMeta(string $gid, array $videos): array {
+    $deadline = microtime(true) + GALLERY_META_BUDGET_SECONDS;
+    $found = [];
+    foreach ($videos as $v) {
+        if (($v['type'] ?? '') === 'header' || empty($v['id']) || empty($v['filename'])) continue;
+        if (array_key_exists('capturedAt', $v)) continue;
+        if (microtime(true) > $deadline) break;
+        $path = UPLOADS_DIR . '/' . $v['filename'];
+        $found[$v['id']] = is_file($path) ? galleryCaptureTime($path, $v['type'] ?? 'photo') : 0;
+    }
+    if (!$found) return $videos;
+    $file = galleryDir($gid) . '/videos.json';
+    clearstatcache(true, $file);
+    $mtime = @filemtime($file);
+    jsonUpdate($file, function ($list) use ($found) {
+        foreach ($list as &$v) {
+            $id = $v['id'] ?? '';
+            if (isset($found[$id]) && !array_key_exists('capturedAt', $v)) $v['capturedAt'] = $found[$id];
+        }
+        return $list;
+    });
+    if ($mtime) @touch($file, $mtime);
+    foreach ($videos as &$v) {
+        $id = $v['id'] ?? '';
+        if (isset($found[$id]) && !array_key_exists('capturedAt', $v)) $v['capturedAt'] = $found[$id];
+    }
+    return $videos;
+}
+
+// The gallery's items in the order its sort setting asks for. Section headers
+// keep their place and the items between two headers sort among themselves.
+function applyGallerySort(array $gallery, array $videos, bool $backfill = true): array {
+    $sort = galleryOptions($gallery)['sort'];
+    if ($sort['by'] === 'custom') return $videos;
+    if ($sort['by'] === 'captured' && $backfill) $videos = ensureGalleryItemMeta($gallery['id'], $videos);
+    $added = fn($v) => (int)strtotime((string)($v['createdAt'] ?? ''));
+    $key = function ($v) use ($sort, $added) {
+        if ($sort['by'] === 'name') return galleryItemFileName($v);
+        if ($sort['by'] === 'captured') return (int)($v['capturedAt'] ?? 0) ?: $added($v);
+        return $added($v);
+    };
+    $flush = function (array $run) use ($sort, $key) {
+        $rows = [];
+        foreach ($run as $i => $v) $rows[] = [$v, $key($v), $i];
+        usort($rows, function ($a, $b) use ($sort) {
+            $c = $sort['by'] === 'name' ? strnatcasecmp($a[1], $b[1]) : $a[1] <=> $b[1];
+            if ($sort['dir'] === 'desc') $c = -$c;
+            return $c ?: $a[2] <=> $b[2];
+        });
+        return array_map(fn($r) => $r[0], $rows);
+    };
+    $out = [];
+    $run = [];
+    foreach ($videos as $v) {
+        if (($v['type'] ?? '') === 'header') {
+            array_push($out, ...$flush($run));
+            $run = [];
+            $out[] = $v;
+        } else {
+            $run[] = $v;
+        }
+    }
+    array_push($out, ...$flush($run));
+    return $out;
+}
+
+// The thumbnail that stands for a gallery in lists: the chosen cover, else the
+// first item (in the gallery's own sort order).
+function galleryCoverThumb(array $gallery, array $videos): ?string {
+    $items = array_values(array_filter($videos, fn($v) => ($v['type'] ?? '') !== 'header'));
+    $coverId = galleryOptions($gallery)['coverId'];
+    if ($coverId) {
+        foreach ($items as $v) {
+            if (($v['id'] ?? '') === $coverId && !empty($v['thumbnail'])) return $v['thumbnail'];
+        }
+    }
+    $items = array_values(array_filter(applyGallerySort($gallery, $videos, false), fn($v) => ($v['type'] ?? '') !== 'header'));
+    return $items[0]['thumbnail'] ?? null;
+}
+
+// --- Download variant -------------------------------------------------------
+
+// 'original' or 'web' for one request. A video has no web version, so only
+// photos are ever affected; the caller falls back to the original when a photo
+// has no proxy yet.
+function galleryDownloadVariant(array $gallery, $requested): string {
+    $mode = galleryOptions($gallery)['downloadMode'];
+    if ($mode === 'web') return 'web';
+    if ($mode === 'both' && $requested === 'web') return 'web';
+    return 'original';
+}
+
+// --- Watermarked previews ---------------------------------------------------
+
+
+// The site watermark (Site design > Watermark), if one has been uploaded.
+function siteWatermark(): ?array {
+    $t = readThemeConfig()['watermark'] ?? [];
+    $src = (string)($t['src'] ?? '');
+    if ($src === '' || !preg_match('#^/logo/[A-Za-z0-9._-]+$#', $src)) return null;
+    $path = SITE_DATA . '/logo/' . basename($src);
+    if (!is_file($path)) return null;
+    $t['path'] = $path;
+    return $t;
+}
+
+// Composites the watermark onto a GD image: width is a percentage of the
+// picture, 4% in from the chosen corner, opacity applied per pixel so the PNG's
+// own transparency survives. Mirrors how the portfolio overlays it.
+function stampWatermark($im, array $wm): void {
+    $mark = @imagecreatefrompng($wm['path']);
+    if (!$mark) return;
+    $W = imagesx($im); $H = imagesy($im);
+    $mw = imagesx($mark); $mh = imagesy($mark);
+    if ($mw < 1 || $mh < 1) return;
+    $tw = max(8, (int)round($W * (int)$wm['scale'] / 100));
+    $th = max(1, (int)round($mh * $tw / $mw));
+    if ($th > $H * 0.5) { $th = (int)round($H * 0.5); $tw = max(1, (int)round($mw * $th / $mh)); }
+    $scaled = imagecreatetruecolor($tw, $th);
+    imagealphablending($scaled, false);
+    imagesavealpha($scaled, true);
+    imagefill($scaled, 0, 0, imagecolorallocatealpha($scaled, 0, 0, 0, 127));
+    imagecopyresampled($scaled, $mark, 0, 0, 0, 0, $tw, $th, $mw, $mh);
+    $op = max(0.05, min(1, (int)$wm['opacity'] / 100));
+    if ($op < 1) {
+        for ($y = 0; $y < $th; $y++) {
+            for ($x = 0; $x < $tw; $x++) {
+                $c = imagecolorat($scaled, $x, $y);
+                $a = ($c >> 24) & 0x7F;
+                $na = 127 - (int)round((127 - $a) * $op);
+                imagesetpixel($scaled, $x, $y, ($c & 0xFFFFFF) | ($na << 24));
+            }
+        }
+    }
+    $mx = (int)round($W * 0.04); $my = (int)round($H * 0.04);
+    switch ($wm['position'] ?? 'br') {
+        case 'tl': $x = $mx; $y = $my; break;
+        case 'tr': $x = $W - $tw - $mx; $y = $my; break;
+        case 'bl': $x = $mx; $y = $H - $th - $my; break;
+        case 'center': $x = (int)(($W - $tw) / 2); $y = (int)(($H - $th) / 2); break;
+        default: $x = $W - $tw - $mx; $y = $H - $th - $my;
+    }
+    imagealphablending($im, true);
+    imagecopy($im, $scaled, max(0, $x), max(0, $y), 0, 0, $tw, $th);
+}
+
+// Path of the watermarked copy of an item's thumbnail or proxy, made on first
+// request and kept. The name carries a signature of everything that shapes the
+// result, so changing the watermark or replacing the photo simply makes a new
+// file. Returns null when there is nothing to stamp.
+function galleryWatermarkedPreview(array $gallery, array $item, string $kind): ?string {
+    $wm = siteWatermark();
+    if (!$wm) return null;
+    $name = $kind === 'thumb' ? ($item['thumbnail'] ?? '') : ($item['proxy'] ?? '');
+    $src = ($kind === 'thumb' ? THUMBS_DIR : PROXY_DIR) . '/' . basename((string)$name);
+    if ($name === '' || !is_file($src)) return null;
+    $sig = substr(md5(json_encode([$wm['position'] ?? 'br', $wm['scale'], $wm['opacity'], filemtime($wm['path']), filemtime($src), filesize($src)])), 0, 12);
+    $dir = WM_CACHE_DIR . '/' . $gallery['id'];
+    $out = $dir . '/' . $item['id'] . '_' . $kind . '_' . $sig . '.jpg';
+    if (is_file($out)) return $out;
+    $im = @imagecreatefromjpeg($src);
+    if (!$im) return null;
+    stampWatermark($im, $wm);
+    if (!is_dir($dir)) @mkdir($dir, 0755, true);
+    // Old signatures for this item are dead weight.
+    foreach (glob($dir . '/' . $item['id'] . '_' . $kind . '_*.jpg') ?: [] as $old) @unlink($old);
+    $tmp = $out . '.tmp' . getmypid();
+    imagejpeg($im, $tmp, 85);
+    @rename($tmp, $out);
+    return is_file($out) ? $out : null;
+}
+
+// --- Favorites (client selections) -----------------------------------------
+
+function gallerySelectionsPath($gid) { return galleryDir($gid) . '/selections.json'; }
+function readGallerySelections($gid): array { return jsonRead(gallerySelectionsPath($gid)) ?: []; }
+function validClientId($id): bool { return is_string($id) && preg_match('/^[A-Za-z0-9_-]{8,64}$/', $id) === 1; }
+
+// What a client may mark: the visible photos and videos of the gallery.
+function selectableItemIds($gid): array {
+    $ids = [];
+    foreach (readGalleryVideos($gid) as $v) {
+        if (($v['type'] ?? '') === 'header' || ($v['visible'] ?? true) === false || empty($v['id'])) continue;
+        $ids[$v['id']] = true;
+    }
+    return $ids;
+}
+
+function sendSelectionSummary(array $gallery, array $videos, array $sel, string $clientId, bool $isUpdate): void {
+    $config = getEmailConfig();
+    if (!$config['adminEmail']) throw new Exception('Admin email address is required');
+    $byId = [];
+    foreach ($videos as $v) { if (!empty($v['id'])) $byId[$v['id']] = $v; }
+    $names = [];
+    foreach ($sel['ids'] as $id) {
+        if (isset($byId[$id])) $names[] = galleryItemFileName($byId[$id]) ?: ($byId[$id]['title'] ?? $id);
+    }
+    $count = count($names);
+    $label = $count . ' favorite' . ($count !== 1 ? 's' : '');
+    $who = $sel['name'];
+    $subject = emailSubject($isUpdate ? 'Updated favorites' : 'Favorites', $gallery['name']);
+
+    $text = ["$who picked $label in \"{$gallery['name']}\":", ''];
+    $html = '';
+    foreach ($names as $n) {
+        $text[] = '  ' . $n;
+        $html .= '<div style="padding:7px 12px;background:#f7f8fa;border-radius:6px;margin-bottom:5px;color:#41464f;font-size:13.5px;">' . escHtml($n) . '</div>';
+    }
+    if (!empty($sel['note'])) {
+        $text[] = ''; $text[] = 'Note: ' . $sel['note'];
+        $html .= '<div style="padding:12px 0 0;color:#41464f;font-size:13.5px;line-height:1.55;"><strong style="color:#1a1a1a;">Note</strong><br>' . nl2br(escHtml($sel['note'])) . '</div>';
+    }
+    $adminLink = $config['baseUrl'] . '/admin#gallery/' . $gallery['id'];
+    $text[] = ''; $text[] = "Open in the admin: $adminLink";
+
+    $htmlBody = emailShell([
+        'title' => $label . ' in ' . $gallery['name'],
+        'lead'  => '<strong style="color:#1a1a1a;">' . escHtml($who) . '</strong> ' . ($isUpdate ? 'updated their picks' : 'sent their picks')
+                 . ' in <strong style="color:#1a1a1a;">' . escHtml($gallery['name']) . '</strong>: ' . $label . '.',
+        'body'  => $html,
+        'cta'   => ['label' => 'Open in admin', 'url' => $adminLink],
+        'note'  => '',
+    ]);
+    sendEmail($config['adminEmail'], $subject, implode("\n", $text), $htmlBody);
 }
 
 // Shared item-creation helper. Given a file already saved under UPLOADS_DIR
@@ -2213,6 +2589,8 @@ function registerGalleryItem(string $gid, string $destName, string $title): arra
         'filename' => $destName,
         'visible' => true,
         'createdAt' => date('c'),
+        // When it was shot, for the capture-time sort. 0 = the file doesn't say.
+        'capturedAt' => galleryCaptureTime($destPath, $isPhoto ? 'photo' : 'video'),
     ];
     if ($isPhoto) {
         $meta = probeImage($destPath);
@@ -2220,7 +2598,11 @@ function registerGalleryItem(string $gid, string $destName, string $title): arra
         $thumbFilename = $item['id'] . '.jpg';
         $proxyFilename = $item['id'] . '_proxy.jpg';
         if (generatePhotoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename)) $item['thumbnail'] = $thumbFilename;
-        if (generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename)) $item['proxy'] = $proxyFilename;
+        if (generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename)) {
+            $item['proxy'] = $proxyFilename;
+            // Web-size downloads zip the proxy; hash it now like the original.
+            fileCrc32(PROXY_DIR . '/' . $proxyFilename);
+        }
     } else {
         $meta = probeVideo($destPath);
         if ($meta) {
@@ -2674,6 +3056,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{gid}/items/{ii
     $video['filename'] = $destName;
     $video['type'] = $isPhoto ? 'photo' : 'video';
     $video['replacedAt'] = date('c');
+    $video['capturedAt'] = galleryCaptureTime($destPath, $isPhoto ? 'photo' : 'video');
     $video['thumbnail'] = null;
     $video['proxy'] = null;
     unset($video['duration'], $video['width'], $video['height'], $video['captions']);
@@ -2685,6 +3068,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{gid}/items/{ii
         $proxyFilename = $video['id'] . '_proxy.jpg';
         generatePhotoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename);
         generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename);
+        fileCrc32(PROXY_DIR . '/' . $proxyFilename);
         $video['thumbnail'] = $thumbFilename;
         $video['proxy'] = $proxyFilename;
     } else {
@@ -3100,15 +3484,33 @@ function getProofingGallery($token) {
 }
 
 function galleryPayload($gallery) {
+    $opts = galleryOptions($gallery);
     $videos = array_values(array_filter(readGalleryVideos($gallery['id']), function($v) {
         return ($v['type'] ?? '') === 'header' || ($v['visible'] ?? true) !== false;
     }));
+    $videos = applyGallerySort($gallery, $videos);
+    foreach ($videos as &$v) {
+        if (($v['type'] ?? '') === 'header') continue;
+        unset($v['capturedAt']);
+        if (!$opts['showTitles']) {
+            $v['title'] = '';
+            // The stored name is the camera's file name; photos shown from their
+            // thumbnail and proxy never need it on the page.
+            if (($v['type'] ?? '') === 'photo' && !empty($v['thumbnail']) && !empty($v['proxy'])) unset($v['filename']);
+        }
+    }
+    unset($v);
     $comments = readGalleryComments($gallery['id']);
     return [
         'gallery' => [
             'name' => $gallery['name'],
             'type' => $gallery['type'] ?? 'proofing',
             'downloadsEnabled' => $gallery['downloadsEnabled'],
+            'downloadMode' => $opts['downloadMode'],
+            'showTitles' => $opts['showTitles'],
+            // Only true when there is a watermark to apply.
+            'watermark' => $opts['watermark'] && siteWatermark() !== null,
+            'selection' => $opts['selection'],
             'commentingEnabled' => $gallery['commentingEnabled'] ?? false,
             // Whether the page should poll for FTP arrivals. The folder name stays private.
             'live' => !empty($gallery['importFolder']),
@@ -3214,15 +3616,29 @@ if ($method === 'GET' && matchRoute('/api/client/galleries/{token}/download/{ite
     $filePath = UPLOADS_DIR . '/' . $video['filename'];
     if (!file_exists($filePath)) respondError('File not found', 404);
 
-    recordItemDownload(galleryStatsPath($gallery['id']), $video['id']);
+    // Web size is the 2048px proxy of a photo; anything else is the original.
+    $served = $filePath;
+    $servedExt = pathinfo($video['filename'], PATHINFO_EXTENSION);
+    $publicUri = staticUploadUrl($video['filename']);
+    $variant = 'original';
+    if (galleryDownloadVariant($gallery, $_GET['size'] ?? '') === 'web'
+        && ($video['type'] ?? '') === 'photo' && !empty($video['proxy'])
+        && is_file(PROXY_DIR . '/' . $video['proxy'])) {
+        $served = PROXY_DIR . '/' . $video['proxy'];
+        $servedExt = 'jpg';
+        $publicUri = null;
+        $variant = 'web';
+    }
+    recordItemDownload(galleryStatsPath($gallery['id']), $video['id'], $variant);
 
-    $ext = pathinfo($video['filename'], PATHINFO_EXTENSION);
-    $downloadName = preg_replace('/[^a-zA-Z0-9 .\-]/', '', $video['title']) . '.' . $ext;
+    $base = preg_replace('/[^a-zA-Z0-9 .\-]/', '', (string)($video['title'] ?? ''));
+    if (trim($base) === '') $base = pathinfo(galleryItemFileName($video), PATHINFO_FILENAME);
+    $downloadName = $base . '.' . $servedExt;
 
     // Streams without buffering so a big video isn't loaded into memory, and
     // hands files past the dynamic-response cap to the web server so they
     // aren't truncated mid-download.
-    sendStaticFile($filePath, $downloadName, 'application/octet-stream', staticUploadUrl($video['filename']));
+    sendStaticFile($served, $downloadName, 'application/octet-stream', $publicUri);
 }
 
 // Bulk "Download All" beacon — fired once by proofing.js when a zip run starts.
@@ -3230,16 +3646,16 @@ if ($method === 'GET' && matchRoute('/api/client/galleries/{token}/download/{ite
 if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/events/download-all', $uri, $params)) {
     $gallery = getProofingGallery($params['token']);
     if (!$gallery['downloadsEnabled']) respondError('Downloads disabled', 403);
-    recordDownloadAll(galleryStatsPath($gallery['id']));
+    recordDownloadAll(galleryStatsPath($gallery['id']), galleryDownloadVariant($gallery, $_GET['size'] ?? ''));
     respond(['ok' => true]);
 }
 
 // A client gallery's downloadable contents: its media, plus each video's
 // caption tracks as sibling .vtt files named to match so players pick them up
 // automatically. The browser-side zip did this, so the server-side one must too.
-function proofingZipEntries($gallery) {
+function proofingZipEntries($gallery, bool $web = false) {
     $used = [];
-    $entries = packageGalleryFiles($gallery, '', $used);
+    $entries = packageGalleryFiles($gallery, '', $used, $web);
 
     $byFile = [];
     foreach (readGalleryVideos($gallery['id']) as $v) {
@@ -3283,7 +3699,8 @@ if ($method === 'GET' && matchRoute('/api/client/galleries/{token}/zip', $uri, $
     $gallery = getProofingGallery($params['token']);
     if (!$gallery['downloadsEnabled']) respondError('Downloads disabled', 403);
 
-    $parts = packagePlanParts(proofingZipEntries($gallery));
+    $web = galleryDownloadVariant($gallery, $_GET['size'] ?? '') === 'web';
+    $parts = packagePlanParts(proofingZipEntries($gallery, $web));
     $out = [];
     foreach ($parts as $p) {
         $out[] = [
@@ -3292,7 +3709,7 @@ if ($method === 'GET' && matchRoute('/api/client/galleries/{token}/zip', $uri, $
             'label'     => $p['kind'] === 'file' ? basename($p['entries'][0]['name']) : sprintf('Part %d', $p['index']),
             'size'      => (int)$p['size'],
             'fileCount' => count($p['entries']),
-            'url'       => '/api/client/galleries/' . rawurlencode($params['token']) . '/zip/' . $p['index'],
+            'url'       => '/api/client/galleries/' . rawurlencode($params['token']) . '/zip/' . $p['index'] . ($web ? '?size=web' : ''),
         ];
     }
     respond(['name' => $gallery['name'], 'parts' => $out]);
@@ -3304,7 +3721,8 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/client/galleri
 
     // Re-planned per request rather than stored: a client gallery is live, and
     // items can be added or hidden between the page loading and the click.
-    $parts = packagePlanParts(proofingZipEntries($gallery));
+    $web = galleryDownloadVariant($gallery, $_GET['size'] ?? '') === 'web';
+    $parts = packagePlanParts(proofingZipEntries($gallery, $web));
     $part = null;
     foreach ($parts as $p) { if ((int)$p['index'] === (int)$params['index']) { $part = $p; break; } }
     if (!$part) respondError('Not found', 404);
@@ -3313,10 +3731,11 @@ if (($method === 'GET' || $method === 'HEAD') && matchRoute('/api/client/galleri
 
     if ($part['kind'] === 'file') {
         $entry = $part['entries'][0];
-        $path = UPLOADS_DIR . '/' . basename($entry['file']);
+        $isProxy = ($entry['dir'] ?? '') === 'proxies';
+        $path = ($isProxy ? PROXY_DIR : UPLOADS_DIR) . '/' . basename($entry['file']);
         if (!is_file($path)) respondError('Not found', 404);
-        recordItemDownload(galleryStatsPath($gallery['id']), $entry['id'] ?? '');
-        sendStaticFile($path, basename($entry['name']), 'application/octet-stream', staticUploadUrl($entry['file']));
+        recordItemDownload(galleryStatsPath($gallery['id']), $entry['id'] ?? '', $isProxy ? 'web' : 'original');
+        sendStaticFile($path, basename($entry['name']), 'application/octet-stream', $isProxy ? null : staticUploadUrl($entry['file']));
     }
 
     $partCount = count($parts);
@@ -3354,6 +3773,179 @@ if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/send-review'
     } catch (Exception $e) {
         respondError($e->getMessage(), 500);
     }
+}
+
+// Watermarked previews. The page asks for a photo's thumbnail or proxy here
+// instead of the static file when the gallery has a watermark on; the stamped
+// copy is made once and kept. Without a watermark it just serves the plain file.
+if ($method === 'GET' && matchRoute('/api/client/galleries/{token}/preview/{itemId}/{kind}', $uri, $params)) {
+    $gallery = getProofingGallery($params['token']);
+    if (!in_array($params['kind'], ['thumb', 'proxy'], true)) respondError('Not found', 404);
+    $item = null;
+    foreach (readGalleryVideos($gallery['id']) as $v) {
+        if (($v['id'] ?? '') === $params['itemId'] && ($v['visible'] ?? true) !== false) { $item = $v; break; }
+    }
+    if (!$item || ($item['type'] ?? '') !== 'photo') respondError('Not found', 404);
+    $path = galleryOptions($gallery)['watermark'] ? galleryWatermarkedPreview($gallery, $item, $params['kind']) : null;
+    if (!$path) {
+        $name = $params['kind'] === 'thumb' ? ($item['thumbnail'] ?? '') : ($item['proxy'] ?? '');
+        $path = ($params['kind'] === 'thumb' ? THUMBS_DIR : PROXY_DIR) . '/' . basename((string)$name);
+        if ($name === '' || !is_file($path)) respondError('Not found', 404);
+    }
+    header('Content-Type: image/jpeg');
+    header('Content-Length: ' . filesize($path));
+    // Short, so switching the watermark off isn't hidden behind a day-old copy.
+    header('Cache-Control: private, max-age=300');
+    readfile($path);
+    exit;
+}
+
+// Favorites. A visitor is identified by an id their browser makes up and keeps,
+// so there is no account to create; what they pick is private to that id until
+// they send it in. Everything is checked against the gallery's own item list.
+function requireSelectionGallery($token) {
+    $gallery = getProofingGallery($token);
+    if (!galleryOptions($gallery)['selection']['enabled']) respondError('Favorites are not turned on for this gallery', 403);
+    return $gallery;
+}
+
+if ($method === 'GET' && matchRoute('/api/client/galleries/{token}/selection', $uri, $params)) {
+    $gallery = requireSelectionGallery($params['token']);
+    $cid = $_GET['clientId'] ?? '';
+    if (!validClientId($cid)) respondError('Bad client id', 400);
+    $mine = readGallerySelections($gallery['id'])[$cid] ?? [];
+    respond([
+        'ids' => array_values($mine['ids'] ?? []),
+        'submittedIds' => array_values($mine['submittedIds'] ?? []),
+        'submittedAt' => $mine['submittedAt'] ?? null,
+        'name' => $mine['name'] ?? '',
+        'limit' => galleryOptions($gallery)['selection']['limit'],
+    ]);
+}
+
+if ($method === 'PUT' && matchRoute('/api/client/galleries/{token}/selection', $uri, $params)) {
+    rateLimitCheck('select:' . ($_SERVER['REMOTE_ADDR'] ?? ''), 240, 60);
+    $gallery = requireSelectionGallery($params['token']);
+    $input = getInput();
+    $cid = $input['clientId'] ?? '';
+    if (!validClientId($cid)) respondError('Bad client id', 400);
+    $valid = selectableItemIds($gallery['id']);
+    $ids = [];
+    foreach ((array)($input['ids'] ?? []) as $id) {
+        if (is_string($id) && isset($valid[$id]) && !in_array($id, $ids, true)) $ids[] = $id;
+    }
+    $limit = galleryOptions($gallery)['selection']['limit'];
+    if ($limit > 0 && count($ids) > $limit) {
+        respondError("You can pick up to $limit.", 409);
+    }
+    jsonUpdate(gallerySelectionsPath($gallery['id']), function ($all) use ($cid, $ids) {
+        $cur = $all[$cid] ?? [];
+        $cur['ids'] = $ids;
+        $cur['updatedAt'] = date('c');
+        $all[$cid] = $cur;
+        return $all;
+    });
+    respond(['ids' => $ids, 'limit' => $limit]);
+}
+
+// "Send my picks": remembers who sent them and tells the photographer. Safe to
+// send again after changing picks; the email says it is an update.
+if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/selection/submit', $uri, $params)) {
+    rateLimitCheck('select-submit:' . ($_SERVER['REMOTE_ADDR'] ?? ''), 6, 60);
+    $gallery = requireSelectionGallery($params['token']);
+    $input = getInput();
+    $cid = $input['clientId'] ?? '';
+    if (!validClientId($cid)) respondError('Bad client id', 400);
+    $name = trim((string)($input['name'] ?? ''));
+    $note = trim((string)($input['note'] ?? ''));
+    if ($name === '') respondError('Please enter your name', 400);
+    if (strlen($name) > 100) respondError('Name is too long (max 100 characters)', 400);
+    if (strlen($note) > 2000) respondError('Note is too long (max 2000 characters)', 400);
+    $mine = readGallerySelections($gallery['id'])[$cid] ?? [];
+    if (empty($mine['ids'])) respondError('Pick at least one photo first', 400);
+
+    $wasSubmitted = !empty($mine['submittedAt']);
+    $saved = null;
+    jsonUpdate(gallerySelectionsPath($gallery['id']), function ($all) use ($cid, $name, $note, &$saved) {
+        $cur = $all[$cid] ?? [];
+        $cur['name'] = $name;
+        $cur['note'] = $note;
+        $cur['submittedAt'] = date('c');
+        $cur['submittedIds'] = $cur['ids'] ?? [];
+        $all[$cid] = $cur;
+        $saved = $cur;
+        return $all;
+    });
+    $emailed = true;
+    try {
+        sendSelectionSummary($gallery, readGalleryVideos($gallery['id']), $saved, $cid, $wasSubmitted);
+    } catch (Exception $e) {
+        $emailed = false;
+    }
+    respond(['ok' => true, 'emailed' => $emailed, 'count' => count($saved['ids'] ?? [])]);
+}
+
+// Admin: what clients picked, and how the gallery is being used.
+if ($method === 'GET' && matchRoute('/api/admin/client/galleries/{gid}/selections', $uri, $params)) {
+    requireAuth();
+    $byId = [];
+    foreach (readGalleryVideos($params['gid']) as $v) { if (!empty($v['id'])) $byId[$v['id']] = $v; }
+    $out = [];
+    foreach (readGallerySelections($params['gid']) as $cid => $s) {
+        $items = [];
+        foreach ($s['ids'] ?? [] as $id) {
+            if (!isset($byId[$id])) continue;
+            $v = $byId[$id];
+            $items[] = ['id' => $id, 'name' => galleryItemFileName($v), 'title' => $v['title'] ?? '', 'thumbnail' => $v['thumbnail'] ?? null];
+        }
+        $out[] = [
+            'clientId' => $cid,
+            'name' => $s['name'] ?? '',
+            'note' => $s['note'] ?? '',
+            'submittedAt' => $s['submittedAt'] ?? null,
+            'updatedAt' => $s['updatedAt'] ?? null,
+            'count' => count($items),
+            'items' => $items,
+        ];
+    }
+    usort($out, fn($a, $b) => strcmp((string)($b['submittedAt'] ?: $b['updatedAt']), (string)($a['submittedAt'] ?: $a['updatedAt'])));
+    respond(['selections' => $out]);
+}
+
+if ($method === 'DELETE' && matchRoute('/api/admin/client/galleries/{gid}/selections/{cid}', $uri, $params)) {
+    requireAuth();
+    if (!validClientId($params['cid'])) respondError('Bad client id', 400);
+    jsonUpdate(gallerySelectionsPath($params['gid']), function ($all) use ($params) {
+        unset($all[$params['cid']]);
+        return $all;
+    });
+    respond(['ok' => true]);
+}
+
+if ($method === 'GET' && matchRoute('/api/admin/client/galleries/{gid}/activity', $uri, $params)) {
+    requireAuth();
+    $stats = readGalleryStats($params['gid']);
+    $titles = [];
+    foreach (readGalleryVideos($params['gid']) as $v) {
+        if (!empty($v['id'])) $titles[$v['id']] = galleryItemFileName($v) ?: ($v['title'] ?? '');
+    }
+    $recent = [];
+    foreach (array_reverse(array_slice($stats['downloads']['log'] ?? [], -8)) as $e) {
+        $recent[] = [
+            'at' => $e['at'] ?? null,
+            'kind' => $e['kind'] ?? 'item',
+            'size' => $e['size'] ?? 'original',
+            'name' => ($e['kind'] ?? '') === 'item' ? ($titles[$e['itemId'] ?? ''] ?? 'Deleted item') : 'Whole gallery',
+        ];
+    }
+    $sels = readGallerySelections($params['gid']);
+    $submitted = count(array_filter($sels, fn($s) => !empty($s['submittedAt'])));
+    respond([
+        'stats' => publicStats($stats),
+        'recent' => $recent,
+        'selections' => ['total' => count($sels), 'submitted' => $submitted],
+        'watermarkAvailable' => siteWatermark() !== null,
+    ]);
 }
 
 // ============================================================
@@ -3523,8 +4115,9 @@ function collectionPublicPayload($col) {
         // A collection only ever shows galleries of its own type, and a
         // gallery with no token has no page to link to.
         if (($g['active'] ?? true) === false || $g['type'] !== $type || empty($g['token'])) continue;
-        $videos = array_filter(readGalleryVideos($g['id']), fn($v) => ($v['type'] ?? '') !== 'header');
-        $thumb = !empty($videos) ? (reset($videos)['thumbnail'] ?? null) : null;
+        $allVideos = readGalleryVideos($g['id']);
+        $videos = array_filter($allVideos, fn($v) => ($v['type'] ?? '') !== 'header');
+        $thumb = galleryCoverThumb($g, $allVideos);
         $publicGalleries[] = [
             'name' => $g['name'],
             'token' => $g['token'],
@@ -3863,24 +4456,40 @@ function packageFolderName($name) {
 // Every downloadable item in a gallery, in gallery order. Section headers and
 // hidden items are skipped, as are records whose file has gone missing.
 // `file` is stored relative to UPLOADS_DIR so the manifest survives a move.
-function packageGalleryFiles($gallery, $prefix, array &$used) {
+function packageGalleryFiles($gallery, $prefix, array &$used, bool $web = false) {
     $out = [];
-    foreach (readGalleryVideos($gallery['id']) as $v) {
+    foreach (applyGallerySort($gallery, readGalleryVideos($gallery['id'])) as $v) {
         if (($v['type'] ?? '') === 'header') continue;
         if (($v['visible'] ?? true) === false) continue;
         if (empty($v['filename'])) continue;
-        $path = UPLOADS_DIR . '/' . $v['filename'];
+        $file = $v['filename'];
+        $dir = '';
+        $base = UPLOADS_DIR;
+        // Web size: a photo's 2048px proxy. Videos have no web version and
+        // travel as the original.
+        if ($web && ($v['type'] ?? '') === 'photo' && !empty($v['proxy']) && is_file(PROXY_DIR . '/' . $v['proxy'])) {
+            $file = $v['proxy'];
+            $dir = 'proxies';
+            $base = PROXY_DIR;
+        }
+        $path = $base . '/' . $file;
         if (!is_file($path)) continue;
-        $name = packageEntryName($v['title'] ?? '', $v['filename'], $used);
-        $out[] = [
+        // A gallery that hides titles from clients has blank ones; name the
+        // entry after the uploaded file instead of "p_1a2b_proxy".
+        $title = trim((string)($v['title'] ?? ''));
+        if ($title === '') $title = pathinfo(galleryItemFileName($v), PATHINFO_FILENAME);
+        $name = packageEntryName($title, $file, $used);
+        $entry = [
             'name'  => $prefix === '' ? $name : ($prefix . '/' . $name),
-            'file'  => $v['filename'],
+            'file'  => $file,
             'size'  => (int)filesize($path),
             'mtime' => (int)@filemtime($path) ?: time(),
             // Kept so per-item download counts still work when a single
             // oversized file is served as its own part.
             'id'    => $v['id'] ?? '',
         ];
+        if ($dir !== '') $entry['dir'] = $dir;
+        $out[] = $entry;
     }
     return $out;
 }
@@ -4478,7 +5087,7 @@ function streamZipOfEntries(array $planned, string $filename) {
     $planIntact = true;
     foreach ($planned as $e) {
         // Allowlisted directories only — never an arbitrary path from a manifest.
-        $base = ($e['dir'] ?? '') === 'captions' ? CAPTIONS_DIR : UPLOADS_DIR;
+        $base = ['captions' => CAPTIONS_DIR, 'proxies' => PROXY_DIR][$e['dir'] ?? ''] ?? UPLOADS_DIR;
         $path = $base . '/' . basename($e['file']);
         if (!is_file($path)) { $planIntact = false; continue; }
         $size = (int)filesize($path);

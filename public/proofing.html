@@ -9,7 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
   <noscript><link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet"></noscript>
   <link rel="stylesheet" href="/css/style.css?v=17">
-  <link rel="stylesheet" href="/css/proofing.css?v=10">
+  <link rel="stylesheet" href="/css/proofing.css?v=12">
   <link rel="stylesheet" href="/css/theme.css?v=5">
   <script src="/js/theme.js?v=2"></script>
 </head>
@@ -59,6 +59,23 @@
     </div>
   </div>
 
+  <!-- Send favorites -->
+  <div id="fav-modal" class="name-modal" style="display:none;">
+    <div class="name-modal-inner">
+      <h2>Send your picks</h2>
+      <p id="fav-modal-summary"></p>
+      <form id="fav-form">
+        <input type="text" id="fav-name" placeholder="Your name" required maxlength="100">
+        <textarea id="fav-note" placeholder="Anything you want to add? (optional)" rows="3" maxlength="2000"></textarea>
+        <p id="fav-error" class="error-text"></p>
+        <div class="fav-form-actions">
+          <button type="button" id="fav-cancel" class="btn btn-secondary">Cancel</button>
+          <button type="submit" id="fav-submit" class="btn btn-primary">Send</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Download Notification Modal -->
   <div id="download-modal" class="name-modal" style="display:none;">
     <div class="name-modal-inner">
@@ -78,6 +95,8 @@
       <h1 id="gallery-name"></h1>
       <div class="proofing-header-actions">
         <span id="viewer-display-name" class="viewer-name-badge"></span>
+        <span id="fav-counter" class="fav-counter" hidden></span>
+        <button id="fav-send-btn" class="btn btn-primary" hidden>Send my picks</button>
         <button id="download-all-btn" class="btn btn-primary" style="display:none;">Download All</button>
       </div>
     </header>
@@ -102,7 +121,9 @@
           </div>
           <div class="lightbox-video-title">
             <h2 id="lightbox-title"></h2>
+            <button id="lightbox-fav-btn" class="btn btn-sm fav-lb-btn" hidden>&#9825; Favorite</button>
             <button id="lightbox-download-btn" class="btn btn-sm" style="display:none;">Download</button>
+            <button id="lightbox-download-web-btn" class="btn btn-sm" style="display:none;">Download web size</button>
             <button id="lightbox-transcripts-btn" class="btn btn-sm" style="display:none;">Download Transcripts</button>
           </div>
           <div id="lightbox-description" class="lightbox-description" hidden></div>
@@ -129,6 +150,6 @@
   <script src="/js/header.js?v=9"></script>
   <script src="/js/zip-writer.js?v=2"></script>
   <script src="/js/caption-box.js?v=1"></script>
-  <script src="/js/proofing.js?v=12"></script>
+  <script src="/js/proofing.js?v=14"></script>
 </body>
 </html>

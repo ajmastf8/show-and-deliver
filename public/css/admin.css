@@ -2309,3 +2309,28 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 @supports (height: 100dvh) {
   @media (max-width: 640px) { .modal-inner, .modal-inner.wide { max-height: 92dvh; } }
 }
+
+/* ==========================================================================
+   Client gallery options, activity, favorites tab
+   ========================================================================== */
+.editable-row .er-ctl.er-pair { gap: 8px; align-items: center; }
+.editable-row .er-ctl.er-pair .d-input { width: auto; min-width: 0; flex: 1 1 0; }
+select.d-input { padding-right: 6px; }
+.d-cover { width: 64px; height: 40px; object-fit: cover; border-radius: 3px; background: var(--raised); }
+.d-activity .inherit-row { padding: 4px 0; }
+.d-recent { margin-top: 10px; border-top: 1px solid var(--border-row); padding-top: 8px; }
+.d-recent-row { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 12.5px; color: var(--text-4); }
+.d-recent-row span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* A sorted gallery's order comes from its sort setting, so there is nothing to drag. */
+.sort-note { padding: 8px 12px; margin-bottom: 8px; border-radius: 4px; background: var(--accent-dim); color: var(--text-3); font-size: 12.5px; }
+.item-list.is-sorted .drag-handle { visibility: hidden; cursor: default; }
+.btn-icon.cover-btn { color: var(--text-6); }
+.btn-icon.cover-btn.is-cover { color: #f5c518; }
+.btn-icon.cover-btn:hover { color: #f5c518; }
+
+.sel-note { padding: 8px 10px; margin-bottom: 8px; border-left: 2px solid var(--accent); background: var(--raised); font-size: 13px; color: var(--text-2); white-space: pre-wrap; }
+.sel-actions { display: flex; gap: 18px; margin-bottom: 8px; }
+.sel-list { display: flex; flex-direction: column; gap: 4px; }
+.sel-row { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-2); }
+.sel-row img, .sel-row > span:first-child:empty { width: 44px; height: 28px; object-fit: cover; border-radius: 2px; background: var(--raised); flex: 0 0 auto; }

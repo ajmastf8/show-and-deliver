@@ -1202,6 +1202,15 @@ document.addEventListener('DOMContentLoaded', () => {
       commentingEnabled: eff.commentingEnabled,
       expiresAt: eff.expiresAt ? eff.expiresAt.split('T')[0] : '',
       importFolder: g.importFolder || '',
+      // Per-gallery options (never inherited from a collection)
+      sortBy: (g.sort && g.sort.by) || 'custom',
+      sortDir: (g.sort && g.sort.dir) || 'asc',
+      downloadMode: g.downloadMode || 'original',
+      selEnabled: !!(g.selection && g.selection.enabled),
+      selLimit: (g.selection && g.selection.limit) || 0,
+      watermark: !!g.watermark,
+      showTitles: g.showTitles !== false,
+      coverId: g.coverId || '',
     };
   }
 
@@ -1231,6 +1240,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="drawer-tabs">
       <button class="drawer-tab${state.drawer.tab === 'settings' ? ' active' : ''}" data-tab="settings">Settings</button>
       ${isProofing ? `<button class="drawer-tab${state.drawer.tab === 'comments' ? ' active' : ''}" data-tab="comments">Comments</button>` : ''}
+      ${isProofing && g.selection && g.selection.enabled ? `<button class="drawer-tab${state.drawer.tab === 'selections' ? ' active' : ''}" data-tab="selections">Favorites</button>` : ''}
     </div>
     <div class="drawer-body" id="drawer-body"></div>`;
     drawer.innerHTML = html;
@@ -1243,6 +1253,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (addToColEl) addToColEl.addEventListener('click', addCurrentToCollection);
 
     if (state.drawer.tab === 'comments') renderDrawerComments(g);
+    else if (state.drawer.tab === 'selections' && isProofing) renderDrawerSelections(g);
     else renderDrawerSettings(g, col, d, isProofing);
   }
   function closeDrawerForce() {
@@ -1288,6 +1299,8 @@ document.addEventListener('DOMContentLoaded', () => {
       html += `<div class="drawer-block">${editableSettings(d)}</div>`;
     }
 
+    if (isProofing) html += galleryOptionsHtml(g, col, d);
+
     html += `<div class="drawer-block">
       <div class="editable-row"><span class="er-key">FTP folder</span><span class="er-ctl"><input type="text" class="d-input" data-field="importFolder" maxlength="64" placeholder="None" autocomplete="off" spellcheck="false"></span></div>
       <div class="sr-sub" style="margin-top:6px;">Files FTP’d into this folder are added automatically.</div>
@@ -1306,6 +1319,115 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>`;
     body.innerHTML = html;
     wireDrawerSettings(g, col);
+  }
+
+  // Options that belong to this gallery alone: how it is ordered, what clients
+  // may download, favorites, watermarked previews, and whether file names show.
+  function galleryOptionsHtml(g, col, d) {
+    const opt = (v, label, cur) => `<option value="${v}"${cur === v ? ' selected' : ''}>${label}</option>`;
+    const dlOn = (col && !d.override) ? effective(g).downloadsEnabled : d.downloadsEnabled;
+    const dirLabels = d.sortBy === 'name' ? ['A to Z', 'Z to A'] : ['Oldest first', 'Newest first'];
+    let html = `<div class="drawer-block">
+      <div class="d-label">Gallery options</div>
+      <div class="inherit-list">
+        <div class="editable-row"><span class="er-key">Order</span><span class="er-ctl er-pair">
+          <select class="d-input" data-field="sortBy">
+            ${opt('custom', 'My order (drag)', d.sortBy)}${opt('name', 'File name', d.sortBy)}${opt('captured', 'Capture time', d.sortBy)}${opt('added', 'Date added', d.sortBy)}
+          </select>
+          ${d.sortBy === 'custom' ? '' : `<select class="d-input" data-field="sortDir">${opt('asc', dirLabels[0], d.sortDir)}${opt('desc', dirLabels[1], d.sortDir)}</select>`}
+        </span></div>
+        ${d.sortBy === 'captured' ? `<div class="sr-sub">From the photo's EXIF date (or a video's recorded date). Files that don't say fall back to when they were added.</div>` : ''}`;
+    if (dlOn) {
+      html += `<div class="editable-row"><span class="er-key">Download as</span><span class="er-ctl">
+          <select class="d-input" data-field="downloadMode">
+            ${opt('original', 'Originals', d.downloadMode)}${opt('web', 'Web size (2048px)', d.downloadMode)}${opt('both', 'Client chooses', d.downloadMode)}
+          </select></span></div>
+        <div class="sr-sub">Web size applies to photos; videos always download as the original.</div>`;
+    }
+    html += `<div class="switch-row"><div><div class="sr-text">Favorites</div><div class="sr-sub">Clients pick photos and send you the list</div></div><button class="switch${d.selEnabled ? ' on' : ''}" data-switch="selEnabled"></button></div>`;
+    if (d.selEnabled) {
+      html += `<div class="editable-row"><span class="er-key">Pick limit</span><span class="er-ctl"><input type="number" class="d-input" data-field="selLimit" min="0" max="100000" step="1" value="${Number(d.selLimit) || 0}" style="max-width:110px;"></span></div>
+        <div class="sr-sub">0 means no limit. Clients can change their picks and send them again.</div>`;
+    }
+    html += `<div class="switch-row"><div><div class="sr-text">Watermark previews</div><div class="sr-sub" id="d-wm-sub">Stamps the site watermark on thumbnails and the viewer. Downloads stay clean.</div></div><button class="switch${d.watermark ? ' on' : ''}" data-switch="watermark"></button></div>
+      <div class="switch-row"><div><div class="sr-text">Show file names</div><div class="sr-sub">Off hides titles and IMG numbers from the client page</div></div><button class="switch${d.showTitles ? ' on' : ''}" data-switch="showTitles"></button></div>
+      <div class="editable-row"><span class="er-key">Cover</span><span class="er-ctl er-pair">
+        ${g.thumbnail ? `<img class="d-cover" src="/thumbnails/${encodeURIComponent(g.thumbnail)}" alt="">` : '<span class="sr-sub">None yet</span>'}
+        ${d.coverId ? `<button class="link-btn muted" data-act="clear-cover">Use first item</button>` : ''}
+      </span></div>
+      <div class="sr-sub">${d.coverId ? 'Chosen cover.' : 'The first item.'} Use ★ next to any item in the gallery to choose one.</div>
+      </div>
+      <div class="d-label" style="margin-top:22px;">Activity</div>
+      <div id="d-activity" class="d-activity"><div class="sr-sub">Loading…</div></div>
+    </div>`;
+    return html;
+  }
+
+  async function loadDrawerActivity(g) {
+    const box = $('d-activity');
+    if (!box) return;
+    try {
+      const res = await fetch(`/api/admin/client/galleries/${g.id}/activity`);
+      if (!res.ok) { box.innerHTML = ''; return; }
+      const a = await res.json();
+      const wmSub = $('d-wm-sub');
+      if (wmSub && a.watermarkAvailable === false) wmSub.textContent = 'No site watermark yet. Upload one under Portfolio > Site design and it applies here.';
+      const st = a.stats || {};
+      const row = (k, v) => `<div class="inherit-row"><span class="ir-key">${k}</span><span class="ir-val">${v}</span></div>`;
+      const dl = st.downloads || {};
+      const when = (t) => t ? shortDate(t) : 'never';
+      let html = row('Views', `${(st.views || {}).total || 0} (${(st.views || {}).unique || 0} unique)`)
+        + row('Last viewed', when((st.views || {}).lastViewedAt))
+        + row('Whole-gallery downloads', dl.downloadAll || 0)
+        + row('Single downloads', dl.itemTotal || 0)
+        + row('Last download', when(dl.lastAt));
+      if (g.selection && g.selection.enabled) {
+        const sel = a.selections || {};
+        html += row('Favorites sent', `${sel.submitted || 0} of ${sel.total || 0} visitors`);
+      }
+      if ((a.recent || []).length) {
+        html += `<div class="d-recent">` + a.recent.map(e =>
+          `<div class="d-recent-row"><span>${escapeHtml(e.name)}${e.size === 'web' ? ' · web size' : ''}</span><span>${escapeHtml(shortDate(e.at))}</span></div>`).join('') + `</div>`;
+      }
+      box.innerHTML = html;
+    } catch (_) { box.innerHTML = ''; }
+  }
+
+  async function renderDrawerSelections(g) {
+    const body = $('drawer-body');
+    body.innerHTML = `<div class="drawer-empty">Loading…</div>`;
+    const res = await fetch(`/api/admin/client/galleries/${g.id}/selections`);
+    if (!res.ok) { if (res.status === 401) checkAuth(); return; }
+    const { selections } = await res.json();
+    if (!selections.length) { body.innerHTML = `<div class="drawer-empty">Nobody has picked favorites yet.</div>`; return; }
+    body.innerHTML = selections.map(s => `
+      <div class="comments-video-group sel-group" data-cid="${escapeHtml(s.clientId)}">
+        <div class="comments-video-header">
+          <span class="comments-video-toggle">▼</span>
+          <span class="comments-video-name">${escapeHtml(s.name || 'Not sent yet')}</span>
+          <span class="comments-video-count">${s.count}</span>
+        </div>
+        <div class="comments-video-body">
+          <div class="sr-sub" style="margin-bottom:8px;">${s.submittedAt ? 'Sent ' + escapeHtml(shortDate(s.submittedAt)) : 'Still choosing (not sent)'}</div>
+          ${s.note ? `<div class="sel-note">${escapeHtml(s.note)}</div>` : ''}
+          <div class="sel-actions">
+            <button class="link-btn accent" data-sel="copy">Copy file names</button>
+            <button class="link-btn muted" data-sel="clear">Clear</button>
+          </div>
+          <div class="sel-list">${s.items.map(i => `<div class="sel-row">${i.thumbnail ? `<img src="/thumbnails/${encodeURIComponent(i.thumbnail)}" alt="">` : '<span></span>'}<span>${escapeHtml(i.name || i.title)}</span></div>`).join('')}</div>
+        </div>
+      </div>`).join('');
+    body.querySelectorAll('.comments-video-header').forEach(h =>
+      h.addEventListener('click', () => h.parentElement.classList.toggle('collapsed')));
+    body.querySelectorAll('.sel-group').forEach(grp => {
+      const s = selections.find(x => x.clientId === grp.dataset.cid);
+      grp.querySelector('[data-sel="copy"]').addEventListener('click', () => { copyText(s.items.map(i => i.name || i.title).join('\n')); });
+      grp.querySelector('[data-sel="clear"]').addEventListener('click', async () => {
+        if (!await confirmModal({ title: 'Clear favorites', message: `Remove ${s.name ? s.name + '’s' : 'these'} picks? They can pick again.`, okText: 'Clear', danger: true })) return;
+        const r = await fetch(`/api/admin/client/galleries/${g.id}/selections/${encodeURIComponent(s.clientId)}`, { method: 'DELETE' });
+        if (r.ok) renderDrawerSelections(g); else toast('Could not clear');
+      });
+    });
   }
 
   function inheritedReadOnly(g) {
@@ -1340,13 +1462,24 @@ document.addEventListener('DOMContentLoaded', () => {
       d[key] = !sw.classList.contains('on');
       sw.classList.toggle('on');
       state.drawer.dirty = true;
+      if (key === 'selEnabled') renderDrawer();
     }));
+    body.querySelectorAll('[data-field="sortBy"]').forEach(sel => sel.addEventListener('change', () => renderDrawer()));
+    if (g.type === 'proofing') {
+      loadDrawerActivity(g);
+    }
     body.querySelectorAll('[data-field]').forEach(inp => inp.addEventListener('input', () => {
       d[inp.getAttribute('data-field')] = inp.value;
       state.drawer.dirty = true;
     }));
+    body.querySelectorAll('[data-act="clear-cover"]').forEach(b => b.addEventListener('click', () => {
+      d.coverId = ''; state.drawer.dirty = true; renderDrawer();
+    }));
     body.querySelectorAll('[data-link]').forEach(b => b.addEventListener('click', () => linkAction(g, b.getAttribute('data-link'))));
-    body.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => drawerAction(g, col, b.getAttribute('data-act'))));
+    body.querySelectorAll('[data-act]').forEach(b => {
+      if (b.getAttribute('data-act') === 'clear-cover') return;
+      b.addEventListener('click', () => drawerAction(g, col, b.getAttribute('data-act')));
+    });
   }
 
   async function linkAction(g, act) {
@@ -1379,6 +1512,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!name) { toast('Name cannot be empty'); return; }
       const body = { name, active: d.active, importFolder: (d.importFolder || '').trim() };
       if (g.type === 'proofing') {
+        body.sort = { by: d.sortBy, dir: d.sortDir };
+        body.downloadMode = d.downloadMode;
+        body.selection = { enabled: !!d.selEnabled, limit: Math.max(0, parseInt(d.selLimit, 10) || 0) };
+        body.watermark = !!d.watermark;
+        body.showTitles = !!d.showTitles;
+        body.coverId = d.coverId || '';
         if (col) {
           body.overrideCollectionSettings = d.override;
           if (d.override) {
@@ -1502,6 +1641,9 @@ document.addEventListener('DOMContentLoaded', () => {
   let contentGid = null;
   let contentItems = [];
   let contentSortable = null;
+  let contentSort = { by: 'custom', dir: 'asc' };
+  let contentCoverId = null;
+  const SORT_NAMES = { name: 'file name', captured: 'capture time', added: 'date added' };
 
   async function loadContent() {
     if (!contentGid) return;
@@ -1509,6 +1651,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!res.ok) { if (res.status === 401) checkAuth(); return; }
     const data = await res.json();
     contentItems = Array.isArray(data) ? data : (data.items || []);
+    contentSort = (data && data.sort) || { by: 'custom', dir: 'asc' };
+    contentCoverId = (data && data.coverId) || null;
     const stats = (data && data.stats) || {};
     renderContentItems(contentItems, stats);
   }
@@ -1519,7 +1663,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const dlItems = (stats && stats.downloads && stats.downloads.items) || {};
     const isPortfolio = (state.galleries.find(g => g.id === contentGid) || {}).type === 'reels';
     if (!items.length) { list.innerHTML = `<div class="drawer-empty">No items yet. Use “Add files”.</div>`; return; }
-    list.innerHTML = items.map(entry => {
+    const sorted = contentSort.by !== 'custom' && !isPortfolio;
+    list.classList.toggle('is-sorted', sorted);
+    const sortNote = sorted
+      ? `<div class="sort-note">Shown by ${SORT_NAMES[contentSort.by]} (${contentSort.dir === 'desc' ? 'descending' : 'ascending'}). Set the order back to “My order” in Settings to drag items.</div>`
+      : '';
+    list.innerHTML = sortNote + items.map(entry => {
       if (entry.type === 'header') {
         return `<div class="admin-header-item" data-id="${entry.id}" data-type="header">
           <span class="drag-handle">≡</span>
@@ -1539,6 +1688,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <button class="thumb-play" title="Preview">${media}<span class="thumb-play-icon">${isPhoto ? '⤢' : '▶'}</span></button>
         <input type="text" class="title-input" value="${escapeHtml(entry.title)}">
         <span class="video-dl-count" title="${dlCount} downloads">↓ ${dlCount}</span>
+        ${isPortfolio || entry.type !== 'photo' && entry.type !== 'video' ? '' : `<button class="btn-icon cover-btn${entry.id === contentCoverId ? ' is-cover' : ''}" title="${entry.id === contentCoverId ? 'This is the cover' : 'Use as gallery cover'}">★</button>`}
         <button class="btn-icon replace-btn" title="Replace file">↻</button>
         ${isPortfolio ? `<button class="btn-icon desc-btn${entry.description ? ' has-description' : ''}" title="Caption box">&para;</button>` : ''}
         ${isPhoto ? '' : `<button class="btn-icon cc-btn${(entry.captions && entry.captions.length) ? ' has-captions' : ''}" title="Captions">CC</button>`}
@@ -1550,6 +1700,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (contentSortable) { try { contentSortable.destroy(); } catch (_) {} }
     contentSortable = Sortable.create(list, {
       handle: '.drag-handle', animation: 150, ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
+      disabled: sorted,
       onEnd: async () => {
         const order = Array.from(list.querySelectorAll('.admin-video-item, .admin-header-item')).map(i => i.dataset.id);
         await fetch(`/api/admin/client/galleries/${contentGid}/order`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }) });
@@ -1720,6 +1871,23 @@ document.addEventListener('DOMContentLoaded', () => {
       const url = isHeader ? `/api/admin/client/galleries/${contentGid}/headers/${id}` : `/api/admin/client/galleries/${contentGid}/items/${id}`;
       const res = await fetch(url, { method: 'DELETE' });
       if (res.ok) item.remove();
+      return;
+    }
+    const cov = e.target.closest('.cover-btn');
+    if (cov && contentGid) {
+      const id = cov.closest('.admin-video-item').dataset.id;
+      const makeCover = id !== contentCoverId;
+      const res = await fetch(`/api/admin/client/galleries/${contentGid}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ coverId: makeCover ? id : '' }) });
+      if (res.ok) {
+        contentCoverId = makeCover ? id : null;
+        document.querySelectorAll('.cover-btn').forEach(b => b.classList.toggle('is-cover', b.closest('.admin-video-item').dataset.id === contentCoverId));
+        toast(makeCover ? 'Cover set' : 'Cover cleared');
+        loadData().then(() => {
+          if (!state.drawer.galleryId) return;
+          if (state.drawer.draft) state.drawer.draft.coverId = contentCoverId || '';
+          renderDrawer();
+        });
+      } else toast('Could not set the cover');
       return;
     }
     const rep = e.target.closest('.replace-btn');

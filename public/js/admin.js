@@ -407,7 +407,10 @@ document.addEventListener('DOMContentLoaded', () => {
   $('upload-back').addEventListener('click', () => setScreen('library'));
 
   setupMenu('new-btn', 'new-menu', async (v) => {
-    if (v === 'gallery') openNewGallery();
+    // When you are looking at one collection, a gallery made from here belongs
+    // to it. state.rail is a collection id only in that scope — "all",
+    // "portfolio", "client", "ungrouped" and "archive" are not collections.
+    if (v === 'gallery') openNewGallery(state.collections.some(c => c.id === state.rail) ? state.rail : '');
     else if (v === 'collection') openCollectionModal();
     else if (v === 'upload') setScreen('upload');
     else if (v === 'pf-gallery' || v === 'pf-collection') {
@@ -2589,7 +2592,13 @@ document.addEventListener('DOMContentLoaded', () => {
     populateNgCollections(r.value);
     updateNgSettingsUI();
   }));
-  $('ng-collection').addEventListener('change', () => { ngState.useCollection = true; updateNgSettingsUI(); });
+  $('ng-collection').addEventListener('change', () => {
+    // Picking a collection normally means "inherit its settings". But if the
+    // toggles were already switched on, that was a deliberate choice — keep it
+    // by overriding instead of hiding the fields and silently dropping it.
+    ngState.useCollection = !(ngState.downloads || ngState.commenting);
+    updateNgSettingsUI();
+  });
   $('ng-use-collection').addEventListener('click', () => { ngState.useCollection = !ngState.useCollection; updateNgSettingsUI(); });
   $('ng-downloads').addEventListener('click', () => { ngState.downloads = !ngState.downloads; $('ng-downloads').classList.toggle('on'); });
   $('ng-commenting').addEventListener('click', () => { ngState.commenting = !ngState.commenting; $('ng-commenting').classList.toggle('on'); });

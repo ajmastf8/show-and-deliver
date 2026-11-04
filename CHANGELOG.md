@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.2 — 2026-11-04
+- **Fixed: a gallery created from inside a collection wasn't added to it.** Making a gallery from the New menu while looking at a collection left "Add to Collection" on "— None —", so the gallery landed ungrouped. That scope now preselects the collection you are in, and you can still change or clear it.
+- **Fixed: the Downloads and Commenting switches were ignored when you picked a collection.** Choosing a collection made the new gallery inherit the collection's settings, which hid those switches and quietly discarded any you had already turned on. If you set either one, the gallery now keeps your choice instead of falling back to the collection's.
+
 ## 2.5.1 — 2026-10-26
 - **Fixed: the per-item Download button was missing in the client gallery viewer on Android Chrome.** The full-screen viewer was sized with `100vh`, which on mobile is the *large* viewport — the height with the browser's toolbars retracted — so while the address bar was showing the viewer extended below the screen and its bottom title bar (where Download sits) was cut off. It now uses `100dvh`, which tracks the visible viewport. "Download All" in the gallery header was never affected, which is why only the in-viewer button appeared to be gone.
 

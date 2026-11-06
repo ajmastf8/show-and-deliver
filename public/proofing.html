@@ -101,6 +101,19 @@
       </div>
     </header>
 
+    <div id="gallery-sort" class="proofing-sort" hidden>
+      <label for="sort-by" class="proofing-sort-label">Sort</label>
+      <select id="sort-by" class="proofing-sort-select">
+        <option value="custom">Gallery order</option>
+        <option value="name">Name</option>
+        <option value="added">Arrival</option>
+        <option value="captured">Creation</option>
+      </select>
+      <button type="button" id="sort-dir" class="proofing-sort-dir" aria-label="Reverse order" title="Reverse order">
+        <span id="sort-dir-label">A&ndash;Z</span>
+      </button>
+    </div>
+
     <div id="video-list" class="proofing-video-list"></div>
 
   </div>

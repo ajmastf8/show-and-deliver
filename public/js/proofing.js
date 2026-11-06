@@ -44,7 +44,20 @@ document.addEventListener('DOMContentLoaded', () => {
   let galleryData = null;
   let currentVideoId = null;
   let allComments = [];
-
+  // Viewer sort control. The choice is this visitor's own (kept in
+  // sessionStorage, per gallery) and never changes the gallery's saved order.
+  const sortBar = document.getElementById('gallery-sort');
+  const sortBySelect = document.getElementById('sort-by');
+  const sortDirBtn = document.getElementById('sort-dir');
+  const sortDirLabel = document.getElementById('sort-dir-label');
+  const SORT_STORE_KEY = 'proofing-sort:' + token;
+  const SORT_DIR_LABELS = {
+    name: ['A\u2013Z', 'Z\u2013A'],
+    added: ['Oldest', 'Newest'],
+    captured: ['Oldest', 'Newest'],
+    custom: ['\u2191', '\u2193'],
+  };
+  let viewSort = null; // { by, dir } or null to follow the gallery's own order
   // Favorites
   const favCounter = document.getElementById('fav-counter');
   const favSendBtn = document.getElementById('fav-send-btn');
@@ -110,11 +123,87 @@ document.addEventListener('DOMContentLoaded', () => {
   // Click name badge to change name
   viewerDisplayName.addEventListener('click', showNameModal);
 
+  // ============ Viewer Sort ============
+  //
+  // The visitor can reorder the gallery for their own session: Name (file name),
+  // Arrival (date added) or Creation (capture time), each reversible. The choice
+  // is sent to the server, which applies the same sort the admin uses, so there
+  // is one ordering implementation. "Gallery order" clears it and follows the
+  // photographer's saved setting again.
+
+  function loadViewSort() {
+    try {
+      const raw = sessionStorage.getItem(SORT_STORE_KEY);
+      if (!raw) return null;
+      const s = JSON.parse(raw);
+      if (s && ['custom', 'name', 'added', 'captured'].includes(s.by)) {
+        return { by: s.by, dir: s.dir === 'desc' ? 'desc' : 'asc' };
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  function saveViewSort(sort) {
+    try {
+      if (!sort || sort.by === 'custom') sessionStorage.removeItem(SORT_STORE_KEY);
+      else sessionStorage.setItem(SORT_STORE_KEY, JSON.stringify(sort));
+    } catch (_) {}
+  }
+
+  function sortQuery() {
+    if (!viewSort || viewSort.by === 'custom') return '';
+    const q = new URLSearchParams({ sort: viewSort.by, dir: viewSort.dir });
+    return `?${q}`;
+  }
+
+  function galleryUrl() {
+    return `/api/client/galleries/${token}${sortQuery()}`;
+  }
+
+  function syncSortControl() {
+    const sortable = (galleryData?.items || []).filter(v => v.type !== 'header');
+    sortBar.hidden = sortable.length < 2;
+    const g = galleryData?.gallery || {};
+    // Reflect what the server actually used (a viewer choice, or the gallery's
+    // own setting), so the control is truthful even before any choice is made.
+    const by = viewSort ? viewSort.by : (g.sortBy || 'custom');
+    const dir = viewSort ? viewSort.dir : (g.sortDir || 'asc');
+    sortBySelect.value = by;
+    const labels = SORT_DIR_LABELS[by] || SORT_DIR_LABELS.custom;
+    sortDirLabel.textContent = dir === 'desc' ? labels[1] : labels[0];
+    sortDirBtn.hidden = by === 'custom';
+  }
+
+  async function applyViewSort(sort) {
+    viewSort = sort;
+    saveViewSort(sort);
+    const res = await fetch(galleryUrl());
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.passwordRequired) return;
+    galleryData = data;
+    allComments = data.comments || [];
+    liveVersion = data.gallery.version;
+    renderVideoList();
+    syncSortControl();
+  }
+
+  sortBySelect.addEventListener('change', () => {
+    const by = sortBySelect.value;
+    applyViewSort(by === 'custom' ? null : { by, dir: viewSort?.dir || 'asc' });
+  });
+
+  sortDirBtn.addEventListener('click', () => {
+    if (!viewSort) return;
+    applyViewSort({ by: viewSort.by, dir: viewSort.dir === 'asc' ? 'desc' : 'asc' });
+  });
+
   // ============ Load Gallery ============
 
   async function loadGallery() {
     try {
-      const res = await fetch(`/api/client/galleries/${token}`);
+      viewSort = loadViewSort();
+      const res = await fetch(galleryUrl());
       // An old portfolio link whose gallery moved into the folders.
       const peek = res.clone();
       try {
@@ -160,7 +249,7 @@ document.addEventListener('DOMContentLoaded', () => {
     passwordError.textContent = '';
     const password = document.getElementById('gallery-password').value;
 
-    const res = await fetch(`/api/client/galleries/${token}/unlock`, {
+    const res = await fetch(`/api/client/galleries/${token}/unlock${sortQuery()}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password })
@@ -209,6 +298,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     renderVideoList();
+    syncSortControl();
     initFavorites();
 
     // Deep link: open specific video if hash is #video-{id}
@@ -226,35 +316,58 @@ document.addEventListener('DOMContentLoaded', () => {
     startLiveSync();
   }
 
-  // ============ Live Updates (FTP watch folder) ============
+  // ============ Live Updates ============
   //
-  // A gallery with a watch folder takes in whatever the photographer uploads by
-  // FTP. The import only runs while someone is asking for it, so an open page
-  // asks: once on load (which also catches anything that arrived while nobody was
-  // looking), then every 30 seconds while the tab is visible. The server answers
-  // with a version marker; when it changes we offer a refresh instead of
-  // re-rendering under someone who may be mid-lightbox.
+  // A gallery can take in new files while a client is looking at it: FTP
+  // arrivals land in a watch folder, and items uploaded through the admin or the
+  // API are registered directly. Either way an open page should offer a refresh
+  // rather than silently show a stale set — but only while the gallery is
+  // actually changing, so every client tab isn't polling a gallery handed over
+  // weeks ago.
+  //
+  // The server decides: its payload and each /sync reply carry `live`, true for a
+  // watch folder or a gallery changed within the last window. While live, the page
+  // polls every 30s. A check also runs on load and whenever the tab regains
+  // focus/visibility, so a client who was sitting on a quiet gallery and comes
+  // back after you uploaded sees the new set without a manual reload. When the
+  // server reports the gallery quiet, the timer stops; the focus listener stays
+  // armed.
 
   let liveTimer = null;
   let liveVersion = null;
   let liveBusy = false;
+  let liveWatching = false;
   const LIVE_INTERVAL_MS = 30000;
 
   function startLiveSync() {
-    if (liveTimer || !galleryData || !galleryData.gallery.live) return;
+    if (!galleryData || liveWatching) return;
+    liveWatching = true;
     liveVersion = galleryData.gallery.version;
+    // The initial payload may say the gallery is quiet, but a client can be the
+    // one looking when the first file lands, so check once now regardless.
     pollLiveSync();
-    liveTimer = setInterval(() => { if (!document.hidden) pollLiveSync(); }, LIVE_INTERVAL_MS);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) pollLiveSync(); });
+    window.addEventListener('focus', () => pollLiveSync());
+  }
+
+  function setLiveTimer(on) {
+    if (on && !liveTimer) {
+      liveTimer = setInterval(() => { if (!document.hidden) pollLiveSync(); }, LIVE_INTERVAL_MS);
+    } else if (!on && liveTimer) {
+      clearInterval(liveTimer);
+      liveTimer = null;
+    }
   }
 
   async function pollLiveSync() {
-    if (liveBusy) return;
+    if (liveBusy || !liveWatching) return;
     liveBusy = true;
     try {
       const res = await fetch(`/api/client/galleries/${token}/sync`, { method: 'POST' });
       if (!res.ok) return;
-      const { version } = await res.json();
+      const { version, live } = await res.json();
+      // Keep the fast timer only while the server still calls the gallery live.
+      setLiveTimer(live === true);
       if (version && version !== liveVersion) {
         liveVersion = version;
         showUpdateBanner();
@@ -274,7 +387,7 @@ document.addEventListener('DOMContentLoaded', () => {
       banner.className = 'live-update-banner';
       banner.innerHTML = '<span>Gallery updated</span><button type="button" class="live-update-btn">Refresh</button>';
       banner.querySelector('button').addEventListener('click', async () => {
-        const res = await fetch(`/api/client/galleries/${token}`);
+        const res = await fetch(galleryUrl());
         if (!res.ok) return;
         const data = await res.json();
         if (data.passwordRequired) return;
@@ -282,6 +395,7 @@ document.addEventListener('DOMContentLoaded', () => {
         allComments = data.comments || [];
         liveVersion = data.gallery.version;
         renderVideoList();
+        syncSortControl();
         banner.remove();
       });
       document.body.appendChild(banner);

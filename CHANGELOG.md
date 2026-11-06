@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.7 — 2026-11-06
+- **A client gallery that's being added to now updates itself, without a reload.** Previously only FTP watch folders could tell an open gallery page that new files had arrived; an upload through the admin or the API was invisible until the client refreshed by hand. Any gallery changed in the last half hour now counts as live, so an open page offers the "Gallery updated — Refresh" banner within 30 seconds of a new arrival. It also re-checks whenever the tab regains focus, so a client who was sitting on a quiet gallery and comes back after you uploaded sees it straight away. Once a gallery goes quiet the polling stops on its own, so a delivered gallery isn't asking forever.
+- **Clients can sort a gallery for themselves — Name, Arrival or Creation, each direction.** A sort bar above the grid lets the viewer reorder by file name (A–Z / Z–A), date added (Arrival), or capture time from EXIF / recorded date (Creation), and reverse it. Their choice is their own for the visit — it never changes the order you saved in the gallery settings, and "Gallery order" puts it back. Section headers stay put; items sort within them. Capture time falls back to date added for files that don't carry a date.
+
 ## 2.5.6 — 2026-11-06
 - **Fixed: API uploads showed as "Untitled" instead of the file's name.** The upload API only used a title a client sent explicitly, so any client that omitted it — skipping `-F title=...` on the multipart item upload, or the `"title"` field on the chunked-upload finalize call — left every photo and video named "Untitled" in the gallery. When no title is sent, the server now derives one from the uploaded file's name, the same way the admin uploader and the import folder already do: extension and timestamp prefix stripped, underscores and dashes turned into spaces (`IMG_4821.jpg` → `IMG 4821`). A title you do send is still used exactly as sent.
 

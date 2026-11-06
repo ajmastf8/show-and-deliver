@@ -2390,8 +2390,10 @@ function ensureGalleryItemMeta(string $gid, array $videos): array {
 
 // The gallery's items in the order its sort setting asks for. Section headers
 // keep their place and the items between two headers sort among themselves.
-function applyGallerySort(array $gallery, array $videos, bool $backfill = true): array {
-    $sort = galleryOptions($gallery)['sort'];
+// $sortOverride lets a caller force an order without touching the gallery's
+// saved setting — the client viewer sorting for its own session uses this.
+function applyGallerySort(array $gallery, array $videos, bool $backfill = true, ?array $sortOverride = null): array {
+    $sort = $sortOverride ?? galleryOptions($gallery)['sort'];
     if ($sort['by'] === 'custom') return $videos;
     if ($sort['by'] === 'captured' && $backfill) $videos = ensureGalleryItemMeta($gallery['id'], $videos);
     $added = fn($v) => (int)strtotime((string)($v['createdAt'] ?? ''));
@@ -3285,6 +3287,12 @@ define('IMPORT_SCAN_MIN_INTERVAL', 10);
 define('IMPORT_SETTLE_SECONDS', 15);
 define('IMPORT_BATCH_MAX_FILES', 12);
 define('IMPORT_BATCH_MAX_SECONDS', 40);
+// How long after its last change a gallery keeps polling for arrivals. An open
+// client page re-polls only while the gallery is "live" (see galleryIsLive()),
+// so an upload through the admin or the API makes the page offer a refresh for
+// this window, then polling stops on its own instead of every client tab
+// running forever on a gallery that was handed over weeks ago.
+define('GALLERY_LIVE_WINDOW_SECONDS', 1800);
 
 function syncImportFolder(array $gallery, bool $force = false): array {
     $result = ['imported' => 0, 'pending' => 0, 'failed' => 0, 'busy' => false];
@@ -3356,6 +3364,20 @@ function galleryVersion($gid): string {
     clearstatcache(true, $path);
     $items = array_filter(readGalleryVideos($gid), fn($v) => ($v['type'] ?? '') !== 'header' && ($v['visible'] ?? true) !== false);
     return count($items) . '-' . (int)@filemtime($path);
+}
+
+// Whether an open client page should keep asking for new arrivals. True for a
+// gallery with an FTP watch folder (files land out-of-band and only the client
+// can prompt the import), and for one whose contents changed recently — which
+// covers uploads through the admin and the API, where an item is registered
+// directly and nothing else would tell a viewer mid-session. The window means a
+// delivered gallery stops polling once it has gone quiet.
+function galleryIsLive(array $gallery): bool {
+    if (!empty($gallery['importFolder'])) return true;
+    $path = galleryDir($gallery['id']) . '/videos.json';
+    clearstatcache(true, $path);
+    $mtime = (int)@filemtime($path);
+    return $mtime > 0 && (time() - $mtime) <= GALLERY_LIVE_WINDOW_SECONDS;
 }
 
 // Import: import files
@@ -3496,12 +3518,22 @@ function getProofingGallery($token) {
     return $gallery;
 }
 
-function galleryPayload($gallery) {
+// Optional viewer sort for the client page, read from `sort`/`dir` query params.
+// A per-view choice that never touches the gallery's saved order; an
+// unrecognised or absent value means "follow the gallery's own setting".
+function clientViewSort(): ?array {
+    $by = (string)($_GET['sort'] ?? '');
+    if ($by === '' || $by === 'custom' || !in_array($by, GALLERY_SORTS, true)) return null;
+    return ['by' => $by, 'dir' => (($_GET['dir'] ?? '') === 'desc') ? 'desc' : 'asc'];
+}
+
+function galleryPayload($gallery, ?array $viewSort = null) {
     $opts = galleryOptions($gallery);
     $videos = array_values(array_filter(readGalleryVideos($gallery['id']), function($v) {
         return ($v['type'] ?? '') === 'header' || ($v['visible'] ?? true) !== false;
     }));
-    $videos = applyGallerySort($gallery, $videos);
+    $videos = applyGallerySort($gallery, $videos, true, $viewSort);
+    $effectiveSort = $viewSort ?? $opts['sort'];
     foreach ($videos as &$v) {
         if (($v['type'] ?? '') === 'header') continue;
         unset($v['capturedAt']);
@@ -3525,8 +3557,15 @@ function galleryPayload($gallery) {
             'watermark' => $opts['watermark'] && siteWatermark() !== null,
             'selection' => $opts['selection'],
             'commentingEnabled' => $gallery['commentingEnabled'] ?? false,
-            // Whether the page should poll for FTP arrivals. The folder name stays private.
-            'live' => !empty($gallery['importFolder']),
+            // The order the items came in: the viewer's own choice when they
+            // sorted for this session, otherwise the gallery's saved setting, so
+            // the page can show which order is in effect.
+            'sortBy' => $effectiveSort['by'],
+            'sortDir' => $effectiveSort['dir'],
+            // Whether the page should poll for new arrivals: an FTP watch folder
+            // or a gallery changed recently (admin/API uploads). The folder name
+            // stays private.
+            'live' => galleryIsLive($gallery),
             'version' => galleryVersion($gallery['id']),
         ],
         'items' => $videos,
@@ -3540,29 +3579,37 @@ if ($method === 'GET' && matchRoute('/api/client/galleries/{token}', $uri, $para
     if (!empty($gallery['password']) && !($colId && isCollectionUnlocked($colId))) {
         respond(['passwordRequired' => true, 'galleryName' => $gallery['name']]);
     }
+    // Optional viewer sort, for the sort control on the client page. It is a
+    // per-view choice and never touches the gallery's saved order.
     recordView(galleryStatsPath($gallery['id']));
-    respond(galleryPayload($gallery));
+    respond(galleryPayload($gallery, clientViewSort()));
 }
 
 // Called by the open gallery page: pulls in anything that has arrived in the
 // gallery's FTP folder and reports a version marker so the page can offer a
-// refresh. Throttled and locked inside syncImportFolder(); does nothing for
-// galleries without a watch folder. Returns no item data, only the marker.
+// refresh. The marker also covers items registered directly by an admin or API
+// upload, so a viewer sees those too. Import work only happens for a gallery
+// with a watch folder (throttled and locked inside syncImportFolder());
+// otherwise this is just a cheap stat. Returns no item data, only the marker.
 if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/sync', $uri, $params)) {
     $gallery = getProofingGallery($params['token']);
+    if (!empty($gallery['importFolder'])) session_write_close();
     $res = ['version' => galleryVersion($gallery['id'])];
     if (!empty($gallery['importFolder'])) {
-        session_write_close();
         syncImportFolder($gallery);
         $res['version'] = galleryVersion($gallery['id']);
     }
+    // Tells the page whether to keep its timer running. Recomputed after any
+    // import so a folder that just took files in keeps the page polling for the
+    // arrivals still to come, and a quiet gallery lets the page stop.
+    $res['live'] = galleryIsLive($gallery);
     respond($res);
 }
 
 if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/unlock', $uri, $params)) {
     rateLimitCheck('unlock:' . ($params['token']) . ':' . ($_SERVER['REMOTE_ADDR'] ?? ''), 5, 60);
     $gallery = getProofingGallery($params['token']);
-    if (empty($gallery['password'])) respond(galleryPayload($gallery));
+    if (empty($gallery['password'])) respond(galleryPayload($gallery, clientViewSort()));
 
     $input = getInput();
     $password = $input['password'] ?? '';
@@ -3580,7 +3627,7 @@ if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/unlock', $ur
         markCollectionUnlocked($gallery['_inheritedCollectionId']);
     }
     recordView(galleryStatsPath($gallery['id']));
-    respond(galleryPayload($gallery));
+    respond(galleryPayload($gallery, clientViewSort()));
 }
 
 if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/comments', $uri, $params)) {

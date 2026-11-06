@@ -332,7 +332,7 @@ credential, and a password (when set) is checked through `unlock`.
 
 ```
 GET  /api/client/galleries/{token}                     # gallery + items + comments
-POST /api/client/galleries/{token}/sync                # import from the FTP watch folder; returns {"version"}
+POST /api/client/galleries/{token}/sync                # report the version marker (+ live flag); imports from the FTP watch folder
 POST /api/client/galleries/{token}/unlock              # {"password": "..."}
 POST /api/client/galleries/{token}/comments
 POST /api/client/galleries/{token}/send-review         # email the comments to you
@@ -352,6 +352,26 @@ GET  /api/client/packages/{token}                      # delivery package metada
 GET  /api/client/packages/{token}/part/{index}         # download a zip
 GET  /api/client/packages/{token}/file/{fileIndex}     # download one original file
 ```
+
+### Viewer sort, and knowing a gallery changed
+
+`GET /api/client/galleries/{token}` takes two optional query params, `sort` and
+`dir`, that order the returned items without changing the gallery's saved
+setting — this backs the client page's own sort control. `sort` is one of
+`name`, `added` (date added) or `captured` (EXIF / recorded date, falling back to
+date added); `dir` is `asc` or `desc`. Anything else, or no params, follows the
+gallery's saved `sort`. The gallery block echoes the order actually applied as
+`sortBy` and `sortDir`, so a caller can show which is in effect.
+
+`gallery.sortBy`, `gallery.sortDir`, `gallery.live` and `gallery.version` are
+also part of the payload:
+
+- `live` is `true` while the gallery may still take in files — it has an FTP
+  watch folder, or it changed within the last 30 minutes (an admin or API
+  upload). The client page polls this to offer a refresh.
+- `version` is a cheap `<count>-<mtime>` marker. `POST …/sync` returns
+  `{ "version", "live" }`: it imports any FTP arrivals and reports whether the
+  gallery is still live, so a page can stop polling a quiet gallery.
 
 ## Delivery packages
 

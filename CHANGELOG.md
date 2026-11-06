@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.5.4 — 2026-11-06
+- **New: a Recent section at the top of the Client delivery rail.** Collections and galleries created in the last five days are listed above the Library and Client delivery sections, newest first, collections before galleries. A just-made delivery is one click away — pick a recent collection to open its list, or a recent gallery to open it straight away. The section stays out of the way when nothing is new.
+
 ## 2.5.3 — 2026-11-06
 - **Fixed: the logo showed twice in the header on collection and delivery pages.** When two logos are set — one for light backgrounds and one for dark — both were drawn stacked instead of one being swapped by the theme, because the rule that hides the unused one was only in a stylesheet those two pages don't load. The swap rule now lives in the shared theme stylesheet, so the header shows a single logo everywhere.
 - **Fixed: a replaced logo could stay invisible for up to a week.** Logo images are cached in the browser for seven days, and a fresh upload kept the same URL, so the old image kept showing until the cache expired. Logo URLs now carry a version taken from the file's timestamp, so a replacement appears immediately.

@@ -298,6 +298,13 @@ code, kbd, samp { font-family: inherit; font-size: inherit; }
   margin-bottom: 12px;
 }
 .rail-section-label:not(:first-child) { margin-top: 26px; }
+.rail-section-hint {
+  font-size: 11px;
+  color: var(--text-6);
+  padding: 0 24px;
+  margin: -8px 0 10px;
+}
+.rail-row.recent .rail-name { color: var(--text-3); }
 .rail-row {
   display: flex;
   align-items: center;

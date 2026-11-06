@@ -8883,6 +8883,25 @@ function readHeaderConfig() {
     ];
 }
 
+// Stamps the logo URLs with the file's mtime so replacing a logo busts the
+// browser cache immediately. /logo/* is served with a week-long max-age, so
+// without this a freshly uploaded logo can sit invisible in cache for days —
+// which is exactly how a stale dark logo survived a replacement.
+function versionLogoUrls(array $config) {
+    if (empty($config['logo']) || !is_array($config['logo'])) return $config;
+    foreach (['src', 'srcDark'] as $key) {
+        $url = (string)($config['logo'][$key] ?? '');
+        if ($url === '') continue;
+        $path = SITE_DATA . parse_url($url, PHP_URL_PATH);
+        $mtime = @filemtime($path);
+        if ($mtime === false) continue;
+        // Drop any existing query, then add the version.
+        $base = strtok($url, '?');
+        $config['logo'][$key] = $base . '?v=' . $mtime;
+    }
+    return $config;
+}
+
 // Social links, cleaned: a known network (or "website") and an http(s) or
 // mailto URL. Stored with the rest of the header config.
 function sanitizeSocial($list) {
@@ -8990,6 +9009,7 @@ function readThemeConfig() {
 if ($method === 'GET' && $uri === '/api/header') {
     respondCached('header', function () {
         $config = expandPortfolioNav(readHeaderConfig());
+        $config = versionLogoUrls($config);
         $config['theme'] = readThemeConfig();
         return $config;
     });
@@ -9003,7 +9023,7 @@ if ($method === 'GET' && $uri === '/api/header') {
 // plain nav entries, permanently losing the auto-sync the marker exists for.
 if ($method === 'GET' && $uri === '/api/admin/header') {
     requireAuth();
-    $config = readHeaderConfig();
+    $config = versionLogoUrls(readHeaderConfig());
     $config['theme'] = readThemeConfig();
     respond($config);
 }

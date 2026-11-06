@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.3 — 2026-11-06
+- **Fixed: the logo showed twice in the header on collection and delivery pages.** When two logos are set — one for light backgrounds and one for dark — both were drawn stacked instead of one being swapped by the theme, because the rule that hides the unused one was only in a stylesheet those two pages don't load. The swap rule now lives in the shared theme stylesheet, so the header shows a single logo everywhere.
+- **Fixed: a replaced logo could stay invisible for up to a week.** Logo images are cached in the browser for seven days, and a fresh upload kept the same URL, so the old image kept showing until the cache expired. Logo URLs now carry a version taken from the file's timestamp, so a replacement appears immediately.
+
 ## 2.5.2 — 2026-11-04
 - **Fixed: a gallery created from inside a collection wasn't added to it.** Making a gallery from the New menu while looking at a collection left "Add to Collection" on "— None —", so the gallery landed ungrouped. That scope now preselects the collection you are in, and you can still change or clear it.
 - **Fixed: the Downloads and Commenting switches were ignored when you picked a collection.** Choosing a collection made the new gallery inherit the collection's settings, which hid those switches and quietly discarded any you had already turned on. If you set either one, the gallery now keeps your choice instead of falling back to the collection's.

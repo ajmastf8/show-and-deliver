@@ -2,6 +2,17 @@
    the palette variables alone. theme.js sets data-theme and data-header on
    <html>, plus the palette itself as inline custom properties. */
 
+/* --- Light/dark logo pair ---
+   header.js renders both logos as a pair (.logo-img-light / .logo-img-dark)
+   when the config has both, and expects the theme to show exactly one. These
+   rules live here rather than only in style.css because collection.html and
+   download.html don't load style.css — without them both images stacked and
+   the header read as a doubled logo. */
+
+.logo-img-dark { display: none; }
+[data-theme="dark"] .logo-img-light { display: none; }
+[data-theme="dark"] .logo-img-dark { display: block; }
+
 /* --- Centered: logo over the links, the classic portfolio masthead --- */
 
 [data-header="stacked"] .header-inner {

@@ -426,6 +426,61 @@ function respondError($msg, $status = 400) {
     respond(['error' => $msg], $status);
 }
 
+// ---- Public pages -----------------------------------------------------------
+//
+// The HTML pages are served through PHP rather than handed to the web server as
+// static files, so their asset URLs can carry a version that follows the file.
+// Otherwise every <script src="...?v=N"> is a hand-typed number that has to be
+// bumped by hand whenever the file changes — and when it isn't, browsers keep
+// serving the old script from cache and a shipped change looks like it did
+// nothing. Here the number is the asset's mtime, so it changes the instant the
+// file does. Pages are tiny and the HTML is no-cache anyway, so the request
+// cost is nil next to the API calls each page then makes.
+//
+// /public/<page>.html is still the file on disk — this only controls how the
+// route serves it. Keep the map in step with the .htaccess page rules.
+const PUBLIC_PAGES = [
+    'admin'      => 'public/admin.html',
+    'proofing'   => 'public/proofing.html',
+    'collection' => 'public/collection.html',
+    'download'   => 'public/download.html',
+    'portfolio'  => 'public/portfolio.html',
+    'page'       => 'public/page.html',
+    'index'      => 'public/index.html',
+];
+
+// Stamp ?v=<mtime> onto every local /css/*.css and /js/*.js reference in a page.
+// A source that isn't on disk is left exactly as written.
+function stampAssetVersions(string $html): string {
+    return preg_replace_callback(
+        '#(?<=["\'])/(css|js)/([A-Za-z0-9._-]+?)\?v=[^"\'&]*#',
+        function ($m) {
+            $rel = "public/{$m[1]}/{$m[2]}";
+            $path = __DIR__ . '/' . $rel;
+            $v = @filemtime($path);
+            return '/' . $m[1] . '/' . $m[2] . '?v=' . ($v ?: 0);
+        },
+        $html
+    );
+}
+
+function servePublicPage(string $key): void {
+    $rel = PUBLIC_PAGES[$key] ?? null;
+    if ($rel === null) { http_response_code(404); echo 'Not found'; exit; }
+    $path = __DIR__ . '/' . $rel;
+    $html = @file_get_contents($path);
+    if ($html === false) { http_response_code(500); echo 'Page unavailable'; exit; }
+
+    header('Content-Type: text/html; charset=utf-8');
+    // Same freshness contract the .htaccess header rule gave the static files:
+    // the HTML must never be cached, or its versioned asset URLs go stale.
+    header('Cache-Control: no-cache, no-store, must-revalidate');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+    echo stampAssetVersions($html);
+    exit;
+}
+
 function getInput() {
     $raw = file_get_contents('php://input');
     return json_decode($raw, true) ?: [];
@@ -1851,6 +1906,16 @@ function matchRoute($pattern, $uri, &$params) {
 }
 
 $params = [];
+
+// Public page render. The web server rewrites page routes here and names the
+// page in a server env var (E=SD_PAGE:… in .htaccess), so a client cannot choose
+// the page; the map above is an allowlist on top of that. REDIRECT_ is set by
+// Apache when the rewrite is an internal redirect, SD_PAGE when it is not — read
+// both so either server behaviour works.
+$sdPage = $_SERVER['REDIRECT_SD_PAGE'] ?? $_SERVER['SD_PAGE'] ?? '';
+if ($sdPage !== '') {
+    servePublicPage((string)$sdPage);
+}
 
 // ============================================================
 // AUTH ROUTES

@@ -92,18 +92,6 @@ function devServe($file) {
     return true;
 }
 
-$pages = [
-    '#^admin/?$#' => 'public/admin.html',
-    '#^gallery/.+$#' => 'public/proofing.html',
-    '#^collection/.+$#' => 'public/collection.html',
-    '#^d/.+$#' => 'public/download.html',
-    '#^portfolio(/.*)?$#' => 'public/portfolio.html',
-    '#^p/.+$#' => 'public/page.html',
-];
-foreach ($pages as $re => $target) {
-    if (preg_match($re, $rel)) return devServe("$root/$target");
-}
-
 if (devDenied($root, $rel)) return devDeny();
 
 foreach (['uploads', 'thumbnails', 'proxies', 'captions', 'logo'] as $d) {
@@ -117,8 +105,32 @@ if (strpos($rel, 'api/') === 0 && !is_file("$root/$rel")) {
     return true;
 }
 
-if ($rel === '') return devServe("$root/public/index.html");
-if (is_file("$root/$rel")) return devServe("$root/$rel");
+// Public pages are rendered by index.php so asset URLs carry an mtime version;
+// mirror the .htaccess page rules rather than serving the html file directly.
+$pages = [
+    '#^admin/?$#' => 'admin',
+    '#^gallery/.+$#' => 'proofing',
+    '#^collection/.+$#' => 'collection',
+    '#^d/.+$#' => 'download',
+    '#^portfolio(/.*)?$#' => 'portfolio',
+    '#^p/.+$#' => 'page',
+    '#^$#' => 'index',
+];
+foreach ($pages as $re => $page) {
+    if (preg_match($re, $rel)) {
+        // Mirror .htaccess's E=SD_PAGE:… so index.php picks the page server-side.
+        $_SERVER['SD_PAGE'] = $page;
+        require "$root/index.php";
+        return true;
+    }
+}
+
+if (is_file("$root/$rel")) {
+    // index.php is the app entry, not a static asset — execute it like Apache
+    // would, rather than dumping its source.
+    if ($rel === 'index.php') { require "$root/index.php"; return true; }
+    return devServe("$root/$rel");
+}
 if (is_file("$root/public/$rel")) return devServe("$root/public/$rel");
 http_response_code(404);
 echo "Not found\n";

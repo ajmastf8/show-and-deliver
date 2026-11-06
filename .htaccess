@@ -1,13 +1,19 @@
 RewriteEngine On
 RewriteBase /
 
-# Route pages to HTML files
-RewriteRule ^admin/?$ public/admin.html [L]
-RewriteRule ^gallery/.+$ public/proofing.html [L]
-RewriteRule ^collection/.+$ public/collection.html [L]
-RewriteRule ^d/.+$ public/download.html [L]
-RewriteRule ^portfolio(/.*)?$ public/portfolio.html [L]
-RewriteRule ^p/.+$ public/page.html [L]
+# Route pages through index.php so their asset URLs are version-stamped with
+# each file's mtime at render time (see servePublicPage in index.php). Serving
+# public/*.html directly left the ?v= numbers hand-maintained, which silently
+# served stale scripts whenever one was missed. The page name rides in a server
+# env var, not the query string, so a client can't pick which page is rendered;
+# QSA keeps real query params (such as the portfolio's ?view=) intact.
+RewriteRule ^admin/?$ index.php [L,QSA,E=SD_PAGE:admin]
+RewriteRule ^gallery/.+$ index.php [L,QSA,E=SD_PAGE:proofing]
+RewriteRule ^collection/.+$ index.php [L,QSA,E=SD_PAGE:collection]
+RewriteRule ^d/.+$ index.php [L,QSA,E=SD_PAGE:download]
+RewriteRule ^portfolio(/.*)?$ index.php [L,QSA,E=SD_PAGE:portfolio]
+RewriteRule ^p/.+$ index.php [L,QSA,E=SD_PAGE:page]
+RewriteRule ^$ index.php [L,QSA,E=SD_PAGE:index]
 
 # Anything that exists on disk is served directly, so the rules below deny what
 # must never leave the server. They sit before the /uploads/ etc. rewrites so a
@@ -77,8 +83,9 @@ php_value upload_max_filesize 500M
 php_value post_max_size 500M
 php_value max_execution_time 300
 
-# HTML must always be fresh so its versioned <script src="...?v=N"> tags
-# point at the current JS. Cached HTML keeps referencing old versions.
+# HTML is served by index.php (servePublicPage), which sets these headers itself
+# so its version-stamped asset URLs are never cached. Kept here as well for any
+# direct hit to /public/*.html that bypasses the page routes.
 <IfModule mod_headers.c>
   <FilesMatch "\.html$">
     Header set Cache-Control "no-cache, no-store, must-revalidate"

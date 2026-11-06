@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.5.10 — 2026-11-06
+- **Page assets now version themselves, so a shipped change can't hide behind a browser cache again.** Every page loaded its CSS and JS with a hand-typed number (`proofing.js?v=14` and the like) that had to be bumped by hand whenever the file changed; miss it and a browser keeps running the old script even though the new one is on the server — which is exactly what made 2.5.7's live refresh and sort bar look dead on 2.5.9. The pages are now rendered by the server, which stamps each asset's real last-modified time onto its URL, so the number changes the moment the file does. Nothing to remember, nothing to drift. This is the last release that needed a manual asset bump.
+
 ## 2.5.9 — 2026-11-06
 - **Fixed: the client-page live refresh and sort control could appear not to work.** Both live in `proofing.js` and `proofing.css`, which the gallery page loads with a cache-busting `?v=` number. 2.5.7 and 2.5.8 changed those files without moving the number, so a browser that had already visited a gallery kept serving the old script from its cache — the update was on the server, but the page still ran the previous version, with no live refresh and no sort bar. The version numbers are bumped (`proofing.js?v=15`, `proofing.css?v=14`), so every visitor gets the new code. If a gallery still looks stale after updating, one hard refresh (or a private window) clears any copy cached from before.
 

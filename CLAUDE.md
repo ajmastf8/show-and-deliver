@@ -276,7 +276,19 @@ sense there.
 
 No build step. Edit files directly. The site runs on cPanel with PHP — no local dev server needed unless testing locally with
 `php -S localhost:8080 tools/dev-router.php`. The router replays `.htaccess`, which
-`php -S` ignores; **keep the two in sync** when changing either.
+`php -S` ignores; **keep the two in sync** when changing either. The public pages
+are one of the things they share: `.htaccess` routes each page to `index.php` with
+`E=SD_PAGE:<name>`, and the router sets `$_SERVER['SD_PAGE']` the same way, so
+both go through `servePublicPage()`.
+
+**Asset versions are automatic — do not hand-edit `?v=`.** The page HTML keeps a
+`?v=0` placeholder, and `servePublicPage()` / `stampAssetVersions()` in `index.php`
+replace it with each CSS/JS file's mtime as the page is served. That means a
+browser always fetches a changed asset, with nothing to remember at release time.
+Editing a `?v=` number by hand does nothing; leave the placeholder alone. This is
+why the pages are served by PHP instead of by the web server directly — serving
+`public/*.html` statically (as it was before 2.5.10) froze the numbers and was the
+cause of a release whose client changes appeared not to work.
 
 Deploy via admin Settings > Update tab. Two auto-detected modes (`deployMode()` in
 `index.php`): git installs fetch + hard-reset from GitHub; zip installs (no `.git`

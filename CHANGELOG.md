@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.5.6 — 2026-11-06
+- **Fixed: API uploads showed as "Untitled" instead of the file's name.** The upload API only used a title a client sent explicitly, so any client that omitted it — skipping `-F title=...` on the multipart item upload, or the `"title"` field on the chunked-upload finalize call — left every photo and video named "Untitled" in the gallery. When no title is sent, the server now derives one from the uploaded file's name, the same way the admin uploader and the import folder already do: extension and timestamp prefix stripped, underscores and dashes turned into spaces (`IMG_4821.jpg` → `IMG 4821`). A title you do send is still used exactly as sent.
+
 ## 2.5.5 — 2026-11-06
 - **Fixed: the Recent rail now sorts strictly newest first, mixing collections and galleries.** It previously listed every recent collection above every recent gallery, so a gallery made an hour ago could sit below a collection from last week. The one list is now ordered by creation date alone, newest at the top.
 

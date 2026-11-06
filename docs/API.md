@@ -146,7 +146,10 @@ curl -X POST https://your.host/api/admin/uploads/$UPLOAD_ID/finalize \
   -d '{"target":"portfolio","galleryId":"pg_xxx"}'
 ```
 
-- `target: "client"` returns the new item record. `title` is optional.
+- `target: "client"` returns the new item record. `title` is optional — omit it
+  and the server derives one from the uploaded file's name (extension and any
+  timestamp prefix stripped, `_`/`-` turned into spaces: `IMG_4821.jpg` →
+  `IMG 4821`) instead of naming the item "Untitled".
 - `target: "portfolio"` files the upload into the gallery's folder under its own
   name and returns `{ ok, file, photoshelter, gallery }`. Thumbnails and
   proxies are made by the background processor (`POST /api/admin/portfolio/process`).
@@ -281,6 +284,9 @@ Returns the created item including `id`, `type` (`photo` or `video`),
 `filename`, and metadata (`width`, `height`, `duration` for videos, plus
 `thumbnail` and `proxy` for photos). For larger files use the chunked
 [Uploads](#uploads) flow with `"target": "client"`.
+
+`title` is optional here too — omit it and the server derives one from the
+uploaded file's name rather than naming the item "Untitled".
 
 ### Poster
 

@@ -1162,6 +1162,19 @@ function safeFilename($name) {
     return preg_replace('/[^a-zA-Z0-9._-]/', '_', $name);
 }
 
+// Human-readable item title derived from an uploaded file's name, used whenever a
+// client doesn't send one. Mirrors titleFromFilename() in admin.js: strip the
+// extension, drop the leading "<timestamp>-" prefix added on storage, and turn
+// separators into spaces. Gives API uploads that omit the title field a real
+// name instead of "Untitled".
+function titleFromFilename($name) {
+    $title = preg_replace('/\.[^.]+$/', '', (string)$name);
+    $title = preg_replace('/^\d{10,}-/', '', $title);
+    $title = str_replace(['_', '-'], ' ', $title);
+    $title = trim(preg_replace('/\s+/', ' ', $title));
+    return $title !== '' ? $title : 'Untitled';
+}
+
 function formatTimestamp($seconds) {
     $mins = floor($seconds / 60);
     $secs = str_pad(floor($seconds % 60), 2, '0', STR_PAD_LEFT);
@@ -2585,7 +2598,9 @@ function registerGalleryItem(string $gid, string $destName, string $title): arra
     $item = [
         'id' => generateId($isPhoto ? 'p_' : 'v_'),
         'type' => $isPhoto ? 'photo' : 'video',
-        'title' => $title !== '' ? $title : 'Untitled',
+        // Fall back to a title derived from the filename rather than "Untitled",
+        // so API uploads that omit the title field still get a meaningful name.
+        'title' => trim($title) !== '' ? $title : titleFromFilename($destName),
         'filename' => $destName,
         'visible' => true,
         'createdAt' => date('c'),
@@ -2647,7 +2662,7 @@ if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/items', 
     $destPath = UPLOADS_DIR . '/' . $destName;
     move_uploaded_file($file['tmp_name'], $destPath);
 
-    $item = registerGalleryItem($params['gid'], $destName, $_POST['title'] ?? 'Untitled');
+    $item = registerGalleryItem($params['gid'], $destName, $_POST['title'] ?? '');
     respond($item);
 }
 
@@ -2805,7 +2820,7 @@ if ($method === 'POST' && matchRoute('/api/admin/uploads/{uploadId}/finalize', $
     if (!in_array($target, ['client', 'portfolio'], true)) respondError('target must be "client" or "portfolio"', 400);
     $gid = trim((string)($input['galleryId'] ?? ''));
     $pgid = $target === 'portfolio' ? $gid : '';
-    $title = trim((string)($input['title'] ?? 'Untitled'));
+    $title = trim((string)($input['title'] ?? ''));
     if ($gid === '') respondError('galleryId is required', 400);
 
     // Portfolio galleries are folders on disk: the file keeps its own name and
@@ -3235,9 +3250,7 @@ function importMediaFile(string $gid, string $srcPath, string $originalName): ?a
         @unlink($srcPath);
     }
 
-    $title = preg_replace('/\.[^.]+$/', '', $safeName);
-    $title = str_replace(['_', '-'], ' ', $title);
-    $title = trim(preg_replace('/\s+/', ' ', $title)) ?: 'Untitled';
+    $title = titleFromFilename($safeName);
 
     $item = registerGalleryItem($gid, $destName, $title);
     if ($item['type'] === 'video') {

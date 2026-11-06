@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.5.12 — 2026-11-06
+- **The bulk-delete control moved to where it belongs: a checkbox at the top of the item list.** 2.5.11 put a "Select" text button up in the gallery header; it now sits as a small checkbox at the top-left of the list, directly above the column the row checkboxes drop into. Click it to start selecting; click it again to select or clear everything, with the box showing a tick, a dash for a partial pick, or empty. **Done** appears on the right of that line. Same behavior, clearer home.
+
 ## 2.5.11 — 2026-11-06
 - **A client gallery now updates itself as files arrive — no clicking required.** The live refresh added in 2.5.7 only offered a "Gallery updated — Refresh" notice; it did not actually bring the new files in. An open gallery now re-renders the new items the moment they land. If the viewer is busy — in the lightbox, or part-way through a comment — it holds off and shows the refresh notice instead, so the page is never rearranged under them. Either way the notice sits at the top of the page now, not the bottom.
 - **Delete many items at once in a client gallery.** The gallery screen in the admin has a **Select** button. Turn it on and each row shows a checkbox: click rows (shift-click for a run), use **Select all**, then **Delete** to remove the batch in one go, with a single confirmation. Press **Esc** or **Done** to leave. Deleting many photos no longer means clicking × on each one in turn.

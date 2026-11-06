@@ -1102,7 +1102,6 @@ document.addEventListener('DOMContentLoaded', () => {
             <h1 class="gv-title">${escapeHtml(g.name)}</h1>
             <span class="gv-badge">${badge}</span>
             <div class="gv-actions">
-              <button class="link-btn accent" data-gv="select-mode">Select</button>
               <button class="link-btn accent" data-gv="settings">Settings</button>
               ${isProofing ? `<button class="link-btn accent" data-gv="comments">Comments</button>` : ''}
               ${isProofing ? `<button class="link-btn accent" data-gv="deliver">Deliver</button>` : ''}
@@ -1143,7 +1142,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function gvAction(g, act) {
-    if (act === 'select-mode') { setSelectMode(!contentSelectMode); return; }
     if (act === 'settings') openDrawer('settings');
     else if (act === 'comments') openDrawer('comments');
     else if (act === 'deliver') openPackageModal('gallery', g.id, g.name);
@@ -1744,7 +1742,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const sortNote = sorted && !contentSelectMode
       ? `<div class="sort-note">Shown by ${SORT_NAMES[contentSort.by]} (${contentSort.dir === 'desc' ? 'descending' : 'ascending'}). Set the order back to “My order” in Settings to drag items.</div>`
       : '';
-    list.innerHTML = sortNote + items.map(entry => {
+    const selectHead = renderSelectHead(items);
+    list.innerHTML = sortNote + selectHead + items.map(entry => {
       if (entry.type === 'header') {
         const hChecked = contentSelection.has(entry.id);
         return `<div class="admin-header-item${hChecked ? ' selected' : ''}" data-id="${entry.id}" data-type="header">
@@ -1787,20 +1786,39 @@ document.addEventListener('DOMContentLoaded', () => {
       },
     });
     renderContentBulkBar();
-    updateSelectButton();
   }
 
   // ==========================================================================
   // Select mode (bulk delete)
   //
   // A deliberate mode, not always-on checkboxes: while curating, a click should
-  // play a file, and checkboxes on every row would only be noise. Turned on, rows
-  // become toggles, the per-row action buttons step aside, and a bulk bar offers
-  // Select all and Delete. Deleting is one request per item, the same call the
-  // single-row delete uses, so nothing new happens server side.
+  // play a file, and checkboxes on every row would only be noise. The way in is
+  // the little checkbox at the top-left of the list — the slot the row
+  // checkboxes drop into — which reads "Select" when off and becomes a
+  // select-all box when on. Turned on, rows become toggles, the per-row action
+  // buttons step aside, and a bulk bar offers Delete. Deleting is one request per
+  // item, the same call the single-row × uses, so nothing new happens server side.
   // ==========================================================================
   function selectableIds() {
     return contentItems.map(i => i.id);
+  }
+
+  // The header checkbox that opens the mode, and then selects all/none.
+  function renderSelectHead(items) {
+    const ids = items.map(i => i.id);
+    const picked = ids.filter(id => contentSelection.has(id)).length;
+    const allOn = ids.length > 0 && picked === ids.length;
+    const someOn = picked > 0 && !allOn;
+    const label = contentSelectMode
+      ? (picked ? `${picked} selected` : 'Select all')
+      : 'Select';
+    return `<div class="list-select-head${contentSelectMode ? ' on' : ''}">
+      <button type="button" class="item-check head-check${allOn ? ' on' : ''}${someOn ? ' some' : ''}"
+        data-select-head role="checkbox" aria-checked="${allOn ? 'true' : (someOn ? 'mixed' : 'false')}"
+        title="${contentSelectMode ? (allOn ? 'Clear selection' : 'Select all') : 'Select items to delete'}">${allOn ? '✓' : (someOn ? '−' : '')}</button>
+      <span class="list-select-label">${label}</span>
+      ${contentSelectMode ? '<button type="button" class="list-select-done" data-select-done>Done</button>' : ''}
+    </div>`;
   }
 
   function toggleContentItem(id, range) {
@@ -1826,15 +1844,6 @@ document.addEventListener('DOMContentLoaded', () => {
     contentSelection.clear();
     contentLastClicked = null;
     renderContentItems(contentItems, lastContentStats);
-    updateSelectButton();
-  }
-
-  function updateSelectButton() {
-    const btn = document.querySelector('[data-gv="select-mode"]');
-    if (btn) {
-      btn.textContent = contentSelectMode ? 'Done' : 'Select';
-      btn.classList.toggle('danger', contentSelectMode);
-    }
   }
 
   function renderContentBulkBar() {
@@ -1844,10 +1853,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const n = contentSelection.size;
     bar.hidden = false;
     bar.innerHTML =
-      `<span class="bulk-count">${n ? n + ' selected' : 'Select items'}</span>
+      `<span class="bulk-count">${n ? n + ' selected' : 'Select items above'}</span>
        <span class="bulk-divider"></span>
-       <button data-cbulk="all">Select all</button>
-       ${n ? `<button data-cbulk="clear">Clear</button>` : ''}
        <button data-cbulk="delete" class="danger"${n ? '' : ' disabled'}>Delete${n ? ' ' + n : ''}</button>
        <button data-cbulk="done">Done</button>`;
     bar.querySelectorAll('[data-cbulk]').forEach(b =>
@@ -1857,15 +1864,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function contentBulkAction(kind) {
     if (kind === 'done') { setSelectMode(false); renderContentBulkBar(); return; }
-    if (kind === 'all') {
-      const ids = selectableIds();
-      const allOn = ids.every(id => contentSelection.has(id));
-      contentSelection.clear();
-      if (!allOn) ids.forEach(id => contentSelection.add(id));
-      renderContentItems(contentItems, lastContentStats);
-      return;
-    }
-    if (kind === 'clear') { contentSelection.clear(); renderContentItems(contentItems, lastContentStats); return; }
     if (kind === 'delete') {
       const ids = [...contentSelection];
       if (!ids.length) return;
@@ -1883,11 +1881,10 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (_) { failed++; }
       }
       contentSelection.clear();
+      contentSelectMode = false;
       await loadContent();
       if (state.centreGalleryId) await loadData().then(renderGalleryView);
-      contentSelectMode = false;
       renderContentBulkBar();
-      updateSelectButton();
       toast(failed ? `Deleted ${done}, ${failed} failed` : `Deleted ${done} item${done === 1 ? '' : 's'}`);
     }
   }
@@ -2040,6 +2037,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
   document.addEventListener('click', async (e) => {
+    // The list-head checkbox: opens the mode, then selects all / clears.
+    const head = e.target.closest('[data-select-head]');
+    if (head) {
+      e.preventDefault();
+      if (!contentSelectMode) { setSelectMode(true); return; }
+      const ids = selectableIds();
+      const allOn = ids.length > 0 && ids.every(id => contentSelection.has(id));
+      contentSelection.clear();
+      if (!allOn) ids.forEach(id => contentSelection.add(id));
+      renderContentItems(contentItems, lastContentStats);
+      return;
+    }
+    if (e.target.closest('[data-select-done]')) {
+      e.preventDefault();
+      setSelectMode(false);
+      renderContentBulkBar();
+      return;
+    }
     // In select mode a click anywhere on a row toggles it — except the title
     // field and the drag handle, which keep their normal use.
     if (contentSelectMode) {

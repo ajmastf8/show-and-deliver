@@ -565,35 +565,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Recent: client delivery collections and galleries created in the last
     // few days, surfaced at the top so a just-made delivery is one click away
-    // instead of buried in its collection. Collections first, then the
-    // galleries inside them (and ungrouped ones), newest first within each.
+    // instead of buried in its collection. One list, strictly newest first,
+    // so a gallery made an hour ago sits above a collection from last week.
     const RECENT_DAYS = 5;
     const recentCutoff = Date.now() - RECENT_DAYS * 86400000;
     const createdSince = (item) => {
       const t = Date.parse(item.createdAt || '');
       return Number.isFinite(t) && t >= recentCutoff;
     };
-    const recentCollections = sortByFavorite(state.collections.filter(c => (c.type || 'proofing') === 'proofing' && createdSince(c)))
-      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
-    const recentGalleries = state.galleries
-      .filter(g => g.active !== false && g.type === 'proofing' && createdSince(g))
-      .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+    const recent = [
+      ...state.collections
+        .filter(c => (c.type || 'proofing') === 'proofing' && createdSince(c))
+        .map(c => ({ kind: 'collection', item: c })),
+      ...state.galleries
+        .filter(g => g.active !== false && g.type === 'proofing' && createdSince(g))
+        .map(g => ({ kind: 'gallery', item: g })),
+    ].sort((a, b) => Date.parse(b.item.createdAt) - Date.parse(a.item.createdAt));
 
     let html = '';
-    if (recentCollections.length || recentGalleries.length) {
+    if (recent.length) {
       html += `<div class="rail-section-label">Recent</div>`;
       html += `<div class="rail-section-hint">New in the last ${RECENT_DAYS} days</div>`;
-      html += recentCollections.map(c => {
-        const count = all.filter(g => g.collectionId === c.id).length;
-        return `<div class="rail-row compact recent" data-recent-collection="${c.id}" title="Collection">
-          <span class="rail-name">${escapeHtml(titleCase(c.name))}</span>
-          <span class="rail-count">${count}</span>
+      html += recent.map(({ kind, item }) => {
+        if (kind === 'collection') {
+          const count = all.filter(g => g.collectionId === item.id).length;
+          return `<div class="rail-row compact recent" data-recent-collection="${item.id}" title="Collection">
+            <span class="rail-name">${escapeHtml(titleCase(item.name))}</span>
+            <span class="rail-count">${count}</span>
+          </div>`;
+        }
+        return `<div class="rail-row compact recent" data-recent-gallery="${item.id}" title="Gallery">
+          <span class="rail-name">${escapeHtml(item.name)}</span>
+          <span class="rail-count">${item.videoCount || 0}</span>
         </div>`;
       }).join('');
-      html += recentGalleries.map(g => `<div class="rail-row compact recent" data-recent-gallery="${g.id}" title="Gallery">
-          <span class="rail-name">${escapeHtml(g.name)}</span>
-          <span class="rail-count">${g.videoCount || 0}</span>
-        </div>`).join('');
     }
 
     html += `<div class="rail-section-label">Library</div>`;

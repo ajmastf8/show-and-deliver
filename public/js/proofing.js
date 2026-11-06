@@ -329,10 +329,11 @@ document.addEventListener('DOMContentLoaded', () => {
   //
   // A gallery can take in new files while a client is looking at it: FTP
   // arrivals land in a watch folder, and items uploaded through the admin or the
-  // API are registered directly. Either way an open page should offer a refresh
-  // rather than silently show a stale set — but only while the gallery is
-  // actually changing, so every client tab isn't polling a gallery handed over
-  // weeks ago.
+  // API are registered directly. An open page updates itself when that happens —
+  // unless the viewer is busy (in the lightbox, mid-comment), in which case it
+  // offers a refresh instead so nothing is pulled out from under them. It only
+  // does any of this while the gallery is actually changing, so every client tab
+  // isn't polling a gallery handed over weeks ago.
   //
   // The server decides: its payload and each /sync reply carry `live`, true for a
   // watch folder or a gallery changed within the last window. While live, the page
@@ -378,8 +379,16 @@ document.addEventListener('DOMContentLoaded', () => {
       // Keep the fast timer only while the server still calls the gallery live.
       setLiveTimer(live === true);
       if (version && version !== liveVersion) {
-        liveVersion = version;
-        showUpdateBanner();
+        // The gallery changed. Update in place unless the viewer is busy (in the
+        // lightbox, mid-comment) — then leave it and offer a refresh instead, so
+        // nothing is pulled out from under them. refreshGallery() sets
+        // liveVersion, so a fast poll can't fire the update twice.
+        if (viewerIsBusy()) {
+          liveVersion = version;
+          showUpdateBanner();
+        } else if (await refreshGallery()) {
+          flashUpdateBanner();
+        }
       }
     } catch (_) {
       // Offline or a blip; the next tick tries again.
@@ -388,27 +397,61 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function showUpdateBanner() {
+  // True while something is on screen that a re-render would disrupt: the
+  // lightbox is open, or the viewer is part-way through a comment. New items
+  // that land now wait for them rather than rearranging the page underneath.
+  function viewerIsBusy() {
+    if (lightbox.style.display && lightbox.style.display !== 'none') return true;
+    const el = document.activeElement;
+    if (el && (el === commentText || commentForm.contains(el))) return true;
+    return false;
+  }
+
+  // Pull the current gallery and re-render in place. Used both by the auto-update
+  // and by the manual Refresh button.
+  async function refreshGallery() {
+    const res = await fetch(galleryUrl());
+    if (!res.ok) return false;
+    const data = await res.json();
+    if (data.passwordRequired) return false;
+    galleryData = data;
+    allComments = data.comments || [];
+    liveVersion = data.gallery.version;
+    renderVideoList();
+    syncSortControl();
+    return true;
+  }
+
+  let updateBannerTimer = null;
+
+  // Brief confirmation that new files were added, auto-dismissed. Clicking it
+  // does nothing more — the gallery is already up to date.
+  function flashUpdateBanner() {
+    const banner = showUpdateBanner({ auto: true });
+    clearTimeout(updateBannerTimer);
+    updateBannerTimer = setTimeout(() => banner.remove(), 4000);
+  }
+
+  // The banner is used two ways: as a transient "added" note after an auto
+  // update, and as the standing offer to refresh for a viewer who is busy and so
+  // was not updated automatically. It sits at the top of the page.
+  function showUpdateBanner({ auto = false } = {}) {
     let banner = document.getElementById('live-update-banner');
-    if (!banner) {
-      banner = document.createElement('div');
-      banner.id = 'live-update-banner';
-      banner.className = 'live-update-banner';
-      banner.innerHTML = '<span>Gallery updated</span><button type="button" class="live-update-btn">Refresh</button>';
+    if (banner) return banner;
+    banner = document.createElement('div');
+    banner.id = 'live-update-banner';
+    banner.className = 'live-update-banner';
+    banner.innerHTML = auto
+      ? '<span>New items added</span>'
+      : '<span>Gallery updated</span><button type="button" class="live-update-btn">Refresh</button>';
+    if (!auto) {
       banner.querySelector('button').addEventListener('click', async () => {
-        const res = await fetch(galleryUrl());
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.passwordRequired) return;
-        galleryData = data;
-        allComments = data.comments || [];
-        liveVersion = data.gallery.version;
-        renderVideoList();
-        syncSortControl();
-        banner.remove();
+        const ok = await refreshGallery();
+        if (ok) banner.remove();
       });
-      document.body.appendChild(banner);
     }
+    document.body.appendChild(banner);
+    return banner;
   }
 
   function renderVideoList() {

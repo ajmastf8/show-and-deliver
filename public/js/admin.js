@@ -1085,6 +1085,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!g) { backToLibrary(); return; }
     contentGid = g.id;
     selectedItemId = null;
+    contentSelectMode = false;
+    contentSelection.clear();
     const isProofing = g.type === 'proofing';
     const badge = isProofing ? 'Client gallery' : 'Portfolio';
     const link = galleryPublicUrl(g) || '';
@@ -1100,6 +1102,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <h1 class="gv-title">${escapeHtml(g.name)}</h1>
             <span class="gv-badge">${badge}</span>
             <div class="gv-actions">
+              <button class="link-btn accent" data-gv="select-mode">Select</button>
               <button class="link-btn accent" data-gv="settings">Settings</button>
               ${isProofing ? `<button class="link-btn accent" data-gv="comments">Comments</button>` : ''}
               ${isProofing ? `<button class="link-btn accent" data-gv="deliver">Deliver</button>` : ''}
@@ -1140,6 +1143,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function gvAction(g, act) {
+    if (act === 'select-mode') { setSelectMode(!contentSelectMode); return; }
     if (act === 'settings') openDrawer('settings');
     else if (act === 'comments') openDrawer('comments');
     else if (act === 'deliver') openPackageModal('gallery', g.id, g.name);
@@ -1202,6 +1206,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (state.drawer.galleryId && state.drawer.dirty && !confirm('Discard unsaved changes?')) return;
     state.centreGalleryId = null;
     contentGid = null;
+    contentSelectMode = false;
+    contentSelection.clear();
+    const cbar = $('bulk-bar'); if (cbar) { cbar.classList.remove('show'); cbar.hidden = true; }
     clearInterval(importWatchTimer);
     importWatchTimer = null;
     closeDrawerForce();
@@ -1703,6 +1710,13 @@ document.addEventListener('DOMContentLoaded', () => {
   let contentSortable = null;
   let contentSort = { by: 'custom', dir: 'asc' };
   let contentCoverId = null;
+  let lastContentStats = {};
+  // Multi-select for deleting items in bulk. Off by default: a normal click
+  // plays a file or picks a row for the preview, which is what you want while
+  // curating. Turned on, a click toggles a checkbox and the bulk bar appears.
+  let contentSelectMode = false;
+  const contentSelection = new Set();
+  let contentLastClicked = null;
   const SORT_NAMES = { name: 'file name', captured: 'capture time', added: 'date added' };
 
   async function loadContent() {
@@ -1714,6 +1728,7 @@ document.addEventListener('DOMContentLoaded', () => {
     contentSort = (data && data.sort) || { by: 'custom', dir: 'asc' };
     contentCoverId = (data && data.coverId) || null;
     const stats = (data && data.stats) || {};
+    lastContentStats = stats;
     renderContentItems(contentItems, stats);
   }
 
@@ -1725,12 +1740,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!items.length) { list.innerHTML = `<div class="drawer-empty">No items yet. Use “Add files”.</div>`; return; }
     const sorted = contentSort.by !== 'custom' && !isPortfolio;
     list.classList.toggle('is-sorted', sorted);
-    const sortNote = sorted
+    list.classList.toggle('is-selecting', contentSelectMode);
+    const sortNote = sorted && !contentSelectMode
       ? `<div class="sort-note">Shown by ${SORT_NAMES[contentSort.by]} (${contentSort.dir === 'desc' ? 'descending' : 'ascending'}). Set the order back to “My order” in Settings to drag items.</div>`
       : '';
     list.innerHTML = sortNote + items.map(entry => {
       if (entry.type === 'header') {
-        return `<div class="admin-header-item" data-id="${entry.id}" data-type="header">
+        const hChecked = contentSelection.has(entry.id);
+        return `<div class="admin-header-item${hChecked ? ' selected' : ''}" data-id="${entry.id}" data-type="header">
+          ${contentSelectMode ? `<span class="item-check${hChecked ? ' on' : ''}" aria-hidden="true">${hChecked ? '✓' : ''}</span>` : ''}
           <span class="drag-handle">≡</span>
           <input type="text" class="title-input header-text-input" value="${escapeHtml(entry.text)}">
           <button class="btn-icon delete-btn" title="Delete header">×</button>
@@ -1743,29 +1761,135 @@ document.addEventListener('DOMContentLoaded', () => {
       else if (isPhoto) media = `<img src="/uploads/${encodeURIComponent(entry.filename)}" class="admin-thumb">`;
       else media = `<video src="/uploads/${encodeURIComponent(entry.filename)}" muted preload="metadata" class="admin-thumb"></video>`;
       const dlCount = dlItems[entry.id] || 0;
-      return `<div class="admin-video-item${entry.id === selectedItemId ? ' selected' : ''}" data-id="${entry.id}">
+      const checked = contentSelection.has(entry.id);
+      return `<div class="admin-video-item${entry.id === selectedItemId && !contentSelectMode ? ' selected' : ''}${checked ? ' checked' : ''}" data-id="${entry.id}">
+        ${contentSelectMode ? `<span class="item-check${checked ? ' on' : ''}" aria-hidden="true">${checked ? '✓' : ''}</span>` : ''}
         <span class="drag-handle">≡</span>
         <button class="thumb-play" title="Preview">${media}<span class="thumb-play-icon">${isPhoto ? '⤢' : '▶'}</span></button>
         <input type="text" class="title-input" value="${escapeHtml(entry.title)}">
-        <span class="video-dl-count" title="${dlCount} downloads">↓ ${dlCount}</span>
+        ${contentSelectMode ? '' : `<span class="video-dl-count" title="${dlCount} downloads">↓ ${dlCount}</span>
         ${isPortfolio || entry.type !== 'photo' && entry.type !== 'video' ? '' : `<button class="btn-icon cover-btn${entry.id === contentCoverId ? ' is-cover' : ''}" title="${entry.id === contentCoverId ? 'This is the cover' : 'Use as gallery cover'}">★</button>`}
         <button class="btn-icon replace-btn" title="Replace file">↻</button>
         ${isPortfolio ? `<button class="btn-icon desc-btn${entry.description ? ' has-description' : ''}" title="Caption box">&para;</button>` : ''}
         ${isPhoto ? '' : `<button class="btn-icon cc-btn${(entry.captions && entry.captions.length) ? ' has-captions' : ''}" title="Captions">CC</button>`}
         ${isPhoto ? '' : `<button class="btn-icon thumb-btn" title="Set thumbnail">▦</button>`}
         <button class="btn-icon toggle-vis ${entry.visible ? '' : 'hidden-video'}" title="${entry.visible ? 'Visible' : 'Hidden'}">${entry.visible ? '◉' : '○'}</button>
-        <button class="btn-icon delete-btn" title="Delete">×</button>
+        <button class="btn-icon delete-btn" title="Delete">×</button>`}
       </div>`;
     }).join('');
     if (contentSortable) { try { contentSortable.destroy(); } catch (_) {} }
     contentSortable = Sortable.create(list, {
       handle: '.drag-handle', animation: 150, ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
-      disabled: sorted,
+      disabled: sorted || contentSelectMode,
       onEnd: async () => {
         const order = Array.from(list.querySelectorAll('.admin-video-item, .admin-header-item')).map(i => i.dataset.id);
         await fetch(`/api/admin/client/galleries/${contentGid}/order`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }) });
       },
     });
+    renderContentBulkBar();
+    updateSelectButton();
+  }
+
+  // ==========================================================================
+  // Select mode (bulk delete)
+  //
+  // A deliberate mode, not always-on checkboxes: while curating, a click should
+  // play a file, and checkboxes on every row would only be noise. Turned on, rows
+  // become toggles, the per-row action buttons step aside, and a bulk bar offers
+  // Select all and Delete. Deleting is one request per item, the same call the
+  // single-row delete uses, so nothing new happens server side.
+  // ==========================================================================
+  function selectableIds() {
+    return contentItems.map(i => i.id);
+  }
+
+  function toggleContentItem(id, range) {
+    if (range && contentLastClicked) {
+      const order = selectableIds();
+      const from = order.indexOf(contentLastClicked);
+      const to = order.indexOf(id);
+      if (from !== -1 && to !== -1) {
+        const [a, b] = from < to ? [from, to] : [to, from];
+        for (let i = a; i <= b; i++) contentSelection.add(order[i]);
+      } else contentSelection.add(id);
+    } else if (contentSelection.has(id)) {
+      contentSelection.delete(id);
+    } else {
+      contentSelection.add(id);
+    }
+    contentLastClicked = id;
+    renderContentItems(contentItems, lastContentStats);
+  }
+
+  function setSelectMode(on) {
+    contentSelectMode = on;
+    contentSelection.clear();
+    contentLastClicked = null;
+    renderContentItems(contentItems, lastContentStats);
+    updateSelectButton();
+  }
+
+  function updateSelectButton() {
+    const btn = document.querySelector('[data-gv="select-mode"]');
+    if (btn) {
+      btn.textContent = contentSelectMode ? 'Done' : 'Select';
+      btn.classList.toggle('danger', contentSelectMode);
+    }
+  }
+
+  function renderContentBulkBar() {
+    const bar = $('bulk-bar');
+    if (!bar) return;
+    if (!contentSelectMode) { bar.classList.remove('show'); bar.hidden = true; return; }
+    const n = contentSelection.size;
+    bar.hidden = false;
+    bar.innerHTML =
+      `<span class="bulk-count">${n ? n + ' selected' : 'Select items'}</span>
+       <span class="bulk-divider"></span>
+       <button data-cbulk="all">Select all</button>
+       ${n ? `<button data-cbulk="clear">Clear</button>` : ''}
+       <button data-cbulk="delete" class="danger"${n ? '' : ' disabled'}>Delete${n ? ' ' + n : ''}</button>
+       <button data-cbulk="done">Done</button>`;
+    bar.querySelectorAll('[data-cbulk]').forEach(b =>
+      b.addEventListener('click', () => contentBulkAction(b.getAttribute('data-cbulk'))));
+    requestAnimationFrame(() => bar.classList.add('show'));
+  }
+
+  async function contentBulkAction(kind) {
+    if (kind === 'done') { setSelectMode(false); renderContentBulkBar(); return; }
+    if (kind === 'all') {
+      const ids = selectableIds();
+      const allOn = ids.every(id => contentSelection.has(id));
+      contentSelection.clear();
+      if (!allOn) ids.forEach(id => contentSelection.add(id));
+      renderContentItems(contentItems, lastContentStats);
+      return;
+    }
+    if (kind === 'clear') { contentSelection.clear(); renderContentItems(contentItems, lastContentStats); return; }
+    if (kind === 'delete') {
+      const ids = [...contentSelection];
+      if (!ids.length) return;
+      const ok = await confirmModal({
+        title: 'Delete items',
+        message: `Delete ${ids.length} item${ids.length === 1 ? '' : 's'}? This cannot be undone.`,
+        okText: 'Delete', danger: true,
+      });
+      if (!ok) return;
+      let done = 0, failed = 0;
+      for (const id of ids) {
+        try {
+          const res = await fetch(`/api/admin/client/galleries/${contentGid}/items/${id}`, { method: 'DELETE' });
+          if (res.ok) done++; else failed++;
+        } catch (_) { failed++; }
+      }
+      contentSelection.clear();
+      await loadContent();
+      if (state.centreGalleryId) await loadData().then(renderGalleryView);
+      contentSelectMode = false;
+      renderContentBulkBar();
+      updateSelectButton();
+      toast(failed ? `Deleted ${done}, ${failed} failed` : `Deleted ${done} item${done === 1 ? '' : 's'}`);
+    }
   }
 
   // ==========================================================================
@@ -1854,6 +1978,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // The title field fills most of a row, so clicking it is the usual way a row
   // gets "picked" — keep selection in step with it.
   document.addEventListener('focusin', (e) => {
+    if (contentSelectMode) return;
     const row = e.target.closest && e.target.closest('.admin-video-item');
     if (row) selectItem(row.dataset.id);
   });
@@ -1888,6 +2013,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.querySelector('.modal:not([hidden])')) return;
     if (thumbPicker.classList.contains('open')) return;
     if (!document.getElementById('content-list')) return;
+    if (contentSelectMode) {
+      // Select mode: Escape leaves, Space/arrows don't play or move the pick.
+      if (e.key === 'Escape') { e.preventDefault(); setSelectMode(false); renderContentBulkBar(); }
+      return;
+    }
     if (isSpace(e)) {
       if (!selectedItemId) return;
       e.preventDefault();
@@ -1910,6 +2040,16 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
   document.addEventListener('click', async (e) => {
+    // In select mode a click anywhere on a row toggles it — except the title
+    // field and the drag handle, which keep their normal use.
+    if (contentSelectMode) {
+      const srow = e.target.closest('.admin-video-item, .admin-header-item');
+      if (srow && !e.target.closest('input, .drag-handle')) {
+        e.preventDefault();
+        toggleContentItem(srow.dataset.id, e.shiftKey);
+        return;
+      }
+    }
     const play = e.target.closest('.thumb-play');
     if (play) { e.preventDefault(); openPreview(play.closest('.admin-video-item').dataset.id); return; }
     const row = e.target.closest('.admin-video-item');

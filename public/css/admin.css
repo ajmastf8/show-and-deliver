@@ -841,7 +841,32 @@ code, kbd, samp { font-family: inherit; font-size: inherit; }
 }
 .admin-header-item { background: rgba(255,255,255,.02); }
 .admin-video-item.selected { background: var(--accent-dim); box-shadow: inset 2px 0 0 var(--accent); }
+.admin-video-item.checked, .admin-header-item.selected { background: var(--accent-dim); box-shadow: inset 2px 0 0 var(--accent); }
+
+/* Select mode: rows become toggles. The square mirrors the gallery grid's
+   .gc-check so the two selection surfaces read the same way. */
+.item-check {
+  flex: 0 0 auto;
+  width: 16px; height: 16px;
+  border: 1px solid rgba(255,255,255,.35);
+  border-radius: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; line-height: 1;
+  color: #fff;
+  background: rgba(0,0,0,.4);
+  cursor: pointer;
+}
+.admin-video-item.checked .item-check,
+.admin-header-item.selected .item-check {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.item-list.is-selecting .admin-video-item,
+.item-list.is-selecting .admin-header-item { cursor: pointer; }
+.item-list.is-selecting .admin-video-item .title-input,
+.item-list.is-selecting .admin-header-item .title-input { cursor: pointer; }
 .drag-handle { color: var(--text-6); cursor: grab; font-size: 13px; flex: 0 0 auto; }
+.item-list.is-selecting .drag-handle { visibility: hidden; }
 
 /* Thumbnail doubles as the preview trigger */
 .thumb-play {

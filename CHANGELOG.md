@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.5.11 — 2026-11-06
+- **A client gallery now updates itself as files arrive — no clicking required.** The live refresh added in 2.5.7 only offered a "Gallery updated — Refresh" notice; it did not actually bring the new files in. An open gallery now re-renders the new items the moment they land. If the viewer is busy — in the lightbox, or part-way through a comment — it holds off and shows the refresh notice instead, so the page is never rearranged under them. Either way the notice sits at the top of the page now, not the bottom.
+- **Delete many items at once in a client gallery.** The gallery screen in the admin has a **Select** button. Turn it on and each row shows a checkbox: click rows (shift-click for a run), use **Select all**, then **Delete** to remove the batch in one go, with a single confirmation. Press **Esc** or **Done** to leave. Deleting many photos no longer means clicking × on each one in turn.
+
 ## 2.5.10 — 2026-11-06
 - **Page assets now version themselves, so a shipped change can't hide behind a browser cache again.** Every page loaded its CSS and JS with a hand-typed number (`proofing.js?v=14` and the like) that had to be bumped by hand whenever the file changed; miss it and a browser keeps running the old script even though the new one is on the server — which is exactly what made 2.5.7's live refresh and sort bar look dead on 2.5.9. The pages are now rendered by the server, which stamps each asset's real last-modified time onto its URL, so the number changes the moment the file does. Nothing to remember, nothing to drift. This is the last release that needed a manual asset bump.
 

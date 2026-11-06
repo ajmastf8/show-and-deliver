@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.5.8 — 2026-11-06
+- **Client galleries open newest-first by default.** The viewer sort control added in 2.5.7 started on your saved "Gallery order"; it now starts on Arrival, newest first, so a client opening a delivery sees the most recently added files at the top straight away. Their choice is still only theirs — the gallery's saved order is untouched — and "Gallery order" brings it back and sticks for that visit, even across a reload. Switching to Name starts A–Z; the date fields start newest-first.
+
 ## 2.5.7 — 2026-11-06
 - **A client gallery that's being added to now updates itself, without a reload.** Previously only FTP watch folders could tell an open gallery page that new files had arrived; an upload through the admin or the API was invisible until the client refreshed by hand. Any gallery changed in the last half hour now counts as live, so an open page offers the "Gallery updated — Refresh" banner within 30 seconds of a new arrival. It also re-checks whenever the tab regains focus, so a client who was sitting on a quiet gallery and comes back after you uploaded sees it straight away. Once a gallery goes quiet the polling stops on its own, so a delivered gallery isn't asking forever.
 - **Clients can sort a gallery for themselves — Name, Arrival or Creation, each direction.** A sort bar above the grid lets the viewer reorder by file name (A–Z / Z–A), date added (Arrival), or capture time from EXIF / recorded date (Creation), and reverse it. Their choice is their own for the visit — it never changes the order you saved in the gallery settings, and "Gallery order" puts it back. Section headers stay put; items sort within them. Capture time falls back to date added for files that don't carry a date.

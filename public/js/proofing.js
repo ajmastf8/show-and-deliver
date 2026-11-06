@@ -128,24 +128,29 @@ document.addEventListener('DOMContentLoaded', () => {
   // The visitor can reorder the gallery for their own session: Name (file name),
   // Arrival (date added) or Creation (capture time), each reversible. The choice
   // is sent to the server, which applies the same sort the admin uses, so there
-  // is one ordering implementation. "Gallery order" clears it and follows the
-  // photographer's saved setting again.
+  // is one ordering implementation. Visitors start on Arrival, newest first —
+  // the newest additions at the top, which is what a client checking a delivery
+  // wants first — and "Gallery order" follows the photographer's saved setting.
+
+  const DEFAULT_VIEW_SORT = { by: 'added', dir: 'desc' };
 
   function loadViewSort() {
     try {
       const raw = sessionStorage.getItem(SORT_STORE_KEY);
-      if (!raw) return null;
+      if (!raw) return { ...DEFAULT_VIEW_SORT };
       const s = JSON.parse(raw);
       if (s && ['custom', 'name', 'added', 'captured'].includes(s.by)) {
         return { by: s.by, dir: s.dir === 'desc' ? 'desc' : 'asc' };
       }
     } catch (_) {}
-    return null;
+    return { ...DEFAULT_VIEW_SORT };
   }
 
   function saveViewSort(sort) {
     try {
-      if (!sort || sort.by === 'custom') sessionStorage.removeItem(SORT_STORE_KEY);
+      // Persist even "custom"; it is a real choice (follow the gallery's own
+      // order) and must survive a reload rather than snap back to the default.
+      if (!sort) sessionStorage.removeItem(SORT_STORE_KEY);
       else sessionStorage.setItem(SORT_STORE_KEY, JSON.stringify(sort));
     } catch (_) {}
   }
@@ -163,11 +168,9 @@ document.addEventListener('DOMContentLoaded', () => {
   function syncSortControl() {
     const sortable = (galleryData?.items || []).filter(v => v.type !== 'header');
     sortBar.hidden = sortable.length < 2;
-    const g = galleryData?.gallery || {};
-    // Reflect what the server actually used (a viewer choice, or the gallery's
-    // own setting), so the control is truthful even before any choice is made.
-    const by = viewSort ? viewSort.by : (g.sortBy || 'custom');
-    const dir = viewSort ? viewSort.dir : (g.sortDir || 'asc');
+    // Reflect what the server actually used, so the control is truthful.
+    const by = viewSort?.by || (galleryData?.gallery?.sortBy || 'custom');
+    const dir = viewSort?.dir || (galleryData?.gallery?.sortDir || 'asc');
     sortBySelect.value = by;
     const labels = SORT_DIR_LABELS[by] || SORT_DIR_LABELS.custom;
     sortDirLabel.textContent = dir === 'desc' ? labels[1] : labels[0];
@@ -190,11 +193,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   sortBySelect.addEventListener('change', () => {
     const by = sortBySelect.value;
-    applyViewSort(by === 'custom' ? null : { by, dir: viewSort?.dir || 'asc' });
+    // "Gallery order" is a real choice (follow the photographer's setting) and is
+    // stored as-is so it survives a reload instead of reverting to the default.
+    // A newly chosen field keeps the current direction, except Name which reads
+    // best A–Z and date fields which read best newest-first.
+    const keepDir = viewSort && viewSort.by !== 'custom' ? viewSort.dir : null;
+    if (by === 'custom') applyViewSort({ by: 'custom', dir: 'asc' });
+    else applyViewSort({ by, dir: keepDir || (by === 'name' ? 'asc' : 'desc') });
   });
 
   sortDirBtn.addEventListener('click', () => {
-    if (!viewSort) return;
+    if (!viewSort || viewSort.by === 'custom') return;
     applyViewSort({ by: viewSort.by, dir: viewSort.dir === 'asc' ? 'desc' : 'asc' });
   });
 

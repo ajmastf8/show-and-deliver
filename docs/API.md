@@ -361,7 +361,9 @@ setting — this backs the client page's own sort control. `sort` is one of
 `name`, `added` (date added) or `captured` (EXIF / recorded date, falling back to
 date added); `dir` is `asc` or `desc`. Anything else, or no params, follows the
 gallery's saved `sort`. The gallery block echoes the order actually applied as
-`sortBy` and `sortDir`, so a caller can show which is in effect.
+`sortBy` and `sortDir`, so a caller can show which is in effect. The client page
+itself opens on `added`/`desc` (arrival, newest first); that is the page's send,
+not a server default.
 
 `gallery.sortBy`, `gallery.sortDir`, `gallery.live` and `gallery.version` are
 also part of the payload:

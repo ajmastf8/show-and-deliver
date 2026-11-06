@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.5.5 — 2026-11-06
+- **Fixed: the Recent rail now sorts strictly newest first, mixing collections and galleries.** It previously listed every recent collection above every recent gallery, so a gallery made an hour ago could sit below a collection from last week. The one list is now ordered by creation date alone, newest at the top.
+
 ## 2.5.4 — 2026-11-06
 - **New: a Recent section at the top of the Client delivery rail.** Collections and galleries created in the last five days are listed above the Library and Client delivery sections, newest first, collections before galleries. A just-made delivery is one click away — pick a recent collection to open its list, or a recent gallery to open it straight away. The section stays out of the way when nothing is new.
 

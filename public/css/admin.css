@@ -879,6 +879,12 @@ code, kbd, samp { font-family: inherit; font-size: inherit; }
   gap: 10px;
   padding: 10px 0;
   border-bottom: 1px solid var(--border-row);
+  /* Stay in reach however long the gallery is: pinned to the top of the scroll
+     area rather than sitting at the end of it. */
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--page);
 }
 .list-select-head .head-check { margin-right: 0; }
 .head-check.some { background: var(--accent); border-color: var(--accent); }
@@ -888,8 +894,20 @@ code, kbd, samp { font-family: inherit; font-size: inherit; }
   letter-spacing: .02em;
 }
 .list-select-head.on .list-select-label { color: var(--accent); }
+.list-select-tools { margin-left: auto; display: flex; align-items: center; gap: 14px; }
+.list-select-delete {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--danger);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.list-select-delete:hover { filter: brightness(1.15); }
+.list-select-delete[disabled] { color: var(--text-6); cursor: default; filter: none; }
 .list-select-done {
-  margin-left: auto;
   font: inherit;
   font-size: 12px;
   color: var(--text-4);

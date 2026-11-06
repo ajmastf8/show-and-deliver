@@ -1785,6 +1785,8 @@ document.addEventListener('DOMContentLoaded', () => {
         await fetch(`/api/admin/client/galleries/${contentGid}/order`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }) });
       },
     });
+    // The content view has no floating bar of its own; make sure the gallery
+    // list's one is not left showing behind it.
     renderContentBulkBar();
   }
 
@@ -1795,29 +1797,35 @@ document.addEventListener('DOMContentLoaded', () => {
   // play a file, and checkboxes on every row would only be noise. The way in is
   // the little checkbox at the top-left of the list — the slot the row
   // checkboxes drop into — which reads "Select" when off and becomes a
-  // select-all box when on. Turned on, rows become toggles, the per-row action
-  // buttons step aside, and a bulk bar offers Delete. Deleting is one request per
-  // item, the same call the single-row × uses, so nothing new happens server side.
+  // select-all box when on. The tools live on that same line, not a floating bar
+  // at the bottom of the scroll area, so they are in reach however long the
+  // gallery is. Deleting is one request per item, the same call the single-row ×
+  // uses, so nothing new happens server side.
   // ==========================================================================
   function selectableIds() {
     return contentItems.map(i => i.id);
   }
 
-  // The header checkbox that opens the mode, and then selects all/none.
+  // The select row: the checkbox that opens the mode (then selects all/none),
+  // a count, and the Delete / Done tools. It stays put at the top of the list.
   function renderSelectHead(items) {
     const ids = items.map(i => i.id);
     const picked = ids.filter(id => contentSelection.has(id)).length;
     const allOn = ids.length > 0 && picked === ids.length;
     const someOn = picked > 0 && !allOn;
     const label = contentSelectMode
-      ? (picked ? `${picked} selected` : 'Select all')
+      ? (picked ? `${picked} selected` : `${ids.length} item${ids.length === 1 ? '' : 's'}`)
       : 'Select';
+    const tools = contentSelectMode
+      ? `<button type="button" class="list-select-delete" data-select-delete${picked ? '' : ' disabled'}>Delete${picked ? ' ' + picked : ''}</button>
+         <button type="button" class="list-select-done" data-select-done>Done</button>`
+      : '';
     return `<div class="list-select-head${contentSelectMode ? ' on' : ''}">
       <button type="button" class="item-check head-check${allOn ? ' on' : ''}${someOn ? ' some' : ''}"
         data-select-head role="checkbox" aria-checked="${allOn ? 'true' : (someOn ? 'mixed' : 'false')}"
         title="${contentSelectMode ? (allOn ? 'Clear selection' : 'Select all') : 'Select items to delete'}">${allOn ? '✓' : (someOn ? '−' : '')}</button>
       <span class="list-select-label">${label}</span>
-      ${contentSelectMode ? '<button type="button" class="list-select-done" data-select-done>Done</button>' : ''}
+      <span class="list-select-tools">${tools}</span>
     </div>`;
   }
 
@@ -1846,47 +1854,35 @@ document.addEventListener('DOMContentLoaded', () => {
     renderContentItems(contentItems, lastContentStats);
   }
 
+  // The content view keeps its tools on the select row, so the shared floating
+  // bar is only used by the gallery list. Make sure it is hidden while a gallery
+  // is open so the two never both show.
   function renderContentBulkBar() {
     const bar = $('bulk-bar');
-    if (!bar) return;
-    if (!contentSelectMode) { bar.classList.remove('show'); bar.hidden = true; return; }
-    const n = contentSelection.size;
-    bar.hidden = false;
-    bar.innerHTML =
-      `<span class="bulk-count">${n ? n + ' selected' : 'Select items above'}</span>
-       <span class="bulk-divider"></span>
-       <button data-cbulk="delete" class="danger"${n ? '' : ' disabled'}>Delete${n ? ' ' + n : ''}</button>
-       <button data-cbulk="done">Done</button>`;
-    bar.querySelectorAll('[data-cbulk]').forEach(b =>
-      b.addEventListener('click', () => contentBulkAction(b.getAttribute('data-cbulk'))));
-    requestAnimationFrame(() => bar.classList.add('show'));
+    if (bar) { bar.classList.remove('show'); bar.hidden = true; }
   }
 
-  async function contentBulkAction(kind) {
-    if (kind === 'done') { setSelectMode(false); renderContentBulkBar(); return; }
-    if (kind === 'delete') {
-      const ids = [...contentSelection];
-      if (!ids.length) return;
-      const ok = await confirmModal({
-        title: 'Delete items',
-        message: `Delete ${ids.length} item${ids.length === 1 ? '' : 's'}? This cannot be undone.`,
-        okText: 'Delete', danger: true,
-      });
-      if (!ok) return;
-      let done = 0, failed = 0;
-      for (const id of ids) {
-        try {
-          const res = await fetch(`/api/admin/client/galleries/${contentGid}/items/${id}`, { method: 'DELETE' });
-          if (res.ok) done++; else failed++;
-        } catch (_) { failed++; }
-      }
-      contentSelection.clear();
-      contentSelectMode = false;
-      await loadContent();
-      if (state.centreGalleryId) await loadData().then(renderGalleryView);
-      renderContentBulkBar();
-      toast(failed ? `Deleted ${done}, ${failed} failed` : `Deleted ${done} item${done === 1 ? '' : 's'}`);
+  async function deleteSelectedItems() {
+    const ids = [...contentSelection];
+    if (!ids.length) return;
+    const ok = await confirmModal({
+      title: 'Delete items',
+      message: `Delete ${ids.length} item${ids.length === 1 ? '' : 's'}? This cannot be undone.`,
+      okText: 'Delete', danger: true,
+    });
+    if (!ok) return;
+    let done = 0, failed = 0;
+    for (const id of ids) {
+      try {
+        const res = await fetch(`/api/admin/client/galleries/${contentGid}/items/${id}`, { method: 'DELETE' });
+        if (res.ok) done++; else failed++;
+      } catch (_) { failed++; }
     }
+    contentSelection.clear();
+    contentSelectMode = false;
+    await loadContent();
+    if (state.centreGalleryId) await loadData().then(renderGalleryView);
+    toast(failed ? `Deleted ${done}, ${failed} failed` : `Deleted ${done} item${done === 1 ? '' : 's'}`);
   }
 
   // ==========================================================================
@@ -2012,7 +2008,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!document.getElementById('content-list')) return;
     if (contentSelectMode) {
       // Select mode: Escape leaves, Space/arrows don't play or move the pick.
-      if (e.key === 'Escape') { e.preventDefault(); setSelectMode(false); renderContentBulkBar(); }
+      if (e.key === 'Escape') { e.preventDefault(); setSelectMode(false); }
       return;
     }
     if (isSpace(e)) {
@@ -2052,7 +2048,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.target.closest('[data-select-done]')) {
       e.preventDefault();
       setSelectMode(false);
-      renderContentBulkBar();
+      return;
+    }
+    if (e.target.closest('[data-select-delete]')) {
+      e.preventDefault();
+      deleteSelectedItems();
       return;
     }
     // In select mode a click anywhere on a row toggles it — except the title

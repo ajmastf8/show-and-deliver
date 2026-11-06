@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.5.13 — 2026-11-06
+- **The select tools now sit on the select row, and stay there.** 2.5.12 kept Delete and Done in the floating bar at the bottom of the pane, which on a long gallery meant scrolling to the end to reach them — and Select all put them even further away. The count, **Delete** and **Done** are now on the select row itself, and that row is pinned to the top of the list, so they are in reach however far down you are. The floating bar is not used in the gallery view at all now.
+
 ## 2.5.12 — 2026-11-06
 - **The bulk-delete control moved to where it belongs: a checkbox at the top of the item list.** 2.5.11 put a "Select" text button up in the gallery header; it now sits as a small checkbox at the top-left of the list, directly above the column the row checkboxes drop into. Click it to start selecting; click it again to select or clear everything, with the box showing a tick, a dash for a partial pick, or empty. **Done** appears on the right of that line. Same behavior, clearer home.
 

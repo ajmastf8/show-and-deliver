@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.5.9 — 2026-11-06
+- **Fixed: the client-page live refresh and sort control could appear not to work.** Both live in `proofing.js` and `proofing.css`, which the gallery page loads with a cache-busting `?v=` number. 2.5.7 and 2.5.8 changed those files without moving the number, so a browser that had already visited a gallery kept serving the old script from its cache — the update was on the server, but the page still ran the previous version, with no live refresh and no sort bar. The version numbers are bumped (`proofing.js?v=15`, `proofing.css?v=14`), so every visitor gets the new code. If a gallery still looks stale after updating, one hard refresh (or a private window) clears any copy cached from before.
+
 ## 2.5.8 — 2026-11-06
 - **Client galleries open newest-first by default.** The viewer sort control added in 2.5.7 started on your saved "Gallery order"; it now starts on Arrival, newest first, so a client opening a delivery sees the most recently added files at the top straight away. Their choice is still only theirs — the gallery's saved order is untouched — and "Gallery order" brings it back and sticks for that visit, even across a reload. Switching to Name starts A–Z; the date fields start newest-first.
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.6.1 — 2026-11-07
+- **Fixed: two client-gallery uploads with the same file name in the same second could overwrite each other.** Stored names were built only from the time and the file name, so a second upload of `DSC_0001.jpg` in the same second landed on the same path — one photo's bytes were lost and the other appeared twice in the gallery. Cameras reuse names (every body counts up from `DSC_0001`), so a gallery fed by more than one photographer, or by parallel API uploads, hit this. Each upload now reserves its own name atomically, keeping the old short name in the common case and adding a counter only on a collision. Applies to the multipart add, the chunked finalize, file replace and folder import.
+- Tracked the release upload tooling (`tools/release/`) so publishing is reproducible.
+
 ## 2.6.0 — 2026-11-07
 - **The 2.x rewrite is now the main line.** The folder-backed portfolio, the reworked admin, client delivery galleries and collections, page/portfolio theming, captions, delivery packages and everything shipped through 2.5.13 are now what `main` carries; the 1.6.x single-file line is retired. Installs updating from 1.6.x land here.
 - **Replacing a gallery item's file goes through the upload queue.** The admin's replace button now shows a progress row, chunks large files, can Pause/retry and caches the new file's delivery checksum, instead of sending one bare request. (It also fixes a long-standing bug where a replace sent no file at all: PHP only parses a multipart body for POST, so the old PUT never reached `$_FILES`.)

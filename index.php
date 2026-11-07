@@ -1217,6 +1217,39 @@ function safeFilename($name) {
     return preg_replace('/[^a-zA-Z0-9._-]/', '_', $name);
 }
 
+// Reserve a stored filename for a client-delivery upload, atomically.
+//
+// Stored names are "{unix time}-{safe name}". Built from just those two parts,
+// two uploads of the same filename in the same second landed on the SAME path:
+// the second silently overwrote the first and left two gallery items pointing at
+// one file, so one photo was lost and the other appeared twice. Cameras reuse
+// names (every body counts up from DSC_0001), so a gallery fed by more than one
+// photographer, or by parallel API deliveries, hits this in practice.
+//
+// The empty file is created with fopen mode 'x' (O_EXCL), so two concurrent
+// requests cannot both pick the same name; the caller then moves the real upload
+// over it. The common case keeps the old shape; only a collision gets a counter:
+// "{time}-{n}-{name}". Release the reservation with releaseUploadName() if the
+// move fails, or an empty file is left behind. (Portfolio galleries are folders
+// and already get unique names from portfolioUniqueChildName.)
+function reserveUploadName($safeName) {
+    $prefix = time() . '-';
+    for ($n = 0; $n < 1000; $n++) {
+        $name = $n === 0 ? $prefix . $safeName : $prefix . $n . '-' . $safeName;
+        $fh = @fopen(UPLOADS_DIR . '/' . $name, 'x');
+        if ($fh) { fclose($fh); return $name; }
+    }
+    // A thousand same-name uploads in one second: stop counting, use a random part.
+    $name = $prefix . bin2hex(random_bytes(4)) . '-' . $safeName;
+    @touch(UPLOADS_DIR . '/' . $name);
+    return $name;
+}
+
+function releaseUploadName($destName) {
+    $path = UPLOADS_DIR . '/' . $destName;
+    if (is_file($path) && filesize($path) === 0) @unlink($path);
+}
+
 // Human-readable item title derived from an uploaded file's name, used whenever a
 // client doesn't send one. Mirrors titleFromFilename() in admin.js: strip the
 // extension, drop the leading "<timestamp>-" prefix added on storage, and turn
@@ -2825,9 +2858,12 @@ if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/items', 
     }
 
     $safeName = safeFilename($file['name']);
-    $destName = time() . '-' . $safeName;
+    $destName = reserveUploadName($safeName);
     $destPath = UPLOADS_DIR . '/' . $destName;
-    move_uploaded_file($file['tmp_name'], $destPath);
+    if (!move_uploaded_file($file['tmp_name'], $destPath)) {
+        releaseUploadName($destName);
+        respondError('Could not store the uploaded file', 500);
+    }
 
     $item = $replaceId !== ''
         ? replaceGalleryItemFile($params['gid'], $replaceId, $destName)
@@ -3024,9 +3060,12 @@ if ($method === 'POST' && matchRoute('/api/admin/uploads/{uploadId}/finalize', $
     }
 
     $safeName = safeFilename($meta['filename']);
-    $destName = time() . '-' . $safeName;
+    $destName = reserveUploadName($safeName);
     $destPath = UPLOADS_DIR . '/' . $destName;
-    if (!rename($partPath, $destPath)) respondError('Could not move assembled file into uploads/', 500);
+    if (!rename($partPath, $destPath)) {
+        releaseUploadName($destName);
+        respondError('Could not move assembled file into uploads/', 500);
+    }
     @unlink(UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.json');
 
     $item = $replaceId !== ''
@@ -3228,8 +3267,11 @@ if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{gid}/items/{ii
     foreach (readGalleryVideos($params['gid']) as $v) { if ($v['id'] === $params['iid']) { $found = true; break; } }
     if (!$found) respondError('Not found', 404);
 
-    $destName = time() . '-' . safeFilename($file['name']);
-    move_uploaded_file($file['tmp_name'], UPLOADS_DIR . '/' . $destName);
+    $destName = reserveUploadName(safeFilename($file['name']));
+    if (!move_uploaded_file($file['tmp_name'], UPLOADS_DIR . '/' . $destName)) {
+        releaseUploadName($destName);
+        respondError('Could not store the uploaded file', 500);
+    }
 
     respond(replaceGalleryItemFile($params['gid'], $params['iid'], $destName));
 }
@@ -3371,13 +3413,17 @@ if ($method === 'GET' && $uri === '/api/admin/client/import/files') {
 // Returns the item, or null if the file couldn't be moved or isn't a readable image.
 function importMediaFile(string $gid, string $srcPath, string $originalName): ?array {
     $safeName = basename($originalName);
-    $destName = time() . '-' . safeFilename($safeName);
-    $destPath = UPLOADS_DIR . '/' . $destName;
     // A truncated or corrupt photo would register as an item with no thumbnail.
+    // Checked before a name is reserved, so a refusal leaves nothing behind.
     if (isImageFile($safeName) && !probeImage($srcPath)) return null;
+    $destName = reserveUploadName(safeFilename($safeName));
+    $destPath = UPLOADS_DIR . '/' . $destName;
     if (!@rename($srcPath, $destPath)) {
         // rename() fails across filesystems; fall back to copy + delete.
-        if (!@copy($srcPath, $destPath)) return null;
+        if (!@copy($srcPath, $destPath)) {
+            releaseUploadName($destName);
+            return null;
+        }
         @unlink($srcPath);
     }
 

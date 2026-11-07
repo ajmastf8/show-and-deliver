@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,400;0,600;0,700;0,800;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/admin.css?v=14">
+  <link rel="stylesheet" href="/css/admin.css?v=0">
 </head>
 <body>
 
@@ -32,6 +32,31 @@
       <input type="password" name="password" placeholder="Password" required autocomplete="current-password">
       <button type="submit" class="btn-primary">Login</button>
       <p id="login-error" class="error-text"></p>
+      <p class="auth-alt"><a href="#" id="forgot-link">Forgot password?</a></p>
+    </form>
+  </section>
+
+  <!-- ============ Forgot password ============ -->
+  <section id="auth-forgot" class="auth-screen" hidden>
+    <form id="forgot-form" class="auth-card">
+      <h2>Reset password</h2>
+      <p class="hint">Enter the admin email address and we'll send a link to choose a new password.</p>
+      <input type="email" name="email" placeholder="Email" required autocomplete="email">
+      <button type="submit" class="btn-primary">Send reset link</button>
+      <p id="forgot-msg" class="error-text"></p>
+      <p class="auth-alt"><a href="#" class="back-to-login">Back to login</a></p>
+    </form>
+  </section>
+
+  <!-- ============ Choose a new password (from the emailed link) ============ -->
+  <section id="auth-reset" class="auth-screen" hidden>
+    <form id="reset-form" class="auth-card">
+      <h2>Choose a new password</h2>
+      <input type="password" name="password" placeholder="New password (min 8 characters)" required minlength="8" autocomplete="new-password">
+      <input type="password" name="confirmPassword" placeholder="Confirm new password" required minlength="8" autocomplete="new-password">
+      <button type="submit" class="btn-primary">Set password</button>
+      <p id="reset-error" class="error-text"></p>
+      <p class="auth-alt"><a href="#" class="back-to-login">Back to login</a></p>
     </form>
   </section>
 
@@ -44,6 +69,10 @@
         <span class="brand-mast" id="brand-mast"></span>
         <span class="brand-delivery">DELIVERY</span>
       </div>
+      <div class="topbar-tabs" role="tablist">
+        <button class="topbar-tab" id="tab-portfolio" role="tab">Portfolio</button>
+        <button class="topbar-tab active" id="tab-delivery" role="tab">Client delivery</button>
+      </div>
       <div class="topbar-search">
         <input type="search" id="global-search" placeholder="Search galleries by name…"
           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
@@ -51,13 +80,17 @@
         <button type="button" class="search-clear" id="global-search-clear" hidden title="Clear search" aria-label="Clear search">&times;</button>
       </div>
       <div class="topbar-right">
-        <button class="topbar-link" id="nav-uploads">Uploads <span class="accent" id="uploads-count">0</span></button>
-        <button class="topbar-link" id="nav-settings">Settings</button>
+        <button class="topbar-link" id="nav-uploads" hidden>Uploads <span class="accent" id="uploads-count">0</span></button>
+        <button class="topbar-link" id="account-theme">Light theme</button>
+        <button class="topbar-link" id="account-password">Password</button>
+        <button class="topbar-link" id="account-logout">Logout</button>
         <div class="menu-wrap">
           <button class="btn-primary" id="new-btn">New &#9662;</button>
           <div class="menu" id="new-menu" hidden>
-            <button data-new="gallery">Gallery</button>
-            <button data-new="collection">Collection</button>
+            <button data-new="pf-gallery">Portfolio gallery</button>
+            <button data-new="pf-collection">Portfolio collection</button>
+            <button data-new="gallery">Client delivery gallery</button>
+            <button data-new="collection">Client delivery collection</button>
             <button data-new="upload">Upload files&hellip;</button>
           </div>
         </div>
@@ -89,6 +122,14 @@
           <div class="bulk-bar" id="bulk-bar" hidden></div>
         </main>
         <aside class="drawer" id="drawer" hidden></aside>
+      </div>
+    </div>
+
+    <!-- ---------- Portfolio screen ---------- -->
+    <div id="screen-portfolio" class="screen" hidden>
+      <div class="pfa-layout">
+        <aside class="rail" id="pfa-rail"></aside>
+        <main class="centre" id="pfa-centre"></main>
       </div>
     </div>
 
@@ -130,132 +171,28 @@
     </div>
 
     <!-- ---------- Settings screen ---------- -->
-    <div id="screen-settings" class="screen" hidden>
-      <div class="settings-wrap">
-        <button class="back-link" id="settings-back">&larr; Library</button>
-        <div class="settings-title-row">
-          <h1>Settings</h1>
-          <div class="settings-title-actions">
-            <button class="link-btn" id="account-theme">Light theme</button>
-            <button class="link-btn danger" id="account-logout">Logout</button>
-          </div>
-        </div>
-        <div class="settings-tabs">
-          <button class="settings-tab active" data-settings-tab="email">Email</button>
-          <button class="settings-tab" data-settings-tab="update">Update</button>
-          <button class="settings-tab" data-settings-tab="header">Header</button>
-          <button class="settings-tab" data-settings-tab="api">API</button>
-        </div>
-
-        <!-- Email -->
-        <div id="settings-tab-email" class="settings-tab-content">
-          <p class="setting-hint" style="margin-bottom:16px;">Notifications when clients leave comments. Use Resend (recommended) or SMTP.</p>
-          <div class="setting-group">
-            <label>Resend API Key</label>
-            <input type="password" id="resend-api-key" class="setting-input" placeholder="re_xxxxxxxxx">
-            <p class="setting-hint">Free key at <a href="https://resend.com" target="_blank">resend.com</a>. If set, SMTP fields below are ignored — but the sender settings still apply.</p>
-          </div>
-          <hr class="settings-divider">
-          <p class="setting-hint" style="font-weight:600;color:var(--text-3);margin-bottom:12px;">SMTP (alternative to Resend)</p>
-          <div class="setting-group"><label>SMTP Host</label><input type="text" id="smtp-host" class="setting-input" placeholder="e.g. mail.hosting.com"></div>
-          <div class="setting-group"><label>SMTP Port</label><input type="number" id="smtp-port" class="setting-input" placeholder="587" style="max-width:140px;"></div>
-          <div class="setting-group"><label>Security</label><label class="toggle-label"><input type="checkbox" id="smtp-secure"><span>Use SSL/TLS (port 465). Leave off for STARTTLS (587).</span></label></div>
-          <div class="setting-group"><label>SMTP Username</label><input type="text" id="smtp-user" class="setting-input" placeholder="notifications@yourdomain.com"></div>
-          <div class="setting-group"><label>SMTP Password</label><input type="password" id="smtp-pass" class="setting-input" placeholder="SMTP password"></div>
-          <hr class="settings-divider">
-          <p class="setting-hint" style="font-weight:600;color:var(--text-3);margin-bottom:12px;">Sender &amp; delivery (used by both Resend and SMTP)</p>
-          <div class="setting-group"><label>From Address</label><input type="text" id="smtp-from" class="setting-input" placeholder='"Your Studio" <hello@example.com>'><p class="setting-hint">With Resend, the domain must be verified in your Resend account.</p></div>
-          <div class="setting-group"><label>Notification Email (To)</label><input type="email" id="smtp-admin-email" class="setting-input" placeholder="you@example.com"><p class="setting-hint">Where comment notifications are sent</p></div>
-          <div class="setting-group"><label>Site Base URL</label><input type="text" id="smtp-base-url" class="setting-input" placeholder="https://gallery.example.com"><p class="setting-hint">Used for links in notification emails</p></div>
-          <div class="settings-actions">
-            <button id="save-email-btn" class="btn-primary">Save Email Settings</button>
-            <button id="test-email-btn" class="btn-ghost">Send Test Email</button>
-          </div>
-          <div id="email-status" class="email-status"></div>
-        </div>
-
-        <!-- Update -->
-        <div id="settings-tab-update" class="settings-tab-content" hidden>
-          <div id="update-loading" class="setting-hint">Checking for updates&hellip;</div>
-          <div id="update-info" hidden>
-            <div class="setting-group"><label>Current Version</label><p class="setting-value"><span id="update-local-version"></span> <span id="update-local-commit" style="color:var(--text-5);font-size:12px;"></span></p></div>
-            <div id="update-available-section" hidden>
-              <div class="setting-group"><label>Available Version</label><p class="setting-value"><span id="update-remote-version" style="color:var(--accent);"></span> <span id="update-remote-commit" style="color:var(--text-5);font-size:12px;"></span> <a id="update-release-link" href="#" target="_blank" rel="noopener" style="font-size:12px;" hidden>View on GitHub</a></p></div>
-              <div id="update-commit-log" class="setting-group" hidden><label>Changes</label><pre id="update-commits"></pre></div>
-              <div id="update-changelog-section" class="setting-group" hidden><label id="update-changelog-label">Changelog</label><pre id="update-changelog" style="max-height:300px;overflow-y:auto;"></pre></div>
-              <div class="settings-actions"><button id="deploy-btn" class="btn-primary">Update to Latest Version</button></div>
-            </div>
-            <div id="update-current-section" hidden><p class="setting-hint" style="color:#4caf50;font-weight:600;">You are running the latest version.</p></div>
-            <div id="deploy-status" class="email-status"></div>
-          </div>
-          <div class="setting-group" style="margin-top:24px;border-top:1px solid var(--border);padding-top:20px;">
-            <label>Video Tools (ffmpeg)</label>
-            <p class="setting-hint">Lets the server auto-extract captions embedded in uploaded MP4s. Installs a self-contained static ffmpeg build — no system access needed.</p>
-            <p id="video-tools-status" style="font-size:13px;margin:10px 0;color:var(--text-3);">Checking&hellip;</p>
-            <div class="settings-actions"><button id="install-ffmpeg-btn" class="btn-ghost" disabled>Install Video Tools</button></div>
-            <div id="video-tools-result" class="email-status"></div>
-          </div>
-        </div>
-
-        <!-- Header -->
-        <div id="settings-tab-header" class="settings-tab-content" hidden>
-          <p class="setting-hint" style="margin-bottom:16px;">Configure the header that appears on all public pages.</p>
-          <div class="setting-group"><label>Site Name</label><input type="text" id="header-site-name" class="setting-input" placeholder="e.g. Riverbend Photography"><p class="setting-hint">Used in browser tab titles</p></div>
-          <hr class="settings-divider">
-          <h4>Header Branding</h4>
-          <p class="setting-hint" style="margin-bottom:12px;">Use a logo image, text, or both. If no image is uploaded, the header text displays instead.</p>
-          <div class="setting-group"><label>Header Text</label><input type="text" id="header-logo-text" class="setting-input" placeholder="e.g. RIVERBEND"></div>
-          <div class="setting-group">
-            <label>Logo Image</label>
-            <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px;">
-              <img id="header-logo-preview" src="" alt="Logo preview" style="max-height:60px;max-width:200px;display:none;">
-              <span id="header-logo-none" class="setting-hint">No logo set — header text will be used</span>
-            </div>
-            <input type="file" id="header-logo-file" accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif">
-            <p class="setting-hint">PNG or SVG recommended. Displays at max 74px height. Overrides header text if set.</p>
-            <button type="button" id="header-logo-remove" class="btn-ghost" style="margin-top:8px;display:none;">Remove Logo Image</button>
-          </div>
-          <div class="setting-group"><label>Logo Alt Text</label><input type="text" id="header-logo-alt" class="setting-input" placeholder="e.g. Riverbend Photography"></div>
-          <div class="setting-group"><label>Logo Link URL</label><input type="text" id="header-logo-link" class="setting-input" placeholder="https://www.yoursite.com"></div>
-          <hr class="settings-divider">
-          <h4>Contact Info</h4>
-          <div class="setting-group"><label>Email</label><input type="email" id="header-email" class="setting-input" placeholder="you@example.com"></div>
-          <div class="setting-group"><label>Phone</label><input type="text" id="header-phone" class="setting-input" placeholder="555.123.4567"></div>
-          <div class="setting-group"><label>Tagline</label><input type="text" id="header-tagline" class="setting-input" placeholder="e.g. Based in Indianapolis"></div>
-          <hr class="settings-divider">
-          <h4>Navigation Links</h4>
-          <p class="setting-hint" style="margin-bottom:12px;">Add links or dropdown menus. Drag to reorder.</p>
-          <div id="header-nav-list"></div>
-          <div style="display:flex;gap:8px;margin-top:12px;">
-            <button id="header-add-link" class="btn-ghost">+ Link</button>
-            <button id="header-add-dropdown" class="btn-ghost">+ Dropdown</button>
-          </div>
-          <div class="settings-actions"><button id="save-header-btn" class="btn-primary">Save Header</button></div>
-          <div id="header-status" class="email-status"></div>
-        </div>
-
-        <!-- API -->
-        <div id="settings-tab-api" class="settings-tab-content" hidden>
-          <p class="setting-hint" style="margin-bottom:16px;">Generate an API token so an external tool (CLI, script, app) can create galleries and upload media over HTTP. See <a href="/docs/API.md" target="_blank">the API docs</a>.</p>
-          <div id="api-token-loading" class="setting-hint">Checking current state&hellip;</div>
-          <div id="api-token-env-state" hidden>
-            <div class="setting-group"><label>Current Token</label><p class="setting-value">Set via <code>.env</code> on the server.</p><p class="setting-hint">To change it, edit the <code>API_TOKEN</code> line in <code>.env</code> and redeploy. This panel only manages tokens stored in <code>site-data/</code>.</p></div>
-          </div>
-          <div id="api-token-state" hidden>
-            <div class="setting-group"><label>Current Token</label><p id="api-token-status-text" class="setting-value"></p><p class="setting-hint">The token is never shown again after generation. Lost it? Regenerate to get a new one (invalidates the old).</p></div>
-            <div class="settings-actions">
-              <button id="api-token-generate-btn" class="btn-primary">Generate Token</button>
-              <button id="api-token-regenerate-btn" class="btn-ghost" style="display:none;">Regenerate</button>
-              <button id="api-token-revoke-btn" class="btn-ghost" style="display:none;">Revoke</button>
-            </div>
-            <div id="api-token-status" class="email-status"></div>
-          </div>
-        </div>
-      </div>
-    </div>
   </div>
 
   <!-- ============ Modals ============ -->
+
+  <!-- Change password -->
+  <div id="password-modal" class="modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-inner">
+      <h3>Change password</h3>
+      <p class="sub">You stay signed in here; other devices are signed out.</p>
+      <form id="password-form">
+        <div class="setting-group"><label>Current password</label><input type="password" name="currentPassword" class="setting-input" required autocomplete="current-password"></div>
+        <div class="setting-group"><label>New password</label><input type="password" name="newPassword" class="setting-input" required minlength="8" autocomplete="new-password"></div>
+        <div class="setting-group"><label>Confirm new password</label><input type="password" name="confirmPassword" class="setting-input" required minlength="8" autocomplete="new-password"></div>
+        <p id="password-msg" class="error-text"></p>
+        <div class="modal-actions">
+          <button type="button" id="password-cancel" class="btn-ghost">Cancel</button>
+          <button type="submit" class="btn-primary">Change password</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- New / edit collection sheet -->
   <div id="new-collection-modal" class="modal" hidden>
@@ -267,7 +204,6 @@
       <div class="setting-group"><label>Type</label>
         <div style="display:flex;gap:18px;">
           <label class="toggle-label"><input type="radio" name="nc-type" value="proofing" checked> Client delivery</label>
-          <label class="toggle-label"><input type="radio" name="nc-type" value="reels"> Portfolio</label>
         </div>
         <p class="setting-hint" id="nc-type-hint">Groups client galleries behind one shareable link.</p>
       </div>
@@ -354,8 +290,12 @@
       <div class="setting-group"><label>Type</label>
         <div style="display:flex;gap:18px;">
           <label class="toggle-label"><input type="radio" name="ng-type" value="proofing" checked> Client gallery</label>
-          <label class="toggle-label"><input type="radio" name="ng-type" value="reels"> Portfolio</label>
         </div>
+        <p class="setting-hint">Portfolio galleries are folders now — make them in the Portfolio tab.</p>
+      </div>
+      <div class="setting-group" id="ng-folder-group"><label>FTP import folder <span style="font-weight:400;opacity:.7;">(optional)</span></label>
+        <input type="text" id="ng-folder" class="setting-input" placeholder="e.g. smith-wedding" maxlength="64" autocomplete="off" spellcheck="false">
+        <div class="sr-sub" style="margin-top:6px;">Files FTP’d into this folder are added to the gallery automatically.</div>
       </div>
       <div class="setting-group" id="ng-collection-group"><label>Add to Collection</label><select id="ng-collection" class="setting-input"><option value="">— None —</option></select></div>
 
@@ -452,7 +392,7 @@
     <div class="modal-backdrop"></div>
     <div class="modal-inner">
       <h3>Captions <span id="captions-modal-title" style="font-weight:400;color:var(--text-4);"></span></h3>
-      <p class="sub">Upload a WebVTT (.vtt) file per language. Viewers turn captions on with the player's CC button.</p>
+      <p class="sub">Upload a WebVTT (.vtt) or SubRip (.srt) file per language (SRT is converted to WebVTT). Viewers turn captions on with the player's CC button.</p>
       <div id="captions-list" style="display:flex;flex-direction:column;gap:6px;margin-top:12px;"></div>
       <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:14px;display:flex;flex-direction:column;gap:10px;">
         <label class="setting-group" style="margin:0;">Language
@@ -464,7 +404,10 @@
             <input type="text" id="caption-custom-label" class="setting-input" placeholder="label (e.g. Português)" style="flex:1;">
           </div>
         </label>
-        <input type="file" id="caption-file-input" accept=".vtt,text/vtt" class="setting-input" style="padding:6px;height:auto;">
+        <div id="caption-drop" class="gv-drop" style="display:block;padding:14px;text-align:center;">
+          <div style="font-size:13px;color:var(--text-4);margin-bottom:8px;">Drop a .vtt or .srt file here, or choose one</div>
+          <input type="file" id="caption-file-input" accept=".vtt,.srt,text/vtt,application/x-subrip" class="setting-input" style="padding:6px;height:auto;">
+        </div>
         <div id="caption-upload-status" style="font-size:12px;color:var(--text-4);min-height:16px;"></div>
       </div>
       <div class="modal-actions"><div></div><div class="right">
@@ -479,10 +422,19 @@
     <div class="modal-backdrop"></div>
     <div class="modal-inner">
       <h3>Your new API token</h3>
-      <p class="sub">Copy this now — you won't see it again.</p>
-      <div class="token-reveal-row">
-        <input type="text" id="api-token-reveal-input" readonly class="setting-input">
-        <button id="api-token-copy-btn" class="btn-ghost">Copy</button>
+      <p class="sub">Copy the token now — you won't see it again. Your tool needs both values below.</p>
+      <div class="setting-group"><label>Site URL</label>
+        <div class="token-reveal-row">
+          <input type="text" id="api-url-reveal-input" readonly class="setting-input">
+          <button id="api-url-copy-btn" class="btn-ghost">Copy</button>
+        </div>
+        <p class="setting-hint">Enter just this address. Leave off <code>/api</code> and anything after it; the tool adds the paths itself.</p>
+      </div>
+      <div class="setting-group"><label>API token</label>
+        <div class="token-reveal-row">
+          <input type="text" id="api-token-reveal-input" readonly class="setting-input">
+          <button id="api-token-copy-btn" class="btn-ghost">Copy</button>
+        </div>
       </div>
       <div class="modal-actions"><div></div><div class="right"><button id="api-token-modal-done-btn" class="btn-primary">I've saved it</button></div></div>
     </div>
@@ -545,7 +497,8 @@
   <!-- Toast -->
   <div id="toast" class="toast"></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/js/admin.js?v=124"></script>
+  <script src="/vendor/sortablejs/Sortable.min.js"></script>
+  <script src="/js/admin.js?v=0"></script>
+  <script src="/js/portfolio-admin.js?v=0"></script>
 </body>
 </html>

@@ -4,21 +4,20 @@ Self-hosted portfolio and client-proofing site for photographers and
 videographers. Distributed publicly, so keep install-specific branding and
 credentials out of the code — per-site identity comes from Settings > Header.
 
-## Branching and the release freeze
+## Branching and releases
 
-`main` is the production/default branch. The folder-backed portfolio rewrite
-(the 2.x line) lives on its own branch and must not reach `main` until it is
-deliberately released.
+`main` is the production/default branch and carries the folder-backed portfolio
+(the 2.x line). The 1.6.x single-file rewrite is retired; 2.6.0 was the release
+that promoted 2.x to `main`.
 
-- **Do not merge or push to `main`** while `/.release-freeze` exists — a git
-  `pre-push` hook refuses it (`.githooks/pre-push`, enabled via
-  `core.hooksPath`).
-- **Do not propose promoting the rewrite to `main`** unless the owner asks.
-  Treat the freeze as standing; the owner initiates the release.
 - Feature work happens on `agent/<slug>` branches/worktrees and is reconciled
-  periodically. A release is a deliberate act: remove `.release-freeze`, merge
-  the branch to `main`, bump `VERSION` + `CHANGELOG.md`, tag `vX.Y.Z`, publish
-  a GitHub Release.
+  periodically.
+- A release is a deliberate act: bump `VERSION` + `CHANGELOG.md`, merge to
+  `main`, tag `vX.Y.Z` to match `VERSION`, and publish a GitHub Release (installs
+  auto-update from it — see Development below).
+- `.release-freeze` is a marker a pre-push hook uses to block pushes to `main`.
+  It is not present during normal development; add it only to hold `main` while
+  a large rewrite is in flight.
 
 ## Stack
 
@@ -38,14 +37,22 @@ public/
   proofing.html        # Client proofing gallery (token-based access)
   collection.html      # Collection landing page (groups of galleries)
   download.html        # Client delivery download page (/d/{token})
-  css/                 # Stylesheets (style.css, proofing.css, collection.css, download.css)
+  portfolio.html       # Folder-backed portfolio pages (/portfolio/...)
+  css/                 # Stylesheets (style.css, proofing.css, collection.css, download.css, portfolio.css)
+  vendor/              # Vendored MIT libraries, no build step (PhotoSwipe 5)
   js/
     admin.js           # Admin UI logic
     public.js          # Public portfolio page logic
     proofing.js        # Client proofing page logic
     collection.js      # Collection page logic
     download.js        # Delivery download page logic
+    portfolio.js       # Portfolio page logic (routing, tiles, PhotoSwipe)
+    layouts.js         # Gallery layouts: justified, masonry, grid, slideshow
+    media-stage.js     # Shared video player (controls strip, caption overlay, caption box)
     header.js          # Dynamic header rendering from /api/header config
+    portfolio-admin.js # Admin Portfolio tab (categories, galleries, items)
+tools/
+  dev-router.php       # php -S router replaying .htaccess (local only; denied on the web)
 site-data/             # Runtime data (gitignored)
   data/                # JSON data files (galleries, collections, settings, header, admin config, crc.json)
   uploads/             # Original uploaded files (photos + videos)
@@ -54,6 +61,8 @@ site-data/             # Runtime data (gitignored)
   logo/                # Site logo image
   imports/             # FTP import staging directory
   packages/            # Delivery plans (manifest.json only — zips are streamed, never stored)
+  portfolio/           # <Category>/<Gallery>/<files> — the portfolio itself (served at /media/)
+  portfolio-trash/     # Portfolio folders and files deleted from the admin
 ```
 
 ## Key Concepts
@@ -77,7 +86,7 @@ site-data/             # Runtime data (gitignored)
   front, local headers carry them, no data descriptors are needed, and entry
   bodies go disk-to-socket via `stream_copy_to_stream()` with no PHP loop.
   Never reintroduce per-byte work into that path. Files predating the cache are
-  hashed by `POST /api/admin/crc-warm` with a `packageId`, which the delivery
+  hashed by `POST /api/admin/client/crc-warm` with a `packageId`, which the delivery
   modal drives in the background — scoped to the delivery, never the library.
   Always Zip64, so there is one code path exercised by every download rather
   than a 64-bit path that only runs on rare large transfers.
@@ -99,6 +108,87 @@ site-data/             # Runtime data (gitignored)
   in `zipEntryOverhead()`, used by both `zipStreamedSize()` and the part
   planner so they cannot drift; if it stops matching what the streaming route
   emits, `Content-Length` lies and every download truncates.
+- **Portfolio** is folder-backed: `site-data/portfolio/<Category>/<Gallery>/`
+  on disk is the source of truth, so a folder dropped in by FTP appears with no
+  import. Metadata lives in dot-named sidecars (`.portfolio.json`,
+  `.category.json`, `.gallery.json`) that the dotfile rule keeps off the web;
+  they move with their folder, so an FTP rename keeps the slug and metadata.
+  `portfolioTree()` reconciles disk with sidecars on every read; GD work never
+  happens there. Thumbnails and proxies are built by `portfolioProcess()` in ~8s
+  slices under a non-blocking lock (admin-driven via
+  `POST /api/admin/portfolio/process`, or `php index.php portfolio:process` from
+  cron), and a photo stays out of public payloads until it has a thumbnail.
+  Files younger than `PORTFOLIO_SETTLE_SECONDS` are treated as still uploading.
+  **Migration:** installs that predate folders keep their portfolio in `reels`
+  galleries. `POST /api/admin/portfolio/migrate` moves one gallery per call
+  (resumable via `portfolio-migration.json`), mapping each reels collection to a
+  category and ungrouped galleries to "Portfolio". Files move out of `uploads/`
+  renamed to their titles, keeping item ids so thumbnails and proxies still
+  match, with captions renamed to the sidecar convention and section headers
+  preserved. The old record stays, archived with `migratedTo`, so
+  `/api/client/galleries/{token}` can answer `{redirect}` and old links keep working.
+  It refuses to run while a live delivery package points at a reels gallery, and
+  backs up the JSON first. Creating new `reels` galleries or collections is gone,
+  and so is the old public feed (`GET /api/videos`) and the homepage's
+  `renderReelsGrid()` fallback: an install that never migrated shows an empty
+  home page until it does. The migration itself is the only code left that reads
+  `reels` data.
+  `<video>.poster.jpg` and `<video>.<lang>.vtt` beside a video are its poster
+  and captions. Each gallery picks one of four layouts (`justified`, `masonry`,
+  `grid`, `slideshow`, `horizontal`, `fullscreen`, `featured`) rendered by
+  `layouts.js`, plus per-gallery options (spacing, image size, titles, crop,
+  autoplay and interval) stored as words rather than pixels so one setting
+  reads sensibly on any screen; `featured` also takes a per-item `tile` size
+  (`normal|wide|tall|big` — named `tile` because an item's `size` is its bytes); photos open in PhotoSwipe and
+  videos in the shared `media-stage.js` player, which `public.js` uses too, so
+  the caption overlay and caption box behave the same everywhere. A
+  `{type:'portfolio'}` header nav entry is expanded server-side into the current
+  categories, so the menu follows the folders. The admin splits into a
+  **Portfolio** tab (`portfolio-admin.js`, folders and their contents) and a
+  **Client delivery** tab (the existing library screen); the two share helpers
+  through the `window.SDAdmin` bridge that `admin.js` exposes. Deleting anything
+  in the portfolio moves it to `site-data/portfolio-trash/` — never `unlink`,
+  since these are the owner's master files. Video posters are captured in the
+  browser while the Portfolio tab is open, the same trick delivery uploads use.
+- **The home page** is its own gallery in the reserved folder
+  `site-data/portfolio/_home/`: it picks a layout like any gallery but has no
+  category, no URL of its own and never appears in listings or the menu. `/`
+  renders it, falling back to the reels grid (`renderReelsGrid()` in
+  `public.js`) while it is empty, so an install that hasn't migrated keeps its
+  old homepage.
+- **Picks** let one file appear in several galleries: a gallery's sidecar
+  `refs` map points at `{gallery, file}` elsewhere, and `portfolioResolveKey()`
+  resolves each order entry to a header, a file of its own, or a pick. There is
+  one file on disk and one thumbnail, so edits to the original show everywhere,
+  while each pick keeps its own position, visibility and optional title and
+  caption. A pick whose file is gone is flagged in the admin and skipped
+  publicly.
+- **Pages** (`site-data/data/pages.json`, rendered by `page.js` at `/p/<slug>`)
+  cover what isn't a gallery: an About page, and a Contact page whose form posts
+  to `/api/contact` and emails the address in Settings > Email, guarded by a
+  honeypot field and a per-IP rate limit. Page pictures live in the reserved
+  portfolio folder `_pages/`, so `/media/` serves them with no new rewrite rules
+  — like `_home/`, it is skipped by the category scan.
+- **Gallery access** is one of `public` (listed and open), `unlisted` (off the
+  menus, the link works), `password` (the link works once the visitor types it,
+  hashed with `password_hash`, unlocked per session — and the signed-in admin
+  always passes) or `hidden` (not served at all). Galleries from before this
+  carry only `visible`, which reconcile maps to `public`/`hidden`. Items and
+  picks have their own `visible` flag. **The password gates the page, not the
+  files**: `/media/` serves anything in the portfolio folders by direct URL,
+  exactly as `/uploads/` does for client galleries.
+- **The home cover** is the home gallery's `hero`: one of its own entries shown
+  full-bleed (a video plays muted and looping) with a title and subtitle over
+  it, and the gallery below the fold — or, with `only` set, the cover alone with
+  nothing under it and nothing to scroll to. A full-height cover fills what is
+  left under the header (`--pf-header-h`, measured in `portfolio.js`), so it is
+  exactly one screen. The hero saves **merge**, field by field, so an editor
+  left open with older values can't undo the rest. For large pictures without a
+  cover, the home gallery can simply use the `fullscreen` or `slideshow`
+  layout. Video size and duration come from the MP4 header in pure PHP
+  (`mp4VideoDimensions()`, `mp4DurationSeconds()`). The portfolio folders only
+  serve media and `.vtt` — `.htaccess` refuses everything else there, since
+  anything can arrive over FTP. Being replaced by this: `reels` galleries.
 - **Share tokens** (`token` on a gallery or collection) are generated on
   creation but can be regenerated *or* set by hand from the admin — the manual
   path exists so a link regenerated by accident can be restored to the one a
@@ -107,6 +197,21 @@ site-data/             # Runtime data (gitignored)
   in use by another gallery/collection of the same kind. Galleries and
   collections are separate namespaces (`/gallery/{t}` vs `/collection/{t}`), so
   the same string in both is allowed and harmless.
+- **FTP watch folders.** A gallery may carry an `importFolder` (a single
+  directory name under `site-data/imports/`, validated by
+  `normalizeImportFolder()`, unique per gallery, created when set). Files FTP'd
+  there are *moved* into the library by `syncImportFolder()`, which funnels through
+  `importMediaFile()` -> `registerGalleryItem()` — the same path the manual
+  "Import from server" route uses, so CRC priming and thumbnails stay identical.
+  There is no cron: the sync runs when asked — `POST /api/proofing/{token}/sync`
+  from an open client page (on load, then every 30s while visible) and
+  `POST /api/admin/galleries/{gid}/import-sync` from the open admin gallery. It is
+  throttled, `flock`ed per gallery, and capped per call. A file is only imported
+  once its size matches the previous scan *and* it has been idle ~15s, because FTP
+  writes under the final name mid-transfer. Unreadable images go to
+  `<folder>/_failed/`. The client page shows a "Gallery updated — Refresh" banner
+  when the `version` marker (`galleryVersion()`) changes; the folder name itself
+  is never sent to clients, only `live: true`.
 - **Items** in galleries can be videos or photos, plus section headers. A
   portfolio item may carry a `description` — the caption box rendered under the
   player by `caption-box.js`. It is a portfolio-only feature: the admin exposes
@@ -115,24 +220,74 @@ site-data/             # Runtime data (gitignored)
   unaffected. Not to be confused with **captions**, which everywhere else in
   this codebase means WebVTT subtitle tracks in `site-data/captions/`.
 - **Proxy images** (2048px JPEG) are generated alongside thumbnails for fast lightbox loading
-- **Header config** is stored in `site-data/data/header.json` and rendered by `header.js`
+- **Header config** is stored in `site-data/data/header.json` (logo, nav, contact
+  fields, social links) and rendered by `header.js`. `PUT /api/settings/header`
+  **merges**, because two panels write it: Settings > Header and the Portfolio
+  tab's Site design.
+- **Site design** (`site-data/data/theme.json`, returned inside `/api/header`)
+  holds a colour preset (light/dark/warm), one accent, the header arrangement
+  (bar/stacked/sidebar), the contact line, and how gallery listings are
+  presented (`index`: layout grid/fullwidth/columns/fullscreen, a category
+  filter bar, and an optional category sidebar). The index settings ride along
+  with `GET /api/portfolio` and the category route so those pages still make
+  one request. `theme.js` loads in `<head>` on
+  every public page and paints the saved palette before the first frame by
+  setting the `--color-*` custom properties inline on `<html>`, so the whole
+  site — portfolio, proofing, collection and download — follows one theme.
+  `--color-white` is the surface role and themes repaint it; text on an accent
+  button uses `--color-on-accent`, which never changes.
 - **Admin credentials** are set via first-run setup wizard, stored in `site-data/data/admin.json`
 - **SESSION_SECRET** is auto-generated on first run if not in `.env`
 
 ## API Routes
 
-All routes are in `index.php`. Key patterns:
-- `GET /api/header` — public header config
-- `GET /api/videos` — public portfolio videos
-- `GET /api/proofing/{token}` — client gallery data
-- `GET /api/collections/{token}` — collection data
-- `/api/admin/*` — authenticated admin endpoints (CRUD for galleries, videos, uploads)
-- `/api/auth/*` — login, logout, setup, check
-- `/api/settings/*` — email, deploy config
+All routes are in `index.php`; the full reference is `docs/API.md`. The API is
+split by system, and the prefix says which one a route belongs to:
+
+- **Portfolio** (folder-backed): public `GET /api/portfolio`, `/api/portfolio/home`,
+  `/api/portfolio/c/{cat}`, `/api/portfolio/g/{cat}/{gal}...`; admin
+  `/api/admin/portfolio/*` — categories, galleries, items, posters, captions,
+  headers, picks (`refs`), the home gallery, ordering, and `process` (derivative
+  slices).
+- **Client delivery** (JSON-backed): public `/api/client/galleries/{token}...`,
+  `/api/client/collections/{token}...`, `/api/client/packages/{token}...`; admin
+  `/api/admin/client/*` — galleries, collections, items, headers, packages,
+  `crc-warm`, `sendfile-test`, FTP `import/files`.
+- **Shared:** `/api/admin/uploads/*` (chunked; finalize takes
+  `{target: "client"|"portfolio", galleryId}`), `/api/auth/*` (login, logout,
+  setup, check, change-password, forgot, reset), `/api/settings/*` (email,
+  header, theme, deploy, api-token), `/api/header`, `/api/pages`, `/api/contact`,
+  `/api/admin/export|import/*`.
+
+The pre-2.3.0 client paths (`/api/galleries`, `/api/collections`,
+`/api/admin/galleries/{gid}/videos`, `/api/proofing/…`, `/api/packages/…`, and so
+on) are still accepted: `legacyClientRoute()` translates them to the new paths
+and flags the response with `X-API-Deprecated`, because Deadline Editor still
+calls them. Don't add new routes there; remove the function once the app has moved.
+
+Both systems use the same verbs for the same things — `…/items[/{id}]`,
+`…/items/{id}/poster`, `…/items/{id}/captions`, `…/headers`, `…/order` — and the
+multipart upload field is `file` on both. Keep it that way when adding routes:
+a new operation on one side should have the same name on the other if it makes
+sense there.
 
 ## Development
 
-No build step. Edit files directly. The site runs on cPanel with PHP — no local dev server needed unless testing locally with `php -S`.
+No build step. Edit files directly. The site runs on cPanel with PHP — no local dev server needed unless testing locally with
+`php -S localhost:8080 tools/dev-router.php`. The router replays `.htaccess`, which
+`php -S` ignores; **keep the two in sync** when changing either. The public pages
+are one of the things they share: `.htaccess` routes each page to `index.php` with
+`E=SD_PAGE:<name>`, and the router sets `$_SERVER['SD_PAGE']` the same way, so
+both go through `servePublicPage()`.
+
+**Asset versions are automatic — do not hand-edit `?v=`.** The page HTML keeps a
+`?v=0` placeholder, and `servePublicPage()` / `stampAssetVersions()` in `index.php`
+replace it with each CSS/JS file's mtime as the page is served. That means a
+browser always fetches a changed asset, with nothing to remember at release time.
+Editing a `?v=` number by hand does nothing; leave the placeholder alone. This is
+why the pages are served by PHP instead of by the web server directly — serving
+`public/*.html` statically (as it was before 2.5.10) froze the numbers and was the
+cause of a release whose client changes appeared not to work.
 
 Deploy via admin Settings > Update tab. Two auto-detected modes (`deployMode()` in
 `index.php`): git installs fetch + hard-reset from GitHub; zip installs (no `.git`

@@ -2,7 +2,8 @@
   --color-primary: #0019ff;
   --color-primary-dark: #0014cc;
   --color-black: #000000;
-  --color-white: #ffffff;
+  --color-white: #ffffff;        /* page and card surfaces; themes repaint it */
+  --color-on-accent: #ffffff;    /* text on an accent-coloured button, always light */
   --color-gray-light: #f5f5f5;
   --color-gray-mid: #e0e0e0;
   --color-gray-text: #8e8e8e;
@@ -42,7 +43,7 @@ a { color: inherit; text-decoration: none; }
 
 .btn-primary {
   background: var(--color-primary);
-  color: var(--color-white);
+  color: var(--color-on-accent);
 }
 
 .btn-primary:hover {
@@ -261,6 +262,50 @@ a { color: inherit; text-decoration: none; }
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+/* ---- Viewer sort control ---- */
+
+.proofing-sort {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px 24px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.proofing-sort-label {
+  color: var(--color-gray-dark);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.proofing-sort-select {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-gray-mid);
+  border-radius: var(--radius-btn, 6px);
+  background: var(--color-white);
+  color: inherit;
+}
+
+.proofing-sort-dir {
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 64px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-gray-mid);
+  border-radius: var(--radius-btn, 6px);
+  background: var(--color-white);
+  color: inherit;
+  cursor: pointer;
+}
+
+.proofing-sort-dir:hover {
+  border-color: var(--color-gray-dark);
 }
 
 /* ---- Video Grid (matches reels gallery) ---- */
@@ -785,9 +830,18 @@ a { color: inherit; text-decoration: none; }
     gap: 16px;
   }
 
+  .proofing-sort {
+    padding: 16px 16px 0;
+  }
+
   .lightbox-container {
     width: 100%;
+    /* 100vh is the large viewport on mobile — toolbars retracted — so the
+       container bleeds below the screen while the browser chrome is showing,
+       cutting off the bottom title bar and its Download button. dvh tracks the
+       visible viewport; vh stays first as a fallback for pre-108 Chrome. */
     height: 100vh;
+    height: 100dvh;
     margin: 0;
     border-radius: 0;
   }
@@ -863,4 +917,98 @@ a { color: inherit; text-decoration: none; }
   background: #2f3440;
   opacity: 0.75;
   cursor: default;
+}
+
+/* Shown when the gallery's FTP watch folder has brought in new items. */
+.live-update-banner {
+  position: fixed;
+  left: 50%;
+  top: 16px;
+  transform: translateX(-50%);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px 10px 18px;
+  font-size: 14px;
+  color: #fff;
+  background: #2f3440;
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  max-width: calc(100vw - 32px);
+}
+
+.live-update-btn {
+  padding: 6px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--color-primary, #0019ff);
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.live-update-btn:hover { background: var(--color-primary-dark, #0014cc); }
+
+/* ---- Favorites ---- */
+
+.fav-counter {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-gray-text);
+  white-space: nowrap;
+}
+
+/* Heart over the corner of a thumbnail. Big enough to hit with a thumb. */
+.fav-heart {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s;
+}
+.fav-heart:hover { background: rgba(0, 0, 0, 0.7); transform: scale(1.06); }
+.fav-heart.on { background: #e0245e; }
+
+.fav-lb-btn.on { color: #e0245e; border-color: #e0245e; }
+
+/* Send-picks dialog: stacked fields instead of the name modal's single row. */
+#fav-modal .name-modal-inner form { flex-direction: column; align-items: stretch; text-align: left; }
+#fav-modal .name-modal-inner input,
+#fav-modal .name-modal-inner textarea { width: 100%; }
+#fav-modal .name-modal-inner textarea {
+  font-family: var(--font-family);
+  font-size: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--color-gray-mid);
+  border-radius: 4px;
+  outline: none;
+  resize: vertical;
+}
+#fav-modal .name-modal-inner textarea:focus { border-color: var(--color-primary); }
+#fav-modal .error-text { min-height: 18px; margin: 0; color: #c0392b; font-size: 13px; text-align: left; }
+.fav-form-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+@media (max-width: 640px) {
+  .proofing-header-actions { flex-wrap: wrap; justify-content: flex-end; }
+}
+
+@media (max-width: 640px) {
+  .proofing-header { flex-wrap: wrap; gap: 10px; }
+  .proofing-header h1 { flex: 1 1 100%; }
+  .proofing-header-actions { justify-content: flex-start; }
 }

@@ -66,7 +66,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function escapeHtml(str) {
     const div = document.createElement('div');
     div.textContent = str == null ? '' : String(str);
-    return div.innerHTML;
+    // Quotes too: the result is also used inside value="…" / alt="…" attributes.
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
   function formatDate(iso) {
     if (!iso) return '—';
@@ -168,20 +169,29 @@ document.addEventListener('DOMContentLoaded', () => {
     try { data = await (await fetch('/api/auth/check')).json(); }
     catch (_) { return; }
     if (data.setupRequired) {
-      show($('auth-setup')); hide($('auth-login')); hide($('app'));
+      showAuth('auth-setup');
       return;
     }
     if (data.authenticated) {
-      hide($('auth-setup')); hide($('auth-login')); show($('app'));
+      showAuth(null); show($('app'));
       await Promise.all([loadData(), loadHeaderConfig()]);
-      settingsLoaded.header = true;
       renderAll();
+      // Come back to whichever side of the app you were last working on.
+      if (lastTab() === 'portfolio') setScreen('portfolio');
+    } else if (resetToken()) {
+      showAuth('auth-reset');
     } else {
-      hide($('auth-setup')); show($('auth-login')); hide($('app'));
+      showAuth('auth-login');
     }
   }
   function show(el) { el.hidden = false; }
   function hide(el) { el.hidden = true; }
+  // One signed-out screen at a time (or none, once the app itself is showing).
+  function showAuth(id) {
+    ['auth-setup', 'auth-login', 'auth-forgot', 'auth-reset'].forEach(n => { $(n).hidden = n !== id; });
+    $('app').hidden = true;
+  }
+  function resetToken() { return new URLSearchParams(location.search).get('reset') || ''; }
 
   $('setup-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -205,7 +215,83 @@ document.addEventListener('DOMContentLoaded', () => {
       body: JSON.stringify({ username: f.username.value, password: f.password.value }),
     });
     if (res.ok) checkAuth();
-    else $('login-error').textContent = 'Invalid credentials';
+    else {
+      // Show the server's reason (e.g. the too-many-attempts lockout) rather than
+      // calling every failure a bad password.
+      const d = await res.json().catch(() => ({}));
+      $('login-error').textContent = res.status === 401 ? 'Invalid credentials' : (d.error || 'Login failed');
+    }
+  });
+
+  // Password recovery: the emailed link lands here as /admin?reset=<token>.
+  $('forgot-link').addEventListener('click', (e) => {
+    e.preventDefault();
+    $('forgot-msg').textContent = ''; $('forgot-msg').classList.remove('ok');
+    showAuth('auth-forgot');
+  });
+  document.querySelectorAll('.back-to-login').forEach(a => a.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (resetToken()) history.replaceState(null, '', location.pathname);
+    showAuth('auth-login');
+  }));
+
+  $('forgot-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = $('forgot-msg');
+    msg.classList.remove('ok'); msg.textContent = '';
+    const res = await fetch('/api/auth/forgot', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: e.target.email.value.trim() }),
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) { msg.textContent = d.error || 'Something went wrong. Try again.'; return; }
+    msg.classList.add('ok');
+    msg.textContent = d.emailConfigured
+      ? 'If that address is an admin address for this site, a reset link is on its way. It works for one hour. Check spam too.'
+      : 'This site can\'t send email yet. Ask whoever hosts it to run "php index.php admin:reset-password", or set up email under Settings once you\'re in.';
+  });
+
+  $('reset-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target, err = $('reset-error');
+    err.textContent = '';
+    if (f.password.value !== f.confirmPassword.value) { err.textContent = 'Passwords do not match'; return; }
+    const res = await fetch('/api/auth/reset', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: resetToken(), password: f.password.value }),
+    });
+    if (res.ok) {
+      history.replaceState(null, '', location.pathname);
+      f.reset();
+      showAuth('auth-login');
+      $('login-error').textContent = 'Password updated. Log in with the new one.';
+    } else {
+      const d = await res.json().catch(() => ({}));
+      err.textContent = d.error || 'Could not reset the password';
+    }
+  });
+
+  // Change password (signed in).
+  function closePasswordModal() { $('password-modal').hidden = true; }
+  $('account-password').addEventListener('click', () => {
+    $('password-form').reset();
+    $('password-msg').textContent = '';
+    $('password-modal').hidden = false;
+    $('password-form').currentPassword.focus();
+  });
+  $('password-cancel').addEventListener('click', closePasswordModal);
+  $('password-modal').querySelector('.modal-backdrop').addEventListener('click', closePasswordModal);
+  $('password-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target, msg = $('password-msg');
+    msg.textContent = '';
+    if (f.newPassword.value !== f.confirmPassword.value) { msg.textContent = 'New passwords do not match'; return; }
+    const res = await fetch('/api/auth/change-password', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword: f.currentPassword.value, newPassword: f.newPassword.value }),
+    });
+    if (res.ok) { closePasswordModal(); toast('Password changed'); }
+    else { const d = await res.json().catch(() => ({})); msg.textContent = d.error || 'Could not change the password'; }
   });
 
   // ==========================================================================
@@ -214,7 +300,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function loadData() {
     let gRes, cRes;
     try {
-      [gRes, cRes] = await Promise.all([fetch('/api/galleries'), fetch('/api/collections')]);
+      [gRes, cRes] = await Promise.all([fetch('/api/admin/client/galleries'), fetch('/api/admin/client/collections')]);
     } catch (err) {
       toast('Could not reach the server — check your connection and reload.');
       return;
@@ -243,7 +329,7 @@ document.addEventListener('DOMContentLoaded', () => {
     crcWarming = true;
     try {
       for (;;) {
-        const res = await fetch('/api/admin/crc-warm', {
+        const res = await fetch('/api/admin/client/crc-warm', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ packageId }),
         });
@@ -264,11 +350,22 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================================================
   function setScreen(screen) {
     state.screen = screen;
+    setRailOpen(false);
     $('screen-library').hidden = screen !== 'library';
     $('screen-upload').hidden = screen !== 'upload';
-    $('screen-settings').hidden = screen !== 'settings';
+    $('screen-portfolio').hidden = screen !== 'portfolio';
+    $('tab-portfolio').classList.toggle('active', screen === 'portfolio');
+    $('tab-delivery').classList.toggle('active', screen === 'library' || screen === 'upload');
     if (screen === 'upload') renderUpload();
-    if (screen === 'settings') openSettings();
+    if (screen === 'portfolio' && window.SDPortfolio) window.SDPortfolio.open();
+  }
+  $('tab-portfolio').addEventListener('click', () => { rememberTab('portfolio'); setScreen('portfolio'); });
+  $('tab-delivery').addEventListener('click', () => { rememberTab('delivery'); setScreen('library'); });
+  function rememberTab(which) {
+    try { localStorage.setItem('admin2:tab', which); } catch (_) {}
+  }
+  function lastTab() {
+    try { return localStorage.getItem('admin2:tab') || 'delivery'; } catch (_) { return 'delivery'; }
   }
   function renderAll() {
     updateUploadsCount();
@@ -283,7 +380,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==========================================================================
   $('brand-home').addEventListener('click', () => { state.rail = 'all'; state.centreGalleryId = null; contentGid = null; closeDrawerForce(); setScreen('library'); renderAll(); });
   $('nav-uploads').addEventListener('click', () => setScreen('upload'));
-  $('nav-settings').addEventListener('click', () => setScreen('settings'));
   $('account-theme').addEventListener('click', () => toggleTheme());
   $('account-logout').addEventListener('click', () => logout());
 
@@ -309,12 +405,23 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('click', closeAllMenus);
 
   $('upload-back').addEventListener('click', () => setScreen('library'));
-  $('settings-back').addEventListener('click', () => setScreen('library'));
 
-  setupMenu('new-btn', 'new-menu', (v) => {
-    if (v === 'gallery') openNewGallery();
+  setupMenu('new-btn', 'new-menu', async (v) => {
+    // When you are looking at one collection, a gallery made from here belongs
+    // to it. state.rail is a collection id only in that scope — "all",
+    // "portfolio", "client", "ungrouped" and "archive" are not collections.
+    if (v === 'gallery') openNewGallery(state.collections.some(c => c.id === state.rail) ? state.rail : '');
     else if (v === 'collection') openCollectionModal();
     else if (v === 'upload') setScreen('upload');
+    else if (v === 'pf-gallery' || v === 'pf-collection') {
+      // Not scoped to whichever tab is open — switch to Portfolio and wait
+      // for its tree to load before creating, so the prompt that follows
+      // isn't racing the initial fetch.
+      setScreen('portfolio');
+      await window.SDPortfolio?.open();
+      if (v === 'pf-gallery') window.SDPortfolio?.newTopGallery();
+      else window.SDPortfolio?.newCategory();
+    }
   }, 'data-new');
 
   async function logout() {
@@ -325,6 +432,9 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateUploadsCount() {
     const active = state.upload.queue.filter(i => i.status === 'uploading' || i.status === 'waiting').length;
     $('uploads-count').textContent = active;
+    // Only worth a place in the bar while there is something to watch;
+    // New > Upload files opens the screen otherwise.
+    $('nav-uploads').hidden = !state.upload.queue.length;
   }
 
   // Global search
@@ -420,7 +530,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const next = !item.favorite;
     item.favorite = next;
     renderAll();
-    const url = kind === 'collection' ? `/api/collections/${id}` : `/api/galleries/${id}`;
+    const url = kind === 'collection' ? `/api/admin/client/collections/${id}` : `/api/admin/client/galleries/${id}`;
     const res = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ favorite: next }) });
     if (!res.ok) { item.favorite = !next; renderAll(); toast('Failed to update favorite'); }
   }
@@ -434,7 +544,6 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderRail() {
     const rail = $('rail');
     const all = state.galleries.filter(g => g.active !== false);
-    const portfolio = all.filter(g => g.type === 'reels');
     const client = all.filter(g => g.type === 'proofing');
     const ungrouped = client.filter(g => !g.collectionId).length;
     const archived = state.galleries.filter(g => g.active === false).length;
@@ -454,7 +563,45 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>`;
       }).join('');
 
-    let html = `<div class="rail-section-label">Library</div>`;
+    // Recent: client delivery collections and galleries created in the last
+    // few days, surfaced at the top so a just-made delivery is one click away
+    // instead of buried in its collection. One list, strictly newest first,
+    // so a gallery made an hour ago sits above a collection from last week.
+    const RECENT_DAYS = 5;
+    const recentCutoff = Date.now() - RECENT_DAYS * 86400000;
+    const createdSince = (item) => {
+      const t = Date.parse(item.createdAt || '');
+      return Number.isFinite(t) && t >= recentCutoff;
+    };
+    const recent = [
+      ...state.collections
+        .filter(c => (c.type || 'proofing') === 'proofing' && createdSince(c))
+        .map(c => ({ kind: 'collection', item: c })),
+      ...state.galleries
+        .filter(g => g.active !== false && g.type === 'proofing' && createdSince(g))
+        .map(g => ({ kind: 'gallery', item: g })),
+    ].sort((a, b) => Date.parse(b.item.createdAt) - Date.parse(a.item.createdAt));
+
+    let html = '';
+    if (recent.length) {
+      html += `<div class="rail-section-label">Recent</div>`;
+      html += `<div class="rail-section-hint">New in the last ${RECENT_DAYS} days</div>`;
+      html += recent.map(({ kind, item }) => {
+        if (kind === 'collection') {
+          const count = all.filter(g => g.collectionId === item.id).length;
+          return `<div class="rail-row compact recent" data-recent-collection="${item.id}" title="Collection">
+            <span class="rail-name">${escapeHtml(titleCase(item.name))}</span>
+            <span class="rail-count">${count}</span>
+          </div>`;
+        }
+        return `<div class="rail-row compact recent" data-recent-gallery="${item.id}" title="Gallery">
+          <span class="rail-name">${escapeHtml(item.name)}</span>
+          <span class="rail-count">${item.videoCount || 0}</span>
+        </div>`;
+      }).join('');
+    }
+
+    html += `<div class="rail-section-label">Library</div>`;
     html += railRow('all', 'Everything', all.length);
     html += railRow('archive', 'Archive', archived);
 
@@ -464,10 +611,6 @@ document.addEventListener('DOMContentLoaded', () => {
     html += collectionRows('proofing');
     html += `<div class="rail-row compact new-collection" data-new-collection="proofing">+ New collection</div>`;
 
-    html += `<div class="rail-section-label">Portfolio</div>`;
-    html += railRow('portfolio', 'All portfolio', portfolio.length);
-    html += collectionRows('reels');
-    html += `<div class="rail-row compact new-collection" data-new-collection="reels">+ New portfolio collection</div>`;
     rail.innerHTML = html;
 
     wireFavButtons(rail);
@@ -478,11 +621,30 @@ document.addEventListener('DOMContentLoaded', () => {
         setScreen('library');
         clearSelection();
         renderRail(); renderCentre();
-        if (window.innerWidth < 1100) rail.classList.remove('open');
+        setRailOpen(false);
       });
     });
     rail.querySelectorAll('[data-new-collection]').forEach(el => {
       el.addEventListener('click', () => openCollectionModal(null, el.getAttribute('data-new-collection')));
+    });
+
+    // Recent rows: a collection scopes the rail to it; a gallery opens it.
+    rail.querySelectorAll('[data-recent-collection]').forEach(el => {
+      el.addEventListener('click', () => {
+        state.rail = el.getAttribute('data-recent-collection');
+        state.centreGalleryId = null; contentGid = null; closeDrawerForce();
+        setScreen('library');
+        clearSelection();
+        renderRail(); renderCentre();
+        setRailOpen(false);
+      });
+    });
+    rail.querySelectorAll('[data-recent-gallery]').forEach(el => {
+      el.addEventListener('click', () => {
+        openGallery(el.getAttribute('data-recent-gallery'));
+        renderRail();
+        setRailOpen(false);
+      });
     });
   }
 
@@ -889,7 +1051,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!colId) return;
       const col = state.collections.find(c => c.id === colId);
       const merged = [...new Set([...(col.galleryIds || []), ...ids])];
-      await fetch(`/api/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: merged }) });
+      await fetch(`/api/admin/client/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: merged }) });
       state.selection.clear();
       await loadData(); renderAll();
       toast(`Added ${ids.length} to ${col.name}`);
@@ -897,21 +1059,21 @@ document.addEventListener('DOMContentLoaded', () => {
       const date = await promptModal({ title: 'Set expiration', okText: 'Set', field: { type: 'date', label: 'Expiration date (leave blank to clear)' } });
       if (date === null) return;
       const expiresAt = date ? new Date(date + 'T23:59:59').toISOString() : null;
-      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt }) }));
+      runBulk(id => fetch(`/api/admin/client/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt }) }));
     } else if (kind === 'password') {
       const pw = await promptModal({ title: 'Set / clear password', okText: 'Apply', sub: 'Leave blank to remove the password.', field: { type: 'text', label: 'Password' } });
       if (pw === null) return;
-      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) }));
+      runBulk(id => fetch(`/api/admin/client/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: pw }) }));
     } else if (kind === 'downloads') {
       const val = await promptModal({ title: 'Downloads', okText: 'Apply', field: { type: 'select', label: 'Allow client downloads', options: [{ value: '1', label: 'On' }, { value: '0', label: 'Off' }] } });
       if (val === null) return;
-      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ downloadsEnabled: val === '1' }) }));
+      runBulk(id => fetch(`/api/admin/client/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ downloadsEnabled: val === '1' }) }));
     } else if (kind === 'archive') {
       if (!await confirmModal({ title: 'Archive galleries', message: `Archive ${ids.length} galler${ids.length === 1 ? 'y' : 'ies'}? They become inactive and move to Archive.` })) return;
-      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: false }) }));
+      runBulk(id => fetch(`/api/admin/client/galleries/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ active: false }) }));
     } else if (kind === 'delete') {
       if (!await confirmModal({ title: 'Delete galleries', message: `Permanently delete ${ids.length} galler${ids.length === 1 ? 'y' : 'ies'}? This cannot be undone.`, okText: 'Delete', danger: true })) return;
-      runBulk(id => fetch(`/api/galleries/${id}`, { method: 'DELETE' }));
+      runBulk(id => fetch(`/api/admin/client/galleries/${id}`, { method: 'DELETE' }));
     }
   }
 
@@ -923,6 +1085,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!g) { backToLibrary(); return; }
     contentGid = g.id;
     selectedItemId = null;
+    contentSelectMode = false;
+    contentSelection.clear();
     const isProofing = g.type === 'proofing';
     const badge = isProofing ? 'Client gallery' : 'Portfolio';
     const link = galleryPublicUrl(g) || '';
@@ -985,14 +1149,14 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (act === 'copy') { copyText(window.location.origin + '/gallery/' + g.token); }
     else if (act === 'open') { window.open(window.location.origin + '/gallery/' + g.token, '_blank', 'noopener'); }
     else if (act === 'refresh') {
-      const res = await fetch(`/api/admin/galleries/${g.id}/probe`, { method: 'POST' });
+      const res = await fetch(`/api/admin/client/galleries/${g.id}/probe`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       toast(data.updated > 0 ? `Updated ${data.updated} item${data.updated !== 1 ? 's' : ''}` : 'All up to date');
       if (data.updated > 0) loadContent();
     } else if (act === 'header') {
       const text = await promptModal({ title: 'Section header', okText: 'Add', field: { type: 'text', label: 'Header text' } });
       if (!text) return;
-      await fetch(`/api/admin/galleries/${g.id}/headers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+      await fetch(`/api/admin/client/galleries/${g.id}/headers`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
       loadContent();
     }
   }
@@ -1009,11 +1173,42 @@ document.addEventListener('DOMContentLoaded', () => {
     closeDrawerForce();
     setScreen('library');
     renderCentre();
+    watchImportFolder();
+  }
+
+  // A gallery with an FTP watch folder only imports when something asks, so the
+  // open gallery asks: once on entry, then every 30s while it stays open.
+  let importWatchTimer = null;
+  async function syncImportOnce(gid) {
+    try {
+      const res = await fetch(`/api/admin/client/galleries/${gid}/import-sync`, { method: 'POST' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.imported && state.centreGalleryId === gid) {
+        await loadContent();
+        refreshCountsSoon();
+        toast(`Imported ${data.imported} from FTP folder`);
+      }
+    } catch (_) { /* next tick retries */ }
+  }
+  function watchImportFolder() {
+    clearInterval(importWatchTimer);
+    importWatchTimer = null;
+    const gid = state.centreGalleryId;
+    const g = gid && state.galleries.find(x => x.id === gid);
+    if (!g || !g.importFolder) return;
+    syncImportOnce(gid);
+    importWatchTimer = setInterval(() => { if (!document.hidden) syncImportOnce(gid); }, 30000);
   }
   function backToLibrary() {
     if (state.drawer.galleryId && state.drawer.dirty && !confirm('Discard unsaved changes?')) return;
     state.centreGalleryId = null;
     contentGid = null;
+    contentSelectMode = false;
+    contentSelection.clear();
+    const cbar = $('bulk-bar'); if (cbar) { cbar.classList.remove('show'); cbar.hidden = true; }
+    clearInterval(importWatchTimer);
+    importWatchTimer = null;
     closeDrawerForce();
     renderCentre();
   }
@@ -1071,6 +1266,16 @@ document.addEventListener('DOMContentLoaded', () => {
       downloadsEnabled: eff.downloadsEnabled,
       commentingEnabled: eff.commentingEnabled,
       expiresAt: eff.expiresAt ? eff.expiresAt.split('T')[0] : '',
+      importFolder: g.importFolder || '',
+      // Per-gallery options (never inherited from a collection)
+      sortBy: (g.sort && g.sort.by) || 'custom',
+      sortDir: (g.sort && g.sort.dir) || 'asc',
+      downloadMode: g.downloadMode || 'original',
+      selEnabled: !!(g.selection && g.selection.enabled),
+      selLimit: (g.selection && g.selection.limit) || 0,
+      watermark: !!g.watermark,
+      showTitles: g.showTitles !== false,
+      coverId: g.coverId || '',
     };
   }
 
@@ -1100,6 +1305,7 @@ document.addEventListener('DOMContentLoaded', () => {
     <div class="drawer-tabs">
       <button class="drawer-tab${state.drawer.tab === 'settings' ? ' active' : ''}" data-tab="settings">Settings</button>
       ${isProofing ? `<button class="drawer-tab${state.drawer.tab === 'comments' ? ' active' : ''}" data-tab="comments">Comments</button>` : ''}
+      ${isProofing && g.selection && g.selection.enabled ? `<button class="drawer-tab${state.drawer.tab === 'selections' ? ' active' : ''}" data-tab="selections">Favorites</button>` : ''}
     </div>
     <div class="drawer-body" id="drawer-body"></div>`;
     drawer.innerHTML = html;
@@ -1112,6 +1318,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (addToColEl) addToColEl.addEventListener('click', addCurrentToCollection);
 
     if (state.drawer.tab === 'comments') renderDrawerComments(g);
+    else if (state.drawer.tab === 'selections' && isProofing) renderDrawerSelections(g);
     else renderDrawerSettings(g, col, d, isProofing);
   }
   function closeDrawerForce() {
@@ -1157,6 +1364,13 @@ document.addEventListener('DOMContentLoaded', () => {
       html += `<div class="drawer-block">${editableSettings(d)}</div>`;
     }
 
+    if (isProofing) html += galleryOptionsHtml(g, col, d);
+
+    html += `<div class="drawer-block">
+      <div class="editable-row"><span class="er-key">FTP folder</span><span class="er-ctl"><input type="text" class="d-input" data-field="importFolder" maxlength="64" placeholder="None" autocomplete="off" spellcheck="false"></span></div>
+      <div class="sr-sub" style="margin-top:6px;">Files FTP’d into this folder are added automatically.</div>
+    </div>`;
+
     html += `<div class="drawer-block">
       <div class="switch-row"><div class="sr-text">Active</div><button class="switch${d.active ? ' on' : ''}" data-switch="active"></button></div>
     </div>`;
@@ -1170,6 +1384,115 @@ document.addEventListener('DOMContentLoaded', () => {
     </div>`;
     body.innerHTML = html;
     wireDrawerSettings(g, col);
+  }
+
+  // Options that belong to this gallery alone: how it is ordered, what clients
+  // may download, favorites, watermarked previews, and whether file names show.
+  function galleryOptionsHtml(g, col, d) {
+    const opt = (v, label, cur) => `<option value="${v}"${cur === v ? ' selected' : ''}>${label}</option>`;
+    const dlOn = (col && !d.override) ? effective(g).downloadsEnabled : d.downloadsEnabled;
+    const dirLabels = d.sortBy === 'name' ? ['A to Z', 'Z to A'] : ['Oldest first', 'Newest first'];
+    let html = `<div class="drawer-block">
+      <div class="d-label">Gallery options</div>
+      <div class="inherit-list">
+        <div class="editable-row"><span class="er-key">Order</span><span class="er-ctl er-pair">
+          <select class="d-input" data-field="sortBy">
+            ${opt('custom', 'My order (drag)', d.sortBy)}${opt('name', 'File name', d.sortBy)}${opt('captured', 'Capture time', d.sortBy)}${opt('added', 'Date added', d.sortBy)}
+          </select>
+          ${d.sortBy === 'custom' ? '' : `<select class="d-input" data-field="sortDir">${opt('asc', dirLabels[0], d.sortDir)}${opt('desc', dirLabels[1], d.sortDir)}</select>`}
+        </span></div>
+        ${d.sortBy === 'captured' ? `<div class="sr-sub">From the photo's EXIF date (or a video's recorded date). Files that don't say fall back to when they were added.</div>` : ''}`;
+    if (dlOn) {
+      html += `<div class="editable-row"><span class="er-key">Download as</span><span class="er-ctl">
+          <select class="d-input" data-field="downloadMode">
+            ${opt('original', 'Originals', d.downloadMode)}${opt('web', 'Web size (2048px)', d.downloadMode)}${opt('both', 'Client chooses', d.downloadMode)}
+          </select></span></div>
+        <div class="sr-sub">Web size applies to photos; videos always download as the original.</div>`;
+    }
+    html += `<div class="switch-row"><div><div class="sr-text">Favorites</div><div class="sr-sub">Clients pick photos and send you the list</div></div><button class="switch${d.selEnabled ? ' on' : ''}" data-switch="selEnabled"></button></div>`;
+    if (d.selEnabled) {
+      html += `<div class="editable-row"><span class="er-key">Pick limit</span><span class="er-ctl"><input type="number" class="d-input" data-field="selLimit" min="0" max="100000" step="1" value="${Number(d.selLimit) || 0}" style="max-width:110px;"></span></div>
+        <div class="sr-sub">0 means no limit. Clients can change their picks and send them again.</div>`;
+    }
+    html += `<div class="switch-row"><div><div class="sr-text">Watermark previews</div><div class="sr-sub" id="d-wm-sub">Stamps the site watermark on thumbnails and the viewer. Downloads stay clean.</div></div><button class="switch${d.watermark ? ' on' : ''}" data-switch="watermark"></button></div>
+      <div class="switch-row"><div><div class="sr-text">Show file names</div><div class="sr-sub">Off hides titles and IMG numbers from the client page</div></div><button class="switch${d.showTitles ? ' on' : ''}" data-switch="showTitles"></button></div>
+      <div class="editable-row"><span class="er-key">Cover</span><span class="er-ctl er-pair">
+        ${g.thumbnail ? `<img class="d-cover" src="/thumbnails/${encodeURIComponent(g.thumbnail)}" alt="">` : '<span class="sr-sub">None yet</span>'}
+        ${d.coverId ? `<button class="link-btn muted" data-act="clear-cover">Use first item</button>` : ''}
+      </span></div>
+      <div class="sr-sub">${d.coverId ? 'Chosen cover.' : 'The first item.'} Use ★ next to any item in the gallery to choose one.</div>
+      </div>
+      <div class="d-label" style="margin-top:22px;">Activity</div>
+      <div id="d-activity" class="d-activity"><div class="sr-sub">Loading…</div></div>
+    </div>`;
+    return html;
+  }
+
+  async function loadDrawerActivity(g) {
+    const box = $('d-activity');
+    if (!box) return;
+    try {
+      const res = await fetch(`/api/admin/client/galleries/${g.id}/activity`);
+      if (!res.ok) { box.innerHTML = ''; return; }
+      const a = await res.json();
+      const wmSub = $('d-wm-sub');
+      if (wmSub && a.watermarkAvailable === false) wmSub.textContent = 'No site watermark yet. Upload one under Portfolio > Site design and it applies here.';
+      const st = a.stats || {};
+      const row = (k, v) => `<div class="inherit-row"><span class="ir-key">${k}</span><span class="ir-val">${v}</span></div>`;
+      const dl = st.downloads || {};
+      const when = (t) => t ? shortDate(t) : 'never';
+      let html = row('Views', `${(st.views || {}).total || 0} (${(st.views || {}).unique || 0} unique)`)
+        + row('Last viewed', when((st.views || {}).lastViewedAt))
+        + row('Whole-gallery downloads', dl.downloadAll || 0)
+        + row('Single downloads', dl.itemTotal || 0)
+        + row('Last download', when(dl.lastAt));
+      if (g.selection && g.selection.enabled) {
+        const sel = a.selections || {};
+        html += row('Favorites sent', `${sel.submitted || 0} of ${sel.total || 0} visitors`);
+      }
+      if ((a.recent || []).length) {
+        html += `<div class="d-recent">` + a.recent.map(e =>
+          `<div class="d-recent-row"><span>${escapeHtml(e.name)}${e.size === 'web' ? ' · web size' : ''}</span><span>${escapeHtml(shortDate(e.at))}</span></div>`).join('') + `</div>`;
+      }
+      box.innerHTML = html;
+    } catch (_) { box.innerHTML = ''; }
+  }
+
+  async function renderDrawerSelections(g) {
+    const body = $('drawer-body');
+    body.innerHTML = `<div class="drawer-empty">Loading…</div>`;
+    const res = await fetch(`/api/admin/client/galleries/${g.id}/selections`);
+    if (!res.ok) { if (res.status === 401) checkAuth(); return; }
+    const { selections } = await res.json();
+    if (!selections.length) { body.innerHTML = `<div class="drawer-empty">Nobody has picked favorites yet.</div>`; return; }
+    body.innerHTML = selections.map(s => `
+      <div class="comments-video-group sel-group" data-cid="${escapeHtml(s.clientId)}">
+        <div class="comments-video-header">
+          <span class="comments-video-toggle">▼</span>
+          <span class="comments-video-name">${escapeHtml(s.name || 'Not sent yet')}</span>
+          <span class="comments-video-count">${s.count}</span>
+        </div>
+        <div class="comments-video-body">
+          <div class="sr-sub" style="margin-bottom:8px;">${s.submittedAt ? 'Sent ' + escapeHtml(shortDate(s.submittedAt)) : 'Still choosing (not sent)'}</div>
+          ${s.note ? `<div class="sel-note">${escapeHtml(s.note)}</div>` : ''}
+          <div class="sel-actions">
+            <button class="link-btn accent" data-sel="copy">Copy file names</button>
+            <button class="link-btn muted" data-sel="clear">Clear</button>
+          </div>
+          <div class="sel-list">${s.items.map(i => `<div class="sel-row">${i.thumbnail ? `<img src="/thumbnails/${encodeURIComponent(i.thumbnail)}" alt="">` : '<span></span>'}<span>${escapeHtml(i.name || i.title)}</span></div>`).join('')}</div>
+        </div>
+      </div>`).join('');
+    body.querySelectorAll('.comments-video-header').forEach(h =>
+      h.addEventListener('click', () => h.parentElement.classList.toggle('collapsed')));
+    body.querySelectorAll('.sel-group').forEach(grp => {
+      const s = selections.find(x => x.clientId === grp.dataset.cid);
+      grp.querySelector('[data-sel="copy"]').addEventListener('click', () => { copyText(s.items.map(i => i.name || i.title).join('\n')); });
+      grp.querySelector('[data-sel="clear"]').addEventListener('click', async () => {
+        if (!await confirmModal({ title: 'Clear favorites', message: `Remove ${s.name ? s.name + '’s' : 'these'} picks? They can pick again.`, okText: 'Clear', danger: true })) return;
+        const r = await fetch(`/api/admin/client/galleries/${g.id}/selections/${encodeURIComponent(s.clientId)}`, { method: 'DELETE' });
+        if (r.ok) renderDrawerSelections(g); else toast('Could not clear');
+      });
+    });
   }
 
   function inheritedReadOnly(g) {
@@ -1196,19 +1519,32 @@ document.addEventListener('DOMContentLoaded', () => {
     const d = state.drawer.draft;
     const nameInput = body.querySelector('[data-field="name"]');
     if (nameInput) nameInput.value = d.name || '';
+    const folderInput = body.querySelector('[data-field="importFolder"]');
+    if (folderInput) folderInput.value = d.importFolder || '';
     body.querySelectorAll('[data-switch]').forEach(sw => sw.addEventListener('click', () => {
       const key = sw.getAttribute('data-switch');
       if (key === 'useCollection') { d.override = !d.override; state.drawer.dirty = true; renderDrawer(); return; }
       d[key] = !sw.classList.contains('on');
       sw.classList.toggle('on');
       state.drawer.dirty = true;
+      if (key === 'selEnabled') renderDrawer();
     }));
+    body.querySelectorAll('[data-field="sortBy"]').forEach(sel => sel.addEventListener('change', () => renderDrawer()));
+    if (g.type === 'proofing') {
+      loadDrawerActivity(g);
+    }
     body.querySelectorAll('[data-field]').forEach(inp => inp.addEventListener('input', () => {
       d[inp.getAttribute('data-field')] = inp.value;
       state.drawer.dirty = true;
     }));
+    body.querySelectorAll('[data-act="clear-cover"]').forEach(b => b.addEventListener('click', () => {
+      d.coverId = ''; state.drawer.dirty = true; renderDrawer();
+    }));
     body.querySelectorAll('[data-link]').forEach(b => b.addEventListener('click', () => linkAction(g, b.getAttribute('data-link'))));
-    body.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => drawerAction(g, col, b.getAttribute('data-act'))));
+    body.querySelectorAll('[data-act]').forEach(b => {
+      if (b.getAttribute('data-act') === 'clear-cover') return;
+      b.addEventListener('click', () => drawerAction(g, col, b.getAttribute('data-act')));
+    });
   }
 
   async function linkAction(g, act) {
@@ -1229,7 +1565,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     else if (act === 'regen') {
       if (!await confirmModal({ title: 'Regenerate link', message: 'This replaces the link with a new one, and anyone you have already sent the current link to will get "not found". Write the current link down first — Edit can put it back.', okText: 'Regenerate', danger: true })) return;
-      const res = await fetch(`/api/galleries/${g.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regenerateToken: true }) });
+      const res = await fetch(`/api/admin/client/galleries/${g.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regenerateToken: true }) });
       if (res.ok) { await loadData(); renderAll(); toast('Link regenerated'); }
     }
   }
@@ -1239,8 +1575,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (act === 'save') {
       const name = (d.name || '').trim();
       if (!name) { toast('Name cannot be empty'); return; }
-      const body = { name, active: d.active };
+      const body = { name, active: d.active, importFolder: (d.importFolder || '').trim() };
       if (g.type === 'proofing') {
+        body.sort = { by: d.sortBy, dir: d.sortDir };
+        body.downloadMode = d.downloadMode;
+        body.selection = { enabled: !!d.selEnabled, limit: Math.max(0, parseInt(d.selLimit, 10) || 0) };
+        body.watermark = !!d.watermark;
+        body.showTitles = !!d.showTitles;
+        body.coverId = d.coverId || '';
         if (col) {
           body.overrideCollectionSettings = d.override;
           if (d.override) {
@@ -1256,12 +1598,15 @@ document.addEventListener('DOMContentLoaded', () => {
           body.expiresAt = d.expiresAt ? new Date(d.expiresAt + 'T23:59:59').toISOString() : null;
         }
       }
-      const res = await fetch(`/api/galleries/${g.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const res = await fetch(`/api/admin/client/galleries/${g.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (res.ok) {
         state.drawer.dirty = false;
         await loadData(); initDraft(); renderAll(); renderDrawer();
         toast('Saved');
-      } else toast('Save failed');
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast(err.error || 'Save failed');
+      }
     } else if (act === 'delete') {
       // Losing your last portfolio gallery empties the public portfolio page, so
       // say so up front rather than refusing the delete — it is recoverable with
@@ -1271,7 +1616,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ? `Delete "${g.name}"? This cannot be undone. It is your only portfolio gallery, so your public portfolio page will have nothing to show until you create another.`
         : `Delete "${g.name}"? This cannot be undone.`;
       if (!await confirmModal({ title: 'Delete gallery', message, okText: 'Delete', danger: true })) return;
-      const res = await fetch(`/api/galleries/${g.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/admin/client/galleries/${g.id}`, { method: 'DELETE' });
       if (!res.ok) {
         // Silence here is how a refused delete used to look like a dead button.
         const data = await res.json().catch(() => ({}));
@@ -1281,11 +1626,18 @@ document.addEventListener('DOMContentLoaded', () => {
       closeDrawerForce(); state.centreGalleryId = null; contentGid = null; await loadData(); renderAll(); toast('Gallery deleted');
     } else if (act === 'duplicate') {
       toast('Creating copy…');
-      const res = await fetch('/api/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: g.name + ' (copy)', type: g.type }) });
-      if (res.ok && col) {
+      // Always a client gallery: the server refuses any other type, and a copy of
+      // a leftover portfolio gallery would have nowhere to live here.
+      const res = await fetch('/api/admin/client/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: g.name + ' (copy)', type: 'proofing' }) });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        toast(data.error || `Duplicate failed (HTTP ${res.status})`);
+        return;
+      }
+      if (col && (col.type || 'proofing') === 'proofing') {
         const ng = await res.json();
         const merged = [...(col.galleryIds || []), ng.id];
-        await fetch(`/api/collections/${col.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: merged }) });
+        await fetch(`/api/admin/client/collections/${col.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: merged }) });
       }
       await loadData(); renderAll(); toast('Duplicated (metadata only — items not copied)');
     } else if (act === 'move') {
@@ -1303,13 +1655,13 @@ document.addEventListener('DOMContentLoaded', () => {
     for (const c of state.collections) {
       const has = (c.galleryIds || []).includes(g.id);
       if (has && c.id !== colId) {
-        await fetch(`/api/collections/${c.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: c.galleryIds.filter(x => x !== g.id) }) });
+        await fetch(`/api/admin/client/collections/${c.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: c.galleryIds.filter(x => x !== g.id) }) });
       }
     }
     if (colId) {
       const target = state.collections.find(c => c.id === colId);
       if (target && !(target.galleryIds || []).includes(g.id)) {
-        await fetch(`/api/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(target.galleryIds || []), g.id] }) });
+        await fetch(`/api/admin/client/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(target.galleryIds || []), g.id] }) });
       }
     }
     await loadData(); initDraft(); renderAll(); renderDrawer();
@@ -1354,14 +1706,27 @@ document.addEventListener('DOMContentLoaded', () => {
   let contentGid = null;
   let contentItems = [];
   let contentSortable = null;
+  let contentSort = { by: 'custom', dir: 'asc' };
+  let contentCoverId = null;
+  let lastContentStats = {};
+  // Multi-select for deleting items in bulk. Off by default: a normal click
+  // plays a file or picks a row for the preview, which is what you want while
+  // curating. Turned on, a click toggles a checkbox and the bulk bar appears.
+  let contentSelectMode = false;
+  const contentSelection = new Set();
+  let contentLastClicked = null;
+  const SORT_NAMES = { name: 'file name', captured: 'capture time', added: 'date added' };
 
   async function loadContent() {
     if (!contentGid) return;
-    const res = await fetch(`/api/admin/galleries/${contentGid}/videos`);
+    const res = await fetch(`/api/admin/client/galleries/${contentGid}/items`);
     if (!res.ok) { if (res.status === 401) checkAuth(); return; }
     const data = await res.json();
-    contentItems = Array.isArray(data) ? data : (data.videos || []);
+    contentItems = Array.isArray(data) ? data : (data.items || []);
+    contentSort = (data && data.sort) || { by: 'custom', dir: 'asc' };
+    contentCoverId = (data && data.coverId) || null;
     const stats = (data && data.stats) || {};
+    lastContentStats = stats;
     renderContentItems(contentItems, stats);
   }
 
@@ -1371,9 +1736,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const dlItems = (stats && stats.downloads && stats.downloads.items) || {};
     const isPortfolio = (state.galleries.find(g => g.id === contentGid) || {}).type === 'reels';
     if (!items.length) { list.innerHTML = `<div class="drawer-empty">No items yet. Use “Add files”.</div>`; return; }
-    list.innerHTML = items.map(entry => {
+    const sorted = contentSort.by !== 'custom' && !isPortfolio;
+    list.classList.toggle('is-sorted', sorted);
+    list.classList.toggle('is-selecting', contentSelectMode);
+    const sortNote = sorted && !contentSelectMode
+      ? `<div class="sort-note">Shown by ${SORT_NAMES[contentSort.by]} (${contentSort.dir === 'desc' ? 'descending' : 'ascending'}). Set the order back to “My order” in Settings to drag items.</div>`
+      : '';
+    const selectHead = renderSelectHead(items);
+    list.innerHTML = sortNote + selectHead + items.map(entry => {
       if (entry.type === 'header') {
-        return `<div class="admin-header-item" data-id="${entry.id}" data-type="header">
+        const hChecked = contentSelection.has(entry.id);
+        return `<div class="admin-header-item${hChecked ? ' selected' : ''}" data-id="${entry.id}" data-type="header">
+          ${contentSelectMode ? `<span class="item-check${hChecked ? ' on' : ''}" aria-hidden="true">${hChecked ? '✓' : ''}</span>` : ''}
           <span class="drag-handle">≡</span>
           <input type="text" class="title-input header-text-input" value="${escapeHtml(entry.text)}">
           <button class="btn-icon delete-btn" title="Delete header">×</button>
@@ -1386,28 +1760,129 @@ document.addEventListener('DOMContentLoaded', () => {
       else if (isPhoto) media = `<img src="/uploads/${encodeURIComponent(entry.filename)}" class="admin-thumb">`;
       else media = `<video src="/uploads/${encodeURIComponent(entry.filename)}" muted preload="metadata" class="admin-thumb"></video>`;
       const dlCount = dlItems[entry.id] || 0;
-      return `<div class="admin-video-item${entry.id === selectedItemId ? ' selected' : ''}" data-id="${entry.id}">
+      const checked = contentSelection.has(entry.id);
+      return `<div class="admin-video-item${entry.id === selectedItemId && !contentSelectMode ? ' selected' : ''}${checked ? ' checked' : ''}" data-id="${entry.id}">
+        ${contentSelectMode ? `<span class="item-check${checked ? ' on' : ''}" aria-hidden="true">${checked ? '✓' : ''}</span>` : ''}
         <span class="drag-handle">≡</span>
         <button class="thumb-play" title="Preview">${media}<span class="thumb-play-icon">${isPhoto ? '⤢' : '▶'}</span></button>
         <input type="text" class="title-input" value="${escapeHtml(entry.title)}">
-        <span class="video-dl-count" title="${dlCount} downloads">↓ ${dlCount}</span>
+        ${contentSelectMode ? '' : `<span class="video-dl-count" title="${dlCount} downloads">↓ ${dlCount}</span>
+        ${isPortfolio || entry.type !== 'photo' && entry.type !== 'video' ? '' : `<button class="btn-icon cover-btn${entry.id === contentCoverId ? ' is-cover' : ''}" title="${entry.id === contentCoverId ? 'This is the cover' : 'Use as gallery cover'}">★</button>`}
         <button class="btn-icon replace-btn" title="Replace file">↻</button>
-        <a class="btn-icon download-btn" href="/api/admin/galleries/${contentGid}/videos/${entry.id}/download" title="Download original file">⇣</a>
         ${isPortfolio ? `<button class="btn-icon desc-btn${entry.description ? ' has-description' : ''}" title="Caption box">&para;</button>` : ''}
         ${isPhoto ? '' : `<button class="btn-icon cc-btn${(entry.captions && entry.captions.length) ? ' has-captions' : ''}" title="Captions">CC</button>`}
         ${isPhoto ? '' : `<button class="btn-icon thumb-btn" title="Set thumbnail">▦</button>`}
         <button class="btn-icon toggle-vis ${entry.visible ? '' : 'hidden-video'}" title="${entry.visible ? 'Visible' : 'Hidden'}">${entry.visible ? '◉' : '○'}</button>
-        <button class="btn-icon delete-btn" title="Delete">×</button>
+        <button class="btn-icon delete-btn" title="Delete">×</button>`}
       </div>`;
     }).join('');
     if (contentSortable) { try { contentSortable.destroy(); } catch (_) {} }
     contentSortable = Sortable.create(list, {
       handle: '.drag-handle', animation: 150, ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
+      disabled: sorted || contentSelectMode,
       onEnd: async () => {
         const order = Array.from(list.querySelectorAll('.admin-video-item, .admin-header-item')).map(i => i.dataset.id);
-        await fetch(`/api/admin/galleries/${contentGid}/reorder`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }) });
+        await fetch(`/api/admin/client/galleries/${contentGid}/order`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ order }) });
       },
     });
+    // The content view has no floating bar of its own; make sure the gallery
+    // list's one is not left showing behind it.
+    renderContentBulkBar();
+  }
+
+  // ==========================================================================
+  // Select mode (bulk delete)
+  //
+  // A deliberate mode, not always-on checkboxes: while curating, a click should
+  // play a file, and checkboxes on every row would only be noise. The way in is
+  // the little checkbox at the top-left of the list — the slot the row
+  // checkboxes drop into — which reads "Select" when off and becomes a
+  // select-all box when on. The tools live on that same line, not a floating bar
+  // at the bottom of the scroll area, so they are in reach however long the
+  // gallery is. Deleting is one request per item, the same call the single-row ×
+  // uses, so nothing new happens server side.
+  // ==========================================================================
+  function selectableIds() {
+    return contentItems.map(i => i.id);
+  }
+
+  // The select row: the checkbox that opens the mode (then selects all/none),
+  // a count, and the Delete / Done tools. It stays put at the top of the list.
+  function renderSelectHead(items) {
+    const ids = items.map(i => i.id);
+    const picked = ids.filter(id => contentSelection.has(id)).length;
+    const allOn = ids.length > 0 && picked === ids.length;
+    const someOn = picked > 0 && !allOn;
+    const label = contentSelectMode
+      ? (picked ? `${picked} selected` : `${ids.length} item${ids.length === 1 ? '' : 's'}`)
+      : 'Select';
+    const tools = contentSelectMode
+      ? `<button type="button" class="list-select-delete" data-select-delete${picked ? '' : ' disabled'}>Delete${picked ? ' ' + picked : ''}</button>
+         <button type="button" class="list-select-done" data-select-done>Done</button>`
+      : '';
+    return `<div class="list-select-head${contentSelectMode ? ' on' : ''}">
+      <button type="button" class="item-check head-check${allOn ? ' on' : ''}${someOn ? ' some' : ''}"
+        data-select-head role="checkbox" aria-checked="${allOn ? 'true' : (someOn ? 'mixed' : 'false')}"
+        title="${contentSelectMode ? (allOn ? 'Clear selection' : 'Select all') : 'Select items to delete'}">${allOn ? '✓' : (someOn ? '−' : '')}</button>
+      <span class="list-select-label">${label}</span>
+      <span class="list-select-tools">${tools}</span>
+    </div>`;
+  }
+
+  function toggleContentItem(id, range) {
+    if (range && contentLastClicked) {
+      const order = selectableIds();
+      const from = order.indexOf(contentLastClicked);
+      const to = order.indexOf(id);
+      if (from !== -1 && to !== -1) {
+        const [a, b] = from < to ? [from, to] : [to, from];
+        for (let i = a; i <= b; i++) contentSelection.add(order[i]);
+      } else contentSelection.add(id);
+    } else if (contentSelection.has(id)) {
+      contentSelection.delete(id);
+    } else {
+      contentSelection.add(id);
+    }
+    contentLastClicked = id;
+    renderContentItems(contentItems, lastContentStats);
+  }
+
+  function setSelectMode(on) {
+    contentSelectMode = on;
+    contentSelection.clear();
+    contentLastClicked = null;
+    renderContentItems(contentItems, lastContentStats);
+  }
+
+  // The content view keeps its tools on the select row, so the shared floating
+  // bar is only used by the gallery list. Make sure it is hidden while a gallery
+  // is open so the two never both show.
+  function renderContentBulkBar() {
+    const bar = $('bulk-bar');
+    if (bar) { bar.classList.remove('show'); bar.hidden = true; }
+  }
+
+  async function deleteSelectedItems() {
+    const ids = [...contentSelection];
+    if (!ids.length) return;
+    const ok = await confirmModal({
+      title: 'Delete items',
+      message: `Delete ${ids.length} item${ids.length === 1 ? '' : 's'}? This cannot be undone.`,
+      okText: 'Delete', danger: true,
+    });
+    if (!ok) return;
+    let done = 0, failed = 0;
+    for (const id of ids) {
+      try {
+        const res = await fetch(`/api/admin/client/galleries/${contentGid}/items/${id}`, { method: 'DELETE' });
+        if (res.ok) done++; else failed++;
+      } catch (_) { failed++; }
+    }
+    contentSelection.clear();
+    contentSelectMode = false;
+    await loadContent();
+    if (state.centreGalleryId) await loadData().then(renderGalleryView);
+    toast(failed ? `Deleted ${done}, ${failed} failed` : `Deleted ${done} item${done === 1 ? '' : 's'}`);
   }
 
   // ==========================================================================
@@ -1496,6 +1971,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // The title field fills most of a row, so clicking it is the usual way a row
   // gets "picked" — keep selection in step with it.
   document.addEventListener('focusin', (e) => {
+    if (contentSelectMode) return;
     const row = e.target.closest && e.target.closest('.admin-video-item');
     if (row) selectItem(row.dataset.id);
   });
@@ -1530,6 +2006,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.querySelector('.modal:not([hidden])')) return;
     if (thumbPicker.classList.contains('open')) return;
     if (!document.getElementById('content-list')) return;
+    if (contentSelectMode) {
+      // Select mode: Escape leaves, Space/arrows don't play or move the pick.
+      if (e.key === 'Escape') { e.preventDefault(); setSelectMode(false); }
+      return;
+    }
     if (isSpace(e)) {
       if (!selectedItemId) return;
       e.preventDefault();
@@ -1546,12 +2027,44 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!container || !contentGid) return;
     const id = container.dataset.id;
     if (container.dataset.type === 'header') {
-      await fetch(`/api/admin/galleries/${contentGid}/headers/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: e.target.value }) });
+      await fetch(`/api/admin/client/galleries/${contentGid}/headers/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: e.target.value }) });
     } else {
-      await fetch(`/api/admin/galleries/${contentGid}/videos/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: e.target.value }) });
+      await fetch(`/api/admin/client/galleries/${contentGid}/items/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: e.target.value }) });
     }
   });
   document.addEventListener('click', async (e) => {
+    // The list-head checkbox: opens the mode, then selects all / clears.
+    const head = e.target.closest('[data-select-head]');
+    if (head) {
+      e.preventDefault();
+      if (!contentSelectMode) { setSelectMode(true); return; }
+      const ids = selectableIds();
+      const allOn = ids.length > 0 && ids.every(id => contentSelection.has(id));
+      contentSelection.clear();
+      if (!allOn) ids.forEach(id => contentSelection.add(id));
+      renderContentItems(contentItems, lastContentStats);
+      return;
+    }
+    if (e.target.closest('[data-select-done]')) {
+      e.preventDefault();
+      setSelectMode(false);
+      return;
+    }
+    if (e.target.closest('[data-select-delete]')) {
+      e.preventDefault();
+      deleteSelectedItems();
+      return;
+    }
+    // In select mode a click anywhere on a row toggles it — except the title
+    // field and the drag handle, which keep their normal use.
+    if (contentSelectMode) {
+      const srow = e.target.closest('.admin-video-item, .admin-header-item');
+      if (srow && !e.target.closest('input, .drag-handle')) {
+        e.preventDefault();
+        toggleContentItem(srow.dataset.id, e.shiftKey);
+        return;
+      }
+    }
     const play = e.target.closest('.thumb-play');
     if (play) { e.preventDefault(); openPreview(play.closest('.admin-video-item').dataset.id); return; }
     const row = e.target.closest('.admin-video-item');
@@ -1561,7 +2074,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (vis && contentGid) {
       const item = vis.closest('.admin-video-item'); const id = item.dataset.id;
       const newVisible = vis.classList.contains('hidden-video');
-      const res = await fetch(`/api/admin/galleries/${contentGid}/videos/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visible: newVisible }) });
+      const res = await fetch(`/api/admin/client/galleries/${contentGid}/items/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ visible: newVisible }) });
       if (res.ok) { vis.classList.toggle('hidden-video', !newVisible); vis.textContent = newVisible ? '◉' : '○'; vis.title = newVisible ? 'Visible' : 'Hidden'; }
       return;
     }
@@ -1570,9 +2083,26 @@ document.addEventListener('DOMContentLoaded', () => {
       const item = del.closest('.admin-video-item, .admin-header-item'); const id = item.dataset.id;
       const isHeader = item.dataset.type === 'header';
       if (!await confirmModal({ title: isHeader ? 'Delete header' : 'Delete item', message: isHeader ? 'Delete this section header?' : 'Delete this item? This cannot be undone.', okText: 'Delete', danger: true })) return;
-      const url = isHeader ? `/api/admin/galleries/${contentGid}/headers/${id}` : `/api/admin/galleries/${contentGid}/videos/${id}`;
+      const url = isHeader ? `/api/admin/client/galleries/${contentGid}/headers/${id}` : `/api/admin/client/galleries/${contentGid}/items/${id}`;
       const res = await fetch(url, { method: 'DELETE' });
       if (res.ok) item.remove();
+      return;
+    }
+    const cov = e.target.closest('.cover-btn');
+    if (cov && contentGid) {
+      const id = cov.closest('.admin-video-item').dataset.id;
+      const makeCover = id !== contentCoverId;
+      const res = await fetch(`/api/admin/client/galleries/${contentGid}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ coverId: makeCover ? id : '' }) });
+      if (res.ok) {
+        contentCoverId = makeCover ? id : null;
+        document.querySelectorAll('.cover-btn').forEach(b => b.classList.toggle('is-cover', b.closest('.admin-video-item').dataset.id === contentCoverId));
+        toast(makeCover ? 'Cover set' : 'Cover cleared');
+        loadData().then(() => {
+          if (!state.drawer.galleryId) return;
+          if (state.drawer.draft) state.drawer.draft.coverId = contentCoverId || '';
+          renderDrawer();
+        });
+      } else toast('Could not set the cover');
       return;
     }
     const rep = e.target.closest('.replace-btn');
@@ -1608,7 +2138,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function renderDrawerComments(g) {
     const body = $('drawer-body');
     body.innerHTML = `<div class="drawer-empty">Loading…</div>`;
-    const res = await fetch(`/api/admin/galleries/${g.id}/comments`);
+    const res = await fetch(`/api/admin/client/galleries/${g.id}/comments`);
     if (!res.ok) { if (res.status === 401) checkAuth(); return; }
     const comments = await res.json();
     if (!comments.length) { body.innerHTML = `<div class="drawer-empty">No comments yet.</div>`; return; }
@@ -1680,12 +2210,12 @@ document.addEventListener('DOMContentLoaded', () => {
   $('dest-new-gallery').addEventListener('click', async () => {
     const name = await promptModal({ title: 'New gallery', okText: 'Create', field: { type: 'text', label: 'Gallery name', value: 'Client Gallery' } });
     if (!name) return;
-    const res = await fetch('/api/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, type: 'proofing' }) });
+    const res = await fetch('/api/admin/client/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, type: 'proofing' }) });
     if (!res.ok) { toast('Create failed'); return; }
     const g = await res.json();
     if (state.upload.destination.collectionId) {
       const col = state.collections.find(c => c.id === state.upload.destination.collectionId);
-      if (col) await fetch(`/api/collections/${col.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(col.galleryIds || []), g.id] }) });
+      if (col) await fetch(`/api/admin/client/collections/${col.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(col.galleryIds || []), g.id] }) });
     }
     await loadData();
     state.upload.destination.galleryId = g.id;
@@ -1817,7 +2347,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const uploaded = await xhrSend({
         method: 'POST', url: `/api/admin/uploads/${item.uploadId}/finalize`, item,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ galleryId: item.galleryId, title: item.title, replaceId: item.replaceId }),
+        body: JSON.stringify(item.portfolioGalleryId
+          ? { target: 'portfolio', galleryId: item.portfolioGalleryId }
+          : { target: 'client', galleryId: item.galleryId, title: item.title, replaceId: item.replaceId || '' }),
       });
       item.uploadId = null;
       item.pct = 100; item.status = 'done'; item.uploaded = uploaded;
@@ -1836,7 +2368,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function startMultipartUpload(item) {
     item.status = 'uploading'; item.error = '';
-    const fd = new FormData(); fd.append('video', item.file); fd.append('title', item.title);
+    const fd = new FormData(); fd.append('file', item.file); fd.append('title', item.title);
+    // Replaces ride the same POST: PHP only parses a multipart body for POST,
+    // so a PUT multipart never reaches $_FILES and the replace would silently
+    // send no file. The server swaps the item when replaceId is present.
+    if (item.replaceId) fd.append('replaceId', item.replaceId);
     const xhr = new XMLHttpRequest(); item.xhr = xhr;
     xhr.upload.addEventListener('progress', (e) => { if (e.lengthComputable) { item.pct = Math.round(e.loaded / e.total * 100); updateQueueProgress(item); } });
     xhr.addEventListener('load', () => {
@@ -1854,9 +2390,8 @@ document.addEventListener('DOMContentLoaded', () => {
       item.xhr = null; pumpQueue();
     });
     xhr.addEventListener('error', () => { failItem(item, 'Connection dropped at ' + item.pct + '%'); item.xhr = null; pumpQueue(); });
-    xhr.open(item.replaceId ? 'PUT' : 'POST', item.replaceId
-      ? `/api/admin/galleries/${item.galleryId}/videos/${item.replaceId}/replace`
-      : `/api/admin/galleries/${item.galleryId}/videos`);
+    // Always POST /items: replaces carry replaceId in the body (see above).
+    xhr.open('POST', `/api/admin/client/galleries/${item.galleryId}/items`);
     xhr.send(fd);
     renderQueues();
   }
@@ -1961,16 +2496,25 @@ document.addEventListener('DOMContentLoaded', () => {
   const thumbTime = $('thumb-time');
   const thumbCanvas = $('thumb-canvas');
   const thumbCtx = thumbCanvas.getContext('2d', { willReadFrequently: true });
-  let thumbGid = null, thumbVideoId = null;
+  let thumbGid = null, thumbVideoId = null, thumbSaveFn = null;
 
   function openThumbForItem(videoId) {
-    thumbGid = contentGid; thumbVideoId = videoId;
+    thumbGid = contentGid; thumbVideoId = videoId; thumbSaveFn = null;
     const item = contentItems.find(v => v.id === videoId);
     if (item && item.filename) openThumbPicker('/uploads/' + encodeURIComponent(item.filename));
   }
   function openThumbForUploaded(queueItem) {
-    thumbGid = queueItem.galleryId; thumbVideoId = queueItem.uploaded.id;
+    thumbGid = queueItem.galleryId; thumbVideoId = queueItem.uploaded.id; thumbSaveFn = null;
     openThumbPicker('/uploads/' + encodeURIComponent(queueItem.uploaded.filename));
+  }
+  // The portfolio screen (a separate file, no gallery/video ids of its own)
+  // reaches this same scrubber through the bridge, with its own save step —
+  // everything up to "here's a JPEG blob" is identical either way.
+  function openThumbPickerFor(src, saveFn, opts = {}) {
+    thumbGid = null; thumbVideoId = null; thumbSaveFn = saveFn;
+    thumbPicker.querySelector('h3').textContent = opts.title || 'Choose thumbnail frame';
+    $('thumb-capture-btn').textContent = opts.buttonLabel || 'Set Thumbnail';
+    openThumbPicker(src);
   }
   function openThumbPicker(src) {
     thumbVideo.src = src;
@@ -2006,14 +2550,25 @@ document.addEventListener('DOMContentLoaded', () => {
     return await new Promise((res, rej) => c.toBlob(b => b ? res(b) : rej(new Error('export failed')), 'image/jpeg', 0.88));
   }
   async function uploadThumbnailBlob(gid, videoId, blob) {
-    const res = await fetch(`/api/admin/galleries/${gid}/videos/${videoId}/thumbnail`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
+    const res = await fetch(`/api/admin/client/galleries/${gid}/items/${videoId}/poster`, { method: 'PUT', headers: { 'Content-Type': 'image/jpeg' }, body: blob });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Failed to save thumbnail'); }
   }
   $('thumb-capture-btn').addEventListener('click', async () => {
-    const btn = $('thumb-capture-btn'); btn.disabled = true; btn.textContent = 'Saving…';
-    try { const blob = await captureFrameAsJpegBlob(thumbVideo); await uploadThumbnailBlob(thumbGid, thumbVideoId, blob); closeThumbPicker(); if (contentGid === thumbGid) loadContent(); toast('Thumbnail set'); }
+    const btn = $('thumb-capture-btn'); const savedLabel = btn.textContent; btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const blob = await captureFrameAsJpegBlob(thumbVideo);
+      const isPortfolio = !!thumbSaveFn;
+      if (isPortfolio) {
+        await thumbSaveFn(blob);
+      } else {
+        await uploadThumbnailBlob(thumbGid, thumbVideoId, blob);
+        if (contentGid === thumbGid) loadContent();
+      }
+      closeThumbPicker();
+      toast(isPortfolio ? 'Poster set' : 'Thumbnail set');
+    }
     catch (err) { toast(err.message || 'Failed'); }
-    finally { btn.disabled = false; btn.textContent = 'Set Thumbnail'; }
+    finally { btn.disabled = false; btn.textContent = savedLabel; }
   });
   async function autoGenerateVideoThumbnail(video, gid) {
     const v = document.createElement('video'); v.muted = true; v.preload = 'auto'; v.playsInline = true;
@@ -2034,7 +2589,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   $('thumb-cancel-btn').addEventListener('click', closeThumbPicker);
   thumbPicker.addEventListener('click', (e) => { if (e.target === thumbPicker) closeThumbPicker(); });
-  function closeThumbPicker() { thumbPicker.classList.remove('open'); thumbVideo.pause(); thumbVideo.src = ''; thumbVideoId = null; }
+  function closeThumbPicker() { thumbPicker.classList.remove('open'); thumbVideo.pause(); thumbVideo.src = ''; thumbVideoId = null; thumbSaveFn = null; }
 
   // ==========================================================================
   // Captions modal (ported)
@@ -2046,7 +2601,7 @@ document.addEventListener('DOMContentLoaded', () => {
     { code: 'ja', label: '日本語' }, { code: 'ko', label: '한국어' }, { code: 'ar', label: 'العربية' },
     { code: 'hi', label: 'हिन्दी' }, { code: 'ru', label: 'Русский' },
   ];
-  let captionsVideoId = null;
+  let captionsVideoId = null, captionsCtx = null;
   const captionLangSelect = $('caption-lang');
   captionLangSelect.innerHTML = CAPTION_LANGUAGES.map(l => `<option value="${l.code}">${escapeHtml(l.label)} (${l.code})</option>`).join('') + '<option value="__custom__">Other…</option>';
   captionLangSelect.addEventListener('change', () => { $('caption-custom-lang-label').style.display = captionLangSelect.value === '__custom__' ? '' : 'none'; });
@@ -2063,7 +2618,7 @@ document.addEventListener('DOMContentLoaded', () => {
       field: { type: 'textarea', label: item.title || item.filename || '', rows: 6, maxLength: 2000, value: item.description || '' },
     });
     if (text === null) return;
-    const res = await fetch(`/api/admin/galleries/${contentGid}/videos/${itemId}`, {
+    const res = await fetch(`/api/admin/client/galleries/${contentGid}/items/${itemId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ description: text }),
@@ -2074,7 +2629,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function openCaptionsModal(videoId) {
-    captionsVideoId = videoId;
+    captionsVideoId = videoId; captionsCtx = null;
     $('caption-upload-status').textContent = ''; $('caption-file-input').value = '';
     captionLangSelect.value = CAPTION_LANGUAGES[0].code; $('caption-custom-lang-label').style.display = 'none';
     $('caption-custom-code').value = ''; $('caption-custom-label').value = '';
@@ -2083,36 +2638,67 @@ document.addEventListener('DOMContentLoaded', () => {
     renderCaptionsList();
     $('captions-modal').hidden = false;
   }
+  // The portfolio screen reaches this same modal through the bridge: its
+  // videos aren't in contentItems and its caption routes take a filename
+  // instead of a video id, so the gallery-specific bits — which item to
+  // show, where to POST/DELETE, what field name the upload goes under, how
+  // to refresh afterward — all come from `ctx` instead of being assumed.
+  function openCaptionsModalFor(ctx) {
+    captionsVideoId = null; captionsCtx = ctx;
+    $('caption-upload-status').textContent = ''; $('caption-file-input').value = '';
+    captionLangSelect.value = CAPTION_LANGUAGES[0].code; $('caption-custom-lang-label').style.display = 'none';
+    $('caption-custom-code').value = ''; $('caption-custom-label').value = '';
+    $('captions-modal-title').textContent = ctx.title || '';
+    renderCaptionsList();
+    $('captions-modal').hidden = false;
+  }
   function renderCaptionsList() {
-    const item = contentItems.find(v => v.id === captionsVideoId);
+    const item = captionsCtx ? captionsCtx.getItem() : contentItems.find(v => v.id === captionsVideoId);
     const captions = (item && item.captions) || [];
     const el = $('captions-list');
     if (!captions.length) { el.innerHTML = `<p class="setting-hint">No captions yet.</p>`; return; }
     el.innerHTML = captions.map(c => `<div class="editable-row"><span class="er-key">${escapeHtml(c.label || c.lang)} <span style="color:var(--text-5);">(${escapeHtml(c.lang)})</span></span><button class="btn-icon caption-track-remove" data-lang="${escapeHtml(c.lang)}">×</button></div>`).join('');
   }
-  $('captions-close-btn').addEventListener('click', () => { $('captions-modal').hidden = true; captionsVideoId = null; });
-  $('captions-modal').querySelector('.modal-backdrop').addEventListener('click', () => { $('captions-modal').hidden = true; });
+  $('captions-close-btn').addEventListener('click', () => { $('captions-modal').hidden = true; captionsVideoId = null; captionsCtx = null; });
+  $('captions-modal').querySelector('.modal-backdrop').addEventListener('click', () => { $('captions-modal').hidden = true; captionsVideoId = null; captionsCtx = null; });
   $('captions-list').addEventListener('click', async (e) => {
-    const btn = e.target.closest('.caption-track-remove'); if (!btn || !captionsVideoId) return;
+    const btn = e.target.closest('.caption-track-remove'); if (!btn || (!captionsVideoId && !captionsCtx)) return;
     const lang = btn.dataset.lang;
     if (!await confirmModal({ title: 'Remove caption', message: `Remove the "${lang}" caption track?`, okText: 'Remove', danger: true })) return;
-    const res = await fetch(`/api/admin/galleries/${contentGid}/videos/${captionsVideoId}/captions/${encodeURIComponent(lang)}`, { method: 'DELETE' });
-    if (res.ok) { await loadContent(); renderCaptionsList(); } else $('caption-upload-status').textContent = 'Could not remove caption.';
+    const url = captionsCtx ? `${captionsCtx.deleteBase}/${encodeURIComponent(lang)}` : `/api/admin/client/galleries/${contentGid}/items/${captionsVideoId}/captions/${encodeURIComponent(lang)}`;
+    const res = await fetch(url, { method: 'DELETE' });
+    if (res.ok) { if (captionsCtx) await captionsCtx.onChange(); else await loadContent(); renderCaptionsList(); }
+    else $('caption-upload-status').textContent = 'Could not remove caption.';
+  });
+  const captionDrop = $('caption-drop');
+  captionDrop.addEventListener('dragover', (e) => { e.preventDefault(); captionDrop.classList.add('drag-over'); });
+  captionDrop.addEventListener('dragleave', () => captionDrop.classList.remove('drag-over'));
+  captionDrop.addEventListener('drop', (e) => {
+    e.preventDefault(); captionDrop.classList.remove('drag-over');
+    const file = Array.from(e.dataTransfer.files).find(f => /\.(vtt|srt)$/i.test(f.name));
+    if (!file) { $('caption-upload-status').textContent = 'Only .vtt or .srt files are supported.'; return; }
+    const dt = new DataTransfer(); dt.items.add(file);
+    $('caption-file-input').files = dt.files;
+    $('caption-upload-status').textContent = file.name + ' ready — choose a language and click Add Caption.';
   });
   $('caption-upload-btn').addEventListener('click', async () => {
-    if (!captionsVideoId) return;
+    if (!captionsVideoId && !captionsCtx) return;
     const file = $('caption-file-input').files[0];
-    if (!file) { $('caption-upload-status').textContent = 'Choose a .vtt file first.'; return; }
+    if (!file) { $('caption-upload-status').textContent = 'Choose a .vtt or .srt file first.'; return; }
     let lang, label;
     if (captionLangSelect.value === '__custom__') {
       lang = $('caption-custom-code').value.trim().toLowerCase(); label = $('caption-custom-label').value.trim();
       if (!/^[a-z]{2,3}(-[a-z]{2,4})?$/.test(lang)) { $('caption-upload-status').textContent = 'Enter a valid code (e.g. en or pt-br).'; return; }
     } else { lang = captionLangSelect.value; const k = CAPTION_LANGUAGES.find(l => l.code === lang); label = k ? k.label : lang.toUpperCase(); }
-    const fd = new FormData(); fd.append('caption', file); fd.append('lang', lang); fd.append('label', label);
+    const fd = new FormData(); fd.append(captionsCtx ? captionsCtx.fileField : 'caption', file); fd.append('lang', lang); fd.append('label', label);
     $('caption-upload-status').textContent = 'Uploading…';
-    const res = await fetch(`/api/admin/galleries/${contentGid}/videos/${captionsVideoId}/captions`, { method: 'POST', body: fd });
-    if (res.ok) { $('caption-file-input').value = ''; $('caption-upload-status').textContent = 'Caption added.'; await loadContent(); renderCaptionsList(); }
-    else { const e = await res.json().catch(() => ({})); $('caption-upload-status').textContent = e.error || 'Upload failed.'; }
+    const url = captionsCtx ? captionsCtx.uploadUrl : `/api/admin/client/galleries/${contentGid}/items/${captionsVideoId}/captions`;
+    const res = await fetch(url, { method: 'POST', body: fd });
+    if (res.ok) {
+      $('caption-file-input').value = ''; $('caption-upload-status').textContent = 'Caption added.';
+      if (captionsCtx) await captionsCtx.onChange(); else await loadContent();
+      renderCaptionsList();
+    } else { const e = await res.json().catch(() => ({})); $('caption-upload-status').textContent = e.error || 'Upload failed.'; }
   });
 
   // ==========================================================================
@@ -2129,7 +2715,7 @@ document.addEventListener('DOMContentLoaded', () => {
     listEl.innerHTML = '<p class="import-loading">Scanning…</p>';
     $('import-select-all').checked = false; $('import-confirm-btn').disabled = true;
     try {
-      const res = await fetch('/api/admin/import/files');
+      const res = await fetch('/api/admin/client/import/files');
       if (!res.ok) throw new Error('scan failed');
       const data = await res.json();
       $('import-path').textContent = data.path;
@@ -2150,7 +2736,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!filenames.length) return;
     $('import-confirm-btn').disabled = true; $('import-confirm-btn').textContent = 'Importing…';
     try {
-      const res = await fetch(`/api/admin/galleries/${contentGid}/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filenames }) });
+      const res = await fetch(`/api/admin/client/galleries/${contentGid}/import`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filenames }) });
       const data = await res.json();
       if (data.imported && data.imported.length) { importModal.hidden = true; if (contentGid === state.drawer.galleryId) loadContent(); refreshCountsSoon(); toast(`Imported ${data.imported.length}`); }
       if (data.errors && data.errors.length) toast('Some files failed to import');
@@ -2199,12 +2785,17 @@ document.addEventListener('DOMContentLoaded', () => {
   function openNewGallery(collectionId) {
     const modal = $('new-gallery-modal');
     $('ng-name').value = 'Client Gallery';
+    // This dialog only makes client galleries. A portfolio collection left over
+    // from before the portfolio moved to folders can't hold one, and offering it
+    // would leave no type selected, so it is ignored rather than preselected.
     const preCol = collectionId ? state.collections.find(c => c.id === collectionId) : null;
-    const initialType = preCol ? (preCol.type || 'proofing') : 'proofing';
+    const initialType = 'proofing';
+    if (preCol && (preCol.type || 'proofing') !== 'proofing') collectionId = '';
     modal.querySelectorAll('input[name="ng-type"]').forEach(r => r.checked = r.value === initialType);
     populateNgCollections(initialType, collectionId);
     ngState = { downloads: false, commenting: false, useCollection: true };
     $('ng-password').value = ''; $('ng-password').placeholder = 'No password';
+    $('ng-folder').value = '';
     $('ng-expires').value = '';
     $('ng-downloads').classList.remove('on'); $('ng-commenting').classList.remove('on');
     updateNgSettingsUI();
@@ -2217,15 +2808,23 @@ document.addEventListener('DOMContentLoaded', () => {
     populateNgCollections(r.value);
     updateNgSettingsUI();
   }));
-  $('ng-collection').addEventListener('change', () => { ngState.useCollection = true; updateNgSettingsUI(); });
+  $('ng-collection').addEventListener('change', () => {
+    // Picking a collection normally means "inherit its settings". But if the
+    // toggles were already switched on, that was a deliberate choice — keep it
+    // by overriding instead of hiding the fields and silently dropping it.
+    ngState.useCollection = !(ngState.downloads || ngState.commenting);
+    updateNgSettingsUI();
+  });
   $('ng-use-collection').addEventListener('click', () => { ngState.useCollection = !ngState.useCollection; updateNgSettingsUI(); });
   $('ng-downloads').addEventListener('click', () => { ngState.downloads = !ngState.downloads; $('ng-downloads').classList.toggle('on'); });
   $('ng-commenting').addEventListener('click', () => { ngState.commenting = !ngState.commenting; $('ng-commenting').classList.toggle('on'); });
   $('ng-create').addEventListener('click', async () => {
     const name = $('ng-name').value.trim(); if (!name) { $('ng-name').focus(); return; }
-    const type = document.querySelector('input[name="ng-type"]:checked').value;
+    const type = 'proofing';
     const colId = $('ng-collection').value;
     const body = { name, type };
+    const folder = $('ng-folder').value.trim();
+    if (folder) body.importFolder = folder;
     if (type === 'proofing' && (!colId || !ngState.useCollection)) {
       body.overrideCollectionSettings = !!colId;
       const pw = $('ng-password').value.trim();
@@ -2234,15 +2833,26 @@ document.addEventListener('DOMContentLoaded', () => {
       body.commentingEnabled = ngState.commenting;
       body.expiresAt = $('ng-expires').value ? new Date($('ng-expires').value + 'T23:59:59').toISOString() : null;
     }
+    const res = await fetch('/api/admin/client/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!res.ok) {
+      // Keep the modal open so a bad folder name can be fixed without retyping the rest.
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) { checkAuth(); return; }
+      toast(data.error || `Create failed (HTTP ${res.status})`);
+      return;
+    }
     $('new-gallery-modal').hidden = true;
-    const res = await fetch('/api/galleries', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!res.ok) { toast('Create failed'); return; }
     const g = await res.json();
+    let filed = true;
     if (colId) {
       const col = state.collections.find(c => c.id === colId);
-      if (col) await fetch(`/api/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(col.galleryIds || []), g.id] }) });
+      if (col) {
+        const put = await fetch(`/api/admin/client/collections/${colId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ galleryIds: [...(col.galleryIds || []), g.id] }) });
+        filed = put.ok;
+      }
     }
     await loadData(); renderAll(); openGallery(g.id);
+    if (!filed) { toast('Gallery created, but it could not be added to the collection'); return; }
     toast('Gallery created');
   });
 
@@ -2358,7 +2968,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('nc-regen').addEventListener('click', async () => {
     if (!ncEditingId) return;
     if (!await confirmModal({ title: 'Regenerate link', message: 'This replaces the link with a new one, and anyone you have already sent the current link to will get "not found". Write the current link down first — Edit can put it back.', okText: 'Regenerate', danger: true })) return;
-    const res = await fetch(`/api/collections/${ncEditingId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regenerateToken: true }) });
+    const res = await fetch(`/api/admin/client/collections/${ncEditingId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ regenerateToken: true }) });
     if (!res.ok) { toast('Regenerate failed'); return; }
     await loadData();
     const col = state.collections.find(c => c.id === ncEditingId);
@@ -2370,7 +2980,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!ncEditingId) return;
     const col = state.collections.find(c => c.id === ncEditingId);
     if (!await confirmModal({ title: 'Delete collection', message: `Delete "${col ? col.name : 'this collection'}"? Galleries inside it are kept, just ungrouped.`, okText: 'Delete', danger: true })) return;
-    const res = await fetch(`/api/collections/${ncEditingId}`, { method: 'DELETE' });
+    const res = await fetch(`/api/admin/client/collections/${ncEditingId}`, { method: 'DELETE' });
     if (!res.ok) { toast('Delete failed'); return; }
     ncModal.hidden = true;
     if (state.rail === ncEditingId) state.rail = 'all';
@@ -2393,7 +3003,7 @@ document.addEventListener('DOMContentLoaded', () => {
       else if (ncEditingId && ncClearPassword) body.password = '';
     }
 
-    const url = ncEditingId ? `/api/collections/${ncEditingId}` : '/api/collections';
+    const url = ncEditingId ? `/api/admin/client/collections/${ncEditingId}` : '/api/admin/client/collections';
     const method = ncEditingId ? 'PUT' : 'POST';
     const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) { toast(ncEditingId ? 'Save failed' : 'Create failed'); return; }
@@ -2436,7 +3046,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     try {
       const [packages, email] = await Promise.all([
-        fetch('/api/admin/packages?sourceId=' + encodeURIComponent(sourceId)).then(r => r.ok ? r.json() : []),
+        fetch('/api/admin/client/packages?sourceId=' + encodeURIComponent(sourceId)).then(r => r.ok ? r.json() : []),
         fetch('/api/settings/email').then(r => r.ok ? r.json() : {}),
       ]);
       pkgEmailConfigured = !!email.configured;
@@ -2465,7 +3075,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function createPackage() {
-    const res = await fetch('/api/admin/packages', {
+    const res = await fetch('/api/admin/client/packages', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sourceType: pkgSource.type, sourceId: pkgSource.id }),
     });
@@ -2516,11 +3126,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // With no recipients this just stores the note for the download page.
     const res = to
-      ? await fetch(`/api/admin/packages/${pkgCurrent.id}/email`, {
+      ? await fetch(`/api/admin/client/packages/${pkgCurrent.id}/email`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ to, message }),
         })
-      : await fetch(`/api/admin/packages/${pkgCurrent.id}`, {
+      : await fetch(`/api/admin/client/packages/${pkgCurrent.id}`, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ message }),
         });
@@ -2558,7 +3168,7 @@ document.addEventListener('DOMContentLoaded', () => {
       message: 'The link stops working immediately. Your files are not touched.',
       okText: 'Revoke', danger: true,
     })) return;
-    await fetch(`/api/admin/packages/${pkgCurrent.id}`, { method: 'DELETE' });
+    await fetch(`/api/admin/client/packages/${pkgCurrent.id}`, { method: 'DELETE' });
     pkgCurrent = null;
     pkgModal.hidden = true;
     toast('Link revoked');
@@ -2682,7 +3292,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function saveShareToken(kind, id, token) {
     let res;
     try {
-      res = await fetch(`/api/${kind}/${id}`, {
+      res = await fetch(`/api/admin/client/${kind}/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token }),
@@ -2696,45 +3306,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // ==========================================================================
-  // Settings screen (ported panels)
+  // Modals shared by the Portfolio screen's Email and API pages. The actual
+  // field editing for Email/Update/API lives there now (its own rail rows,
+  // same as Site design) — these two stay here only because the modals
+  // themselves are global DOM, outside any one screen.
   // ==========================================================================
-  let settingsLoaded = { email: false, header: false };
-  function openSettings() {
-    switchSettingsTab('email');
-  }
-  document.querySelectorAll('.settings-tab').forEach(tab => tab.addEventListener('click', () => switchSettingsTab(tab.dataset.settingsTab)));
-  function switchSettingsTab(name) {
-    document.querySelectorAll('.settings-tab').forEach(t => t.classList.toggle('active', t.dataset.settingsTab === name));
-    document.querySelectorAll('.settings-tab-content').forEach(c => c.hidden = c.id !== 'settings-tab-' + name);
-    if (name === 'email' && !settingsLoaded.email) { loadEmailSettings(); settingsLoaded.email = true; }
-    if (name === 'update') { checkForUpdates(); loadVideoToolsStatus(); }
-    if (name === 'header' && !settingsLoaded.header) { loadHeaderConfig(); settingsLoaded.header = true; }
-    if (name === 'api') loadApiTokenState();
-  }
-
-  // --- Email ---
-  async function loadEmailSettings() {
-    const res = await fetch('/api/settings/email'); if (!res.ok) return;
-    const c = await res.json();
-    $('resend-api-key').value = c.resendApiKey || ''; $('smtp-host').value = c.host || '';
-    $('smtp-port').value = c.port || 587; $('smtp-secure').checked = !!c.secure;
-    $('smtp-user').value = c.user || ''; $('smtp-pass').value = c.pass || '';
-    $('smtp-from').value = c.from || ''; $('smtp-admin-email').value = c.adminEmail || ''; $('smtp-base-url').value = c.baseUrl || '';
-  }
-  $('save-email-btn').addEventListener('click', async () => {
-    const body = { resendApiKey: $('resend-api-key').value, host: $('smtp-host').value, port: $('smtp-port').value, secure: $('smtp-secure').checked, user: $('smtp-user').value, pass: $('smtp-pass').value, from: $('smtp-from').value, adminEmail: $('smtp-admin-email').value, baseUrl: $('smtp-base-url').value };
-    const res = await fetch('/api/settings/email', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const s = $('email-status');
-    if (res.ok) { s.textContent = 'Settings saved.'; s.className = 'email-status success'; } else { s.textContent = 'Failed to save.'; s.className = 'email-status error'; }
-    setTimeout(() => { s.textContent = ''; s.className = 'email-status'; }, 4000);
-  });
-  $('test-email-btn').addEventListener('click', async () => {
-    const s = $('email-status'); s.textContent = 'Sending test email…';
-    const res = await fetch('/api/settings/email/test', { method: 'POST' }); s.textContent = '';
-    if (res.ok) showEmailResult('success', 'Email Test Succeeded', 'Test email sent! Check your inbox.');
-    else { const d = await res.json().catch(() => ({})); showEmailResult('error', 'Email Test Failed', d.error || 'Failed to send test email.'); }
-  });
-  function showEmailResult(type, title, msg) {
+  function showEmailTestResult(type, title, msg) {
     $('email-result-title').textContent = title;
     $('email-result-title').style.color = type === 'error' ? 'var(--danger)' : '#4caf50';
     $('email-result-text').textContent = msg;
@@ -2745,210 +3322,158 @@ document.addEventListener('DOMContentLoaded', () => {
   $('email-result-modal').querySelector('.modal-backdrop').addEventListener('click', () => $('email-result-modal').hidden = true);
   $('email-result-copy-btn').addEventListener('click', () => { navigator.clipboard.writeText($('email-result-text').textContent); $('email-result-copy-btn').textContent = 'Copied!'; setTimeout(() => $('email-result-copy-btn').textContent = 'Copy Error', 1800); });
 
-  // --- Update ---
-  let updateChecked = false;
-  async function checkForUpdates() {
-    if (updateChecked) return;
-    const loading = $('update-loading'), info = $('update-info');
-    loading.style.display = ''; info.hidden = true;
-    try {
-      const data = await (await fetch('/api/settings/update')).json();
-      if (data.checkError) { loading.textContent = `Update check failed: ${data.checkError}`; return; }
-      $('update-local-version').textContent = data.localVersion || 'unknown';
-      $('update-local-commit').textContent = data.localCommit ? `(${data.localCommit})` : '';
-      if (data.updateAvailable) {
-        $('update-available-section').hidden = false; $('update-current-section').hidden = true;
-        $('update-remote-version').textContent = data.remoteVersion || '';
-        $('update-remote-commit').textContent = data.remoteCommit ? `(${data.remoteCommit})` : '';
-        if (data.releaseUrl) { const link = $('update-release-link'); link.href = data.releaseUrl; link.hidden = false; }
-        if (data.commitLog) { $('update-commit-log').hidden = false; $('update-commits').textContent = data.commitLog; }
-        if (data.changelog) {
-          $('update-changelog-section').hidden = false;
-          $('update-changelog-label').textContent = data.mode === 'release' ? 'Release Notes' : 'Changelog';
-          $('update-changelog').textContent = data.changelog;
-        }
-      } else { $('update-available-section').hidden = true; $('update-current-section').hidden = false; }
-      if (!data.enabled) $('deploy-btn').style.display = 'none';
-    } catch (_) { loading.textContent = 'Failed to check for updates.'; return; }
-    loading.style.display = 'none'; info.hidden = false; updateChecked = true;
+  function showApiTokenModal(token) {
+    // The address the API answers on, which is where this admin is open.
+    $('api-url-reveal-input').value = location.origin;
+    $('api-token-reveal-input').value = token;
+    $('api-token-modal').hidden = false;
+    $('api-token-reveal-input').focus();
+    $('api-token-reveal-input').select();
   }
-  $('deploy-btn').addEventListener('click', async () => {
-    if (!await confirmModal({ title: 'Update', message: 'Update to the latest version?' })) return;
-    const btn = $('deploy-btn'); btn.disabled = true; btn.textContent = 'Updating…';
-    const s = $('deploy-status'); s.textContent = '';
-    try {
-      const res = await fetch('/api/settings/deploy', { method: 'POST' }); const d = await res.json();
-      if (res.ok) { s.textContent = d.message || 'Update successful!'; s.style.color = '#4caf50'; setTimeout(() => location.reload(), 1500); }
-      else { s.textContent = d.error || 'Update failed.'; s.style.color = 'var(--danger)'; btn.disabled = false; btn.textContent = 'Update to Latest Version'; }
-    } catch (e) { s.textContent = 'Network error.'; s.style.color = 'var(--danger)'; btn.disabled = false; btn.textContent = 'Update to Latest Version'; }
-  });
-  async function loadVideoToolsStatus() {
-    const statusEl = $('video-tools-status'), btn = $('install-ffmpeg-btn');
-    statusEl.textContent = 'Checking…';
-    try {
-      const data = await (await fetch('/api/admin/video-tools/status')).json();
-      if (data.ffmpeg && data.ffprobe) { statusEl.textContent = '✅ Installed' + (data.version ? ' (ffmpeg ' + data.version + ')' : '') + ' — embedded captions are extracted automatically.'; btn.textContent = 'Reinstall Video Tools'; }
-      else { statusEl.textContent = '⚠️ Not installed — captions baked into MP4s won’t be extracted until installed.'; btn.textContent = 'Install Video Tools'; }
-      btn.disabled = false;
-    } catch (e) { statusEl.textContent = 'Could not check status.'; btn.disabled = false; }
-  }
-  $('install-ffmpeg-btn').addEventListener('click', async () => {
-    if (!await confirmModal({ title: 'Install video tools', message: 'Download and install a static ffmpeg build on the server? This can take a minute.' })) return;
-    const btn = $('install-ffmpeg-btn'), resultEl = $('video-tools-result'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Installing…'; resultEl.textContent = '';
-    try {
-      const res = await fetch('/api/admin/video-tools/install', { method: 'POST' }); const d = await res.json();
-      if (res.ok && d.ok) { resultEl.textContent = '✅ Installed' + (d.status && d.status.version ? ' ffmpeg ' + d.status.version : '') + '.'; resultEl.style.color = '#4caf50'; }
-      else { resultEl.textContent = (d && d.error) || 'Install failed.'; resultEl.style.color = 'var(--danger)'; }
-    } catch (e) { resultEl.textContent = 'Network error.'; resultEl.style.color = 'var(--danger)'; }
-    btn.textContent = orig; loadVideoToolsStatus();
-  });
-
-  // --- Header config ---
-  let headerConfig = null;
-  async function loadHeaderConfig() {
-    try { headerConfig = await (await fetch('/api/header')).json(); populateHeaderForm(); }
-    catch (e) { $('header-status').textContent = 'Failed to load header config.'; }
-  }
-  function populateHeaderForm() {
-    if (!headerConfig) return;
-    const logo = headerConfig.logo || {};
-    const brandEl = $('brand-mast');
-    brandEl.classList.toggle('is-link', !logo.text);
-    if (logo.text) {
-      brandEl.textContent = logo.text;
-      brandEl.onclick = null;
-    } else {
-      brandEl.textContent = 'Set in Settings';
-      brandEl.onclick = (e) => { e.stopPropagation(); setScreen('settings'); switchSettingsTab('header'); };
-    }
-    document.title = (headerConfig.siteName || logo.text || 'Show & Deliver') + ' — Admin';
-    $('header-site-name').value = headerConfig.siteName || '';
-    $('header-logo-text').value = logo.text || '';
-    if (logo.src) { const p = $('header-logo-preview'); p.src = logo.src; p.style.display = ''; $('header-logo-none').style.display = 'none'; $('header-logo-remove').style.display = ''; }
-    $('header-logo-alt').value = logo.alt || ''; $('header-logo-link').value = logo.link || '';
-    $('header-email').value = headerConfig.email || ''; $('header-phone').value = headerConfig.phone || ''; $('header-tagline').value = headerConfig.tagline || '';
-    renderNavItems(headerConfig.nav || []);
-  }
-  function renderNavItems(nav) {
-    const list = $('header-nav-list'); list.innerHTML = '';
-    nav.forEach((item) => {
-      const el = document.createElement('div'); el.className = 'header-nav-item';
-      if (item.type === 'link') {
-        el.innerHTML = `<div class="header-nav-item-row">
-          <span class="drag-handle">≡</span>
-          <input type="text" class="setting-input nav-label" value="${escapeHtml(item.label || '')}" placeholder="Label" style="width:150px;">
-          <input type="text" class="setting-input nav-url" value="${escapeHtml(item.url || '')}" placeholder="URL" style="flex:1;">
-          <label class="toggle-label" style="font-size:12px;white-space:nowrap;"><input type="checkbox" class="nav-external" ${item.external ? 'checked' : ''}> New tab</label>
-          <button class="btn-icon nav-delete">×</button></div>`;
-      } else {
-        const children = (item.children || []).map(ch => `<div class="header-nav-child-row"><span style="width:24px;"></span><input type="text" class="setting-input child-label" value="${escapeHtml(ch.label || '')}" placeholder="Label" style="width:150px;"><input type="text" class="setting-input child-url" value="${escapeHtml(ch.url || '')}" placeholder="URL" style="flex:1;"><button class="btn-icon child-delete">×</button></div>`).join('');
-        el.innerHTML = `<div class="header-nav-item-row">
-          <span class="drag-handle">≡</span>
-          <input type="text" class="setting-input nav-label" value="${escapeHtml(item.label || '')}" placeholder="Dropdown label" style="width:150px;">
-          <span class="setting-hint" style="flex:1;">Dropdown menu</span>
-          <button class="btn-icon nav-add-child">+</button>
-          <button class="btn-icon nav-delete">×</button></div>
-          <div class="header-nav-children">${children}</div>`;
-      }
-      list.appendChild(el);
-    });
-  }
-  function collectNav() {
-    const items = [];
-    document.querySelectorAll('.header-nav-item').forEach(el => {
-      const label = el.querySelector('.nav-label').value.trim();
-      const urlInput = el.querySelector('.nav-url');
-      if (urlInput) items.push({ type: 'link', label, url: urlInput.value.trim(), external: el.querySelector('.nav-external')?.checked || false });
-      else {
-        const children = [];
-        el.querySelectorAll('.header-nav-child-row').forEach(r => { const cl = r.querySelector('.child-label').value.trim(); const cu = r.querySelector('.child-url').value.trim(); if (cl || cu) children.push({ label: cl, url: cu }); });
-        items.push({ type: 'dropdown', label, children });
-      }
-    });
-    return items;
-  }
-  $('header-add-link').addEventListener('click', () => { const nav = collectNav(); nav.push({ type: 'link', label: '', url: '', external: false }); renderNavItems(nav); });
-  $('header-add-dropdown').addEventListener('click', () => { const nav = collectNav(); nav.push({ type: 'dropdown', label: '', children: [{ label: '', url: '' }] }); renderNavItems(nav); });
-  $('header-nav-list').addEventListener('click', (e) => {
-    if (e.target.closest('.nav-delete')) e.target.closest('.header-nav-item').remove();
-    else if (e.target.closest('.child-delete')) e.target.closest('.header-nav-child-row').remove();
-    else if (e.target.closest('.nav-add-child')) {
-      const c = e.target.closest('.header-nav-item').querySelector('.header-nav-children');
-      const row = document.createElement('div'); row.className = 'header-nav-child-row';
-      row.innerHTML = `<span style="width:24px;"></span><input type="text" class="setting-input child-label" placeholder="Label" style="width:150px;"><input type="text" class="setting-input child-url" placeholder="URL" style="flex:1;"><button class="btn-icon child-delete">×</button>`;
-      c.appendChild(row);
-    }
-  });
-  $('header-logo-file').addEventListener('change', async (e) => {
-    const file = e.target.files[0]; if (!file) return;
-    const fd = new FormData(); fd.append('logo', file);
-    $('header-status').textContent = 'Uploading logo…';
-    const res = await fetch('/api/settings/header/logo', { method: 'POST', body: fd }); const d = await res.json();
-    if (res.ok) { const p = $('header-logo-preview'); p.src = d.src + '?t=' + Date.now(); p.style.display = ''; $('header-logo-none').style.display = 'none'; $('header-logo-remove').style.display = ''; $('header-status').textContent = 'Logo uploaded.'; }
-    else $('header-status').textContent = d.error || 'Upload failed.';
-  });
-  $('header-logo-remove').addEventListener('click', () => { $('header-logo-preview').src = ''; $('header-logo-preview').style.display = 'none'; $('header-logo-none').style.display = ''; $('header-logo-remove').style.display = 'none'; $('header-logo-file').value = ''; });
-  $('save-header-btn').addEventListener('click', async () => {
-    const preview = $('header-logo-preview');
-    const logoSrc = (preview.style.display !== 'none' && preview.getAttribute('src')) ? preview.getAttribute('src') : '';
-    const config = { siteName: $('header-site-name').value.trim(), logo: { src: logoSrc, text: $('header-logo-text').value.trim(), alt: $('header-logo-alt').value.trim(), link: $('header-logo-link').value.trim(), height: 74 }, email: $('header-email').value.trim(), phone: $('header-phone').value.trim(), tagline: $('header-tagline').value.trim(), nav: collectNav() };
-    $('header-status').textContent = 'Saving…';
-    const res = await fetch('/api/settings/header', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
-    if (res.ok) { $('header-status').textContent = 'Header saved.'; $('header-status').style.color = '#4caf50'; }
-    else { const d = await res.json().catch(() => ({})); $('header-status').textContent = d.error || 'Save failed.'; $('header-status').style.color = 'var(--danger)'; }
-  });
-
-  // --- API token ---
-  async function loadApiTokenState() {
-    $('api-token-loading').style.display = ''; $('api-token-env-state').hidden = true; $('api-token-state').hidden = true; $('api-token-status').textContent = '';
-    try {
-      const info = await (await fetch('/api/settings/api-token')).json();
-      $('api-token-loading').style.display = 'none';
-      if (info.envManaged) { $('api-token-env-state').hidden = false; return; }
-      $('api-token-state').hidden = false;
-      if (info.hasToken) { $('api-token-status-text').textContent = 'An API token is active.'; $('api-token-generate-btn').style.display = 'none'; $('api-token-regenerate-btn').style.display = ''; $('api-token-revoke-btn').style.display = ''; }
-      else { $('api-token-status-text').textContent = 'No API token is set.'; $('api-token-generate-btn').style.display = ''; $('api-token-regenerate-btn').style.display = 'none'; $('api-token-revoke-btn').style.display = 'none'; }
-    } catch (e) { $('api-token-loading').textContent = 'Could not load API token state.'; }
-  }
-  async function generateApiToken(rotate) {
-    if (rotate && !await confirmModal({ title: 'Rotate token', message: 'Any client using the old token will get 401 errors.' })) return;
-    $('api-token-status').textContent = 'Generating…';
-    try {
-      const res = await fetch('/api/settings/api-token', { method: 'POST' }); const d = await res.json();
-      if (!res.ok) { $('api-token-status').textContent = d.error || 'Error'; return; }
-      $('api-token-status').textContent = '';
-      $('api-token-reveal-input').value = d.token; $('api-token-modal').hidden = false;
-      $('api-token-reveal-input').focus(); $('api-token-reveal-input').select();
-      loadApiTokenState();
-    } catch (e) { $('api-token-status').textContent = 'Network error.'; }
-  }
-  $('api-token-generate-btn').addEventListener('click', () => generateApiToken(false));
-  $('api-token-regenerate-btn').addEventListener('click', () => generateApiToken(true));
-  $('api-token-revoke-btn').addEventListener('click', async () => {
-    if (!await confirmModal({ title: 'Revoke token', message: 'Any client using it will immediately get 401 errors.', okText: 'Revoke', danger: true })) return;
-    const res = await fetch('/api/settings/api-token', { method: 'DELETE' });
-    if (res.ok) { $('api-token-status').textContent = 'Token revoked.'; loadApiTokenState(); }
-  });
+  $('api-url-copy-btn').addEventListener('click', () => { navigator.clipboard.writeText($('api-url-reveal-input').value); $('api-url-copy-btn').textContent = 'Copied!'; setTimeout(() => $('api-url-copy-btn').textContent = 'Copy', 1500); });
   $('api-token-copy-btn').addEventListener('click', () => { navigator.clipboard.writeText($('api-token-reveal-input').value); $('api-token-copy-btn').textContent = 'Copied!'; setTimeout(() => $('api-token-copy-btn').textContent = 'Copy', 1500); });
   $('api-token-modal-done-btn').addEventListener('click', () => { $('api-token-modal').hidden = true; $('api-token-reveal-input').value = ''; });
+
+  // --- Header config ---
+  // Full editing (logo, contact info, nav links) lives in the Portfolio
+  // screen's Site design panel now; this just keeps the top-left brand
+  // wordmark and the document title in sync with it.
+  async function loadHeaderConfig() {
+    try {
+      const headerConfig = await (await fetch('/api/header')).json();
+      const logo = headerConfig.logo || {};
+      const brandEl = $('brand-mast');
+      brandEl.classList.toggle('is-link', !logo.text);
+      if (logo.text) {
+        brandEl.textContent = logo.text;
+        brandEl.onclick = null;
+      } else {
+        brandEl.textContent = 'Set in Site design';
+        brandEl.onclick = (e) => { e.stopPropagation(); setScreen('portfolio'); window.SDPortfolio?.openDesign(); };
+      }
+      document.title = (headerConfig.siteName || logo.text || 'Show & Deliver') + ' — Admin';
+    } catch (e) { /* the top-left brand just keeps its default until the next load */ }
+  }
 
   // ==========================================================================
   // Narrow-screen rail toggle
   // ==========================================================================
+  // The rail of whichever tab is showing slides over the content below 1100px,
+  // with a scrim behind it that closes it again.
+  function activeRail() { return state.screen === 'portfolio' ? $('pfa-rail') : $('rail'); }
+  function setRailOpen(open) {
+    const narrow = window.innerWidth < 1100;
+    ['rail', 'pfa-rail'].forEach(id => $(id).classList.toggle('open', narrow && open && $(id) === activeRail()));
+    let scrim = $('rail-scrim');
+    if (narrow && open) {
+      if (!scrim) {
+        scrim = document.createElement('div');
+        scrim.id = 'rail-scrim';
+        scrim.className = 'rail-scrim';
+        scrim.addEventListener('click', () => setRailOpen(false));
+        document.body.appendChild(scrim);
+      }
+    } else if (scrim) scrim.remove();
+  }
+  // Account links collapse into a ⋯ menu on phones. The items just press the
+  // real buttons, so their handlers (and labels, like the theme toggle) stay put.
+  const MORE_ITEMS = ['nav-uploads', 'account-theme', 'account-password', 'account-logout'];
+  function ensureMoreMenu() {
+    if ($('more-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.id = 'more-wrap'; wrap.className = 'menu-wrap';
+    wrap.innerHTML = '<button type="button" class="account-btn" id="more-btn" aria-label="More" aria-haspopup="true" style="width:38px;height:38px;">&#8943;</button><div class="menu" id="more-menu" hidden></div>';
+    const menu = wrap.querySelector('#more-menu');
+    wrap.querySelector('#more-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!menu.hidden) { menu.hidden = true; return; }
+      menu.innerHTML = '';
+      MORE_ITEMS.forEach(id => {
+        const src = $(id);
+        if (!src || src.hidden) return;
+        const b = document.createElement('button');
+        b.textContent = src.textContent.trim();
+        b.addEventListener('click', () => { menu.hidden = true; src.click(); });
+        menu.appendChild(b);
+      });
+      menu.hidden = false;
+    });
+    document.addEventListener('click', () => { menu.hidden = true; });
+    const right = document.querySelector('.topbar-right');
+    right.insertBefore(wrap, right.querySelector('.menu-wrap'));
+  }
   function ensureRailToggle() {
     if ($('rail-toggle')) return;
     const btn = document.createElement('button');
     btn.id = 'rail-toggle'; btn.className = 'account-btn'; btn.textContent = '☰';
+    btn.setAttribute('aria-label', 'Menu');
     btn.style.marginRight = '4px';
-    btn.addEventListener('click', (e) => { e.stopPropagation(); $('rail').classList.toggle('open'); });
+    btn.addEventListener('click', (e) => { e.stopPropagation(); setRailOpen(!activeRail().classList.contains('open')); });
     document.querySelector('.topbar').insertBefore(btn, document.querySelector('.brand'));
+    // Picking something in the portfolio rail closes it (the library's rail does
+    // so in its own handlers); expanding a group or opening a link does not.
+    $('pfa-rail').addEventListener('click', (e) => {
+      if (window.innerWidth < 1100 && e.target.closest('.rail-row') && !e.target.closest('summary, .rail-twist, .rail-open')) setRailOpen(false);
+    });
   }
   function syncRailToggle() {
     const t = $('rail-toggle');
+    ensureMoreMenu();
     if (window.innerWidth < 1100) { ensureRailToggle(); if ($('rail-toggle')) $('rail-toggle').style.display = ''; }
-    else if (t) t.style.display = 'none';
+    else { if (t) t.style.display = 'none'; setRailOpen(false); }
   }
   window.addEventListener('resize', syncRailToggle);
+
+  // ==========================================================================
+  // Bridge for portfolio-admin.js
+  // ==========================================================================
+  // Everything in this file lives in one DOMContentLoaded closure, so the
+  // portfolio screen (a separate file) reaches the shared helpers through here.
+  window.SDAdmin = {
+    api,
+    toast,
+    copy: copyText,
+    prompt: promptModal,
+    confirm: confirmModal,
+    escapeHtml,
+    setScreen,
+    captureFrameAsJpegBlob,
+    openThumbPickerFor,
+    openCaptionsModalFor,
+    showEmailTestResult,
+    showApiTokenModal,
+    // One file straight into a portfolio folder, chunked like the upload queue
+    // but without the queue's screen: the portfolio editor has its own drop
+    // zone and shows progress per file.
+    async uploadToPortfolio(file, galleryId, onProgress) {
+      const init = await xhrSend({
+        method: 'POST', url: '/api/admin/uploads',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: file.name, totalSize: file.size, contentType: file.type || '' }),
+      });
+      const chunkBytes = Math.min(init.chunkMaxBytes || PREFERRED_CHUNK_BYTES, PREFERRED_CHUNK_BYTES);
+      let sent = 0;
+      while (sent < file.size) {
+        const start = sent;
+        const end = Math.min(start + chunkBytes, file.size) - 1;
+        const ack = await xhrSend({
+          method: 'PUT', url: `/api/admin/uploads/${init.uploadId}/chunk`,
+          headers: { 'Content-Range': `bytes ${start}-${end}/${file.size}`, 'Content-Type': 'application/octet-stream' },
+          body: file.slice(start, end + 1),
+          onProgress: (e) => {
+            if (e.lengthComputable && onProgress) onProgress(Math.round((start + e.loaded) / file.size * 100));
+          },
+        });
+        sent = typeof ack.received === 'number' ? ack.received : end + 1;
+        if (onProgress) onProgress(Math.round(sent / file.size * 100));
+      }
+      return await xhrSend({
+        method: 'POST', url: `/api/admin/uploads/${init.uploadId}/finalize`,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: 'portfolio', galleryId }),
+      });
+    },
+  };
 
   // ==========================================================================
   // Init

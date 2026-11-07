@@ -1,11 +1,19 @@
 RewriteEngine On
 RewriteBase /
 
-# Route pages to HTML files
-RewriteRule ^admin/?$ public/admin.html [L]
-RewriteRule ^gallery/.+$ public/proofing.html [L]
-RewriteRule ^collection/.+$ public/collection.html [L]
-RewriteRule ^d/.+$ public/download.html [L]
+# Route pages through index.php so their asset URLs are version-stamped with
+# each file's mtime at render time (see servePublicPage in index.php). Serving
+# public/*.html directly left the ?v= numbers hand-maintained, which silently
+# served stale scripts whenever one was missed. The page name rides in a server
+# env var, not the query string, so a client can't pick which page is rendered;
+# QSA keeps real query params (such as the portfolio's ?view=) intact.
+RewriteRule ^admin/?$ index.php [L,QSA,E=SD_PAGE:admin]
+RewriteRule ^gallery/.+$ index.php [L,QSA,E=SD_PAGE:proofing]
+RewriteRule ^collection/.+$ index.php [L,QSA,E=SD_PAGE:collection]
+RewriteRule ^d/.+$ index.php [L,QSA,E=SD_PAGE:download]
+RewriteRule ^portfolio(/.*)?$ index.php [L,QSA,E=SD_PAGE:portfolio]
+RewriteRule ^p/.+$ index.php [L,QSA,E=SD_PAGE:page]
+RewriteRule ^$ index.php [L,QSA,E=SD_PAGE:index]
 
 # Anything that exists on disk is served directly, so the rules below deny what
 # must never leave the server. They sit before the /uploads/ etc. rewrites so a
@@ -19,10 +27,22 @@ RewriteRule (^|/)\.(?!well-known(/|$)) - [F]
 # the exact version, which tells an attacker which fixes a site is missing.
 RewriteRule ^[^/]+\.md$ - [F]
 
+# Deploy logs disclose the running version and deploy timing.
+RewriteRule ^[^/]+\.log$ - [F]
+
+# Local development tooling (tools/dev-router.php serves files under php -S).
+RewriteRule ^tools/ - [F]
+
 # site-data/ is an allowlist: only the media directories are public. data/
 # (password hash, sessions, secrets, share tokens), imports/ and packages/ are
 # all denied, as is anything added there later.
-RewriteRule ^site-data/(?!(uploads|thumbnails|proxies|captions|logo)/) - [F]
+RewriteRule ^site-data/(?!(uploads|thumbnails|proxies|captions|logo|portfolio)/) - [F]
+
+# Portfolio folders are filled over FTP, so they serve media and captions only:
+# a .php or .html dropped in must never run or render as a page. The second rule
+# catches double extensions (evil.php.jpg) that some handlers would execute.
+RewriteRule ^site-data/portfolio/(?!.*\.(jpe?g|png|webp|gif|mp4|webm|mov|m4v|vtt)$) - [F,NC]
+RewriteRule ^site-data/portfolio/.*\.(php\d?|phtml|phar|cgi|pl|py)(\.|$) - [F,NC]
 
 # No directory listings under site-data/, even where the host enables Indexes.
 # /uploads/ is rewritten to site-data/uploads/ and re-enters here, so this
@@ -31,12 +51,14 @@ RewriteRule ^site-data/(?!(uploads|thumbnails|proxies|captions|logo)/) - [F]
 RewriteCond %{REQUEST_FILENAME} -d
 RewriteRule ^site-data/ - [F]
 
-# Serve uploads, thumbnails, proxies, captions, and logo from site-data/
+# Serve uploads, thumbnails, proxies, captions, logo, and portfolio media
+# (/media/<Category>/<Gallery>/<file>) from site-data/
 RewriteRule ^uploads/(.*)$ site-data/uploads/$1 [L]
 RewriteRule ^thumbnails/(.*)$ site-data/thumbnails/$1 [L]
 RewriteRule ^proxies/(.*)$ site-data/proxies/$1 [L]
 RewriteRule ^captions/(.*)$ site-data/captions/$1 [L]
 RewriteRule ^logo/(.*)$ site-data/logo/$1 [L]
+RewriteRule ^media/(.*)$ site-data/portfolio/$1 [L]
 
 # Route /api/* to index.php
 RewriteCond %{REQUEST_FILENAME} !-f
@@ -61,8 +83,9 @@ php_value upload_max_filesize 500M
 php_value post_max_size 500M
 php_value max_execution_time 300
 
-# HTML must always be fresh so its versioned <script src="...?v=N"> tags
-# point at the current JS. Cached HTML keeps referencing old versions.
+# HTML is served by index.php (servePublicPage), which sets these headers itself
+# so its version-stamped asset URLs are never cached. Kept here as well for any
+# direct hit to /public/*.html that bypasses the page routes.
 <IfModule mod_headers.c>
   <FilesMatch "\.html$">
     Header set Cache-Control "no-cache, no-store, must-revalidate"

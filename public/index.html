@@ -6,8 +6,17 @@
   <title>Gallery</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/css/style.css?v=13">
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/css/style.css?v=0">
+  <link rel="stylesheet" href="/css/portfolio.css?v=0">
+  <link rel="stylesheet" href="/css/theme.css?v=0">
+  <link rel="modulepreload" href="/js/layouts.js?v=0">
+  <link rel="modulepreload" href="/vendor/photoswipe/photoswipe-lightbox.esm.min.js">
+  <link rel="preload" href="/api/header" as="fetch" crossorigin>
+  <link rel="preload" href="/api/portfolio/home" as="fetch" crossorigin>
+  <script src="/js/theme.js?v=0"></script>
+  <link rel="stylesheet" href="/vendor/photoswipe/photoswipe.css">
 </head>
 <body>
   <header class="site-header">
@@ -17,12 +26,13 @@
     <div class="mobile-nav-links"></div>
   </div>
 
-  <main class="container">
-    <div id="video-grid" class="video-grid"></div>
+  <main class="container pf-page">
+    <div id="portfolio"></div>
   </main>
 
-  <script src="/js/header.js?v=1"></script>
-  <script src="/js/caption-box.js?v=1"></script>
-  <script src="/js/public.js?v=8"></script>
+  <script src="/js/header.js?v=0"></script>
+  <script src="/js/caption-box.js?v=0"></script>
+  <script src="/js/media-stage.js?v=0"></script>
+  <script type="module" src="/js/portfolio.js?v=0"></script>
 </body>
 </html>

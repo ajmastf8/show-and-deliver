@@ -1,0 +1,736 @@
+// Folder-backed portfolio pages:
+//   /portfolio                 every category and its galleries
+//   /portfolio/<cat>           one category's galleries
+//   /portfolio/<cat>/<gallery> one gallery, in its chosen layout
+//
+// Layout maths live in layouts.js and the video player in media-stage.js. The
+// lightbox is PhotoSwipe (public/vendor/photoswipe), with video slides handled
+// here. A gallery set to the slideshow layout plays in place and has no lightbox.
+import PhotoSwipeLightbox from '/vendor/photoswipe/photoswipe-lightbox.esm.min.js';
+import { LAYOUTS } from '/js/layouts.js?v=14';
+
+const root = document.getElementById('portfolio');
+
+const load = async url => {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(res.status);
+  return res.json();
+};
+
+const el = (tag, className, text) => {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
+
+const formatDuration = s => {
+  if (!s) return '';
+  return Math.floor(s / 60) + ':' + String(Math.round(s % 60)).padStart(2, '0');
+};
+
+// Meta description, Open Graph and Twitter card tags — none of this existed
+// before, so every page starts from the static <head>'s bare minimum. Skipped
+// entirely for a locked gallery: private content shouldn't get a public-facing
+// description or preview image. `image` is whatever path the caller already
+// has on hand (a cover thumbnail, a gallery's own first item) — not fetched
+// specially for this.
+function setSeoMeta({ title, description, image } = {}) {
+  const setMeta = (attr, key, content) => {
+    if (!content) return;
+    let tag = document.head.querySelector(`meta[${attr}="${key}"]`);
+    if (!tag) {
+      tag = document.createElement('meta');
+      tag.setAttribute(attr, key);
+      document.head.appendChild(tag);
+    }
+    tag.setAttribute('content', content);
+  };
+  if (title) setMeta('property', 'og:title', title);
+  if (description) {
+    setMeta('name', 'description', description);
+    setMeta('property', 'og:description', description);
+    setMeta('name', 'twitter:description', description);
+  }
+  if (image) {
+    const absolute = new URL(image, location.origin).href;
+    setMeta('property', 'og:image', absolute);
+    setMeta('name', 'twitter:image', absolute);
+  }
+  setMeta('property', 'og:url', location.href);
+  setMeta('property', 'og:type', 'website');
+  setMeta('name', 'twitter:card', image ? 'summary_large_image' : 'summary');
+}
+
+// --- Cards (categories and galleries) ---
+
+function coverCard(href, cover, title, subtitle) {
+  const a = el('a', 'pf-card');
+  a.href = href;
+  const frame = el('div', 'pf-card-frame');
+  if (cover) {
+    const img = el('img');
+    img.src = cover;
+    img.alt = '';
+    img.loading = 'lazy';
+    // Decode off the main thread so big pictures don't stall painting
+    // (Safari is the one that notices).
+    img.decoding = 'async';
+    frame.appendChild(img);
+  }
+  a.append(frame, el('h3', 'pf-card-title', title));
+  if (subtitle) a.appendChild(el('p', 'pf-card-meta', subtitle));
+  return a;
+}
+
+// How gallery covers are listed: an even grid, full-width bands, one big
+// column, or one cover per screen. The shape is CSS; this only tags it.
+function renderGalleryCards(container, galleries, index = {}) {
+  const layout = ['grid', 'fullwidth', 'columns', 'fullscreen'].includes(index.layout) ? index.layout : 'grid';
+  const grid = el('div', 'pf-card-grid pf-index-' + layout);
+  galleries.forEach(g => {
+    const sub = g.childCount
+      ? (g.childCount === 1 ? '1 gallery' : `${g.childCount} galleries`)
+      : (g.count === 1 ? '1 item' : `${g.count} items`);
+    const card = coverCard(g.url, g.cover, g.title, sub);
+    if (g.categorySlug) card.dataset.category = g.categorySlug;
+    card.dataset.search = ((g.title || '') + ' ' + (g.categoryTitle || '')).toLowerCase();
+    grid.appendChild(card);
+  });
+  container.appendChild(grid);
+  return grid;
+}
+
+// A collection shown as one page: a heading per gallery, each laid out the
+// way that gallery is set up (immersive layouts fall back to a scanning one,
+// since they would each take over the screen). Galleries load as they come
+// into view so a big collection is not fetched all at once.
+function renderCollectionPage(container, galleries) {
+  const wrap = el('div', 'pf-collection-page');
+  container.appendChild(wrap);
+  const cleanups = [];
+  const apiPath = url => {
+    const parts = new URL(url, location.href).pathname.replace(/^\/portfolio\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+    return parts.length >= 2
+      ? `/api/portfolio/g/${encodeURIComponent(parts[0])}/${parts.slice(1).map(encodeURIComponent).join('/')}`
+      : `/api/portfolio/c/${encodeURIComponent(parts[0])}`;
+  };
+  galleries.forEach(g => {
+    const section = el('section', 'pf-collection-section');
+    const heading = el('h2', 'pf-section');
+    const link = el('a', null, g.title);
+    link.href = g.url;
+    heading.appendChild(link);
+    const body = el('div', 'pf-gallery-body');
+    body.style.minHeight = '40vh';
+    section.append(heading, body);
+    wrap.appendChild(section);
+    const asCard = () => {
+      body.style.minHeight = '';
+      body.replaceChildren(coverCard(g.url, g.cover, g.title, g.count === 1 ? '1 item' : `${g.count || 0} items`));
+    };
+    const paint = async () => {
+      try {
+        const data = await load(apiPath(g.url));
+        const gal = data.gallery;
+        if (data.locked || !gal) return asCard();
+        body.style.minHeight = '';
+        const hasPictures = gal.items.some(i => i.type !== 'header');
+        if (!hasPictures && gal.children && gal.children.length) {
+          cleanups.push(renderCollectionPage(body, gal.children));
+        } else {
+          cleanups.push(renderGalleryBody(body, gal, galleryViews(gal).grid));
+        }
+      } catch (_) { asCard(); }
+    };
+    if ('IntersectionObserver' in window) {
+      const io = new IntersectionObserver(entries => {
+        if (entries.some(e => e.isIntersecting)) { io.disconnect(); paint(); }
+      }, { rootMargin: '600px' });
+      io.observe(section);
+    } else {
+      paint();
+    }
+  });
+  return () => cleanups.forEach(c => { try { c(); } catch (_) {} });
+}
+
+// A category list beside the covers, as an alternative to the top menu.
+function renderSidebar(categories, active, side) {
+  const nav = el('nav', 'pf-catnav pf-catnav-' + side);
+  const all = el('a', 'pf-catnav-link' + (active ? '' : ' active'), 'All work');
+  all.href = '/portfolio';
+  nav.appendChild(all);
+  categories.forEach(c => {
+    const a = el('a', 'pf-catnav-link' + (c.slug === active ? ' active' : ''), c.title);
+    a.href = c.url;
+    nav.appendChild(a);
+  });
+  return nav;
+}
+
+// Category buttons that filter the covers in place, for sites that would
+// rather show everything on one page than make people navigate. The actual
+// hiding is left to the index's shared apply(), so it composes with search.
+function renderFilters(categories, onPick) {
+  const bar = el('div', 'pf-filters');
+  const make = (label, slug) => {
+    const b = el('button', 'pf-filter' + (slug === null ? ' active' : ''), label);
+    b.type = 'button';
+    b.addEventListener('click', () => {
+      bar.querySelectorAll('.pf-filter').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      onPick(slug);
+    });
+    return b;
+  };
+  bar.appendChild(make('All', null));
+  categories.forEach(c => bar.appendChild(make(c.title, c.slug)));
+  return bar;
+}
+
+// A search box over the all-work index. Narrows the same cover cards in place,
+// alongside any category filter rather than replacing it.
+function renderIndexSearch(onInput) {
+  const wrap = el('div', 'pf-index-search');
+  const input = el('input', 'pf-search-input');
+  input.type = 'search';
+  input.placeholder = 'Search galleries';
+  input.setAttribute('aria-label', 'Search galleries');
+  input.autocomplete = 'off';
+  input.addEventListener('input', () => onInput(input.value));
+  wrap.appendChild(input);
+  return wrap;
+}
+
+// --- Gallery ---
+
+// Splits the items on section headers: each header starts a run that is laid
+// out on its own.
+function sections(items) {
+  const out = [{ title: null, items: [] }];
+  items.forEach(item => {
+    if (item.type === 'header') out.push({ title: item.text, items: [] });
+    else out[out.length - 1].items.push(item);
+  });
+  return out.filter(s => s.items.length);
+}
+
+// The home page's opening screen: a full-bleed picture or a muted looping
+// video, with the site's name over it and the gallery below the fold.
+function renderHero(hero) {
+  const section = el('section', 'pf-hero pf-hero-' + hero.height + (hero.only ? ' pf-hero-alone' : ''));
+  // A full-height cover should fill what's left under the header, not overflow
+  // it. The sidebar arrangement runs down the side, so it takes nothing off.
+  const measure = () => {
+    const header = document.querySelector('.site-header');
+    const sidebar = document.documentElement.dataset.header === 'sidebar';
+    const h = !header || sidebar ? 0 : Math.round(header.getBoundingClientRect().height);
+    document.documentElement.style.setProperty('--pf-header-h', h + 'px');
+  };
+  measure();
+  window.addEventListener('resize', measure);
+  if (hero.type === 'video') {
+    const v = document.createElement('video');
+    v.src = hero.src;
+    v.muted = true;
+    v.loop = true;
+    v.autoplay = true;
+    v.playsInline = true;
+    if (hero.poster) v.poster = hero.poster;
+    v.play().catch(() => {});
+    section.appendChild(v);
+  } else {
+    const img = el('img');
+    img.src = hero.src;
+    img.alt = '';
+    img.decoding = 'async';
+    img.fetchPriority = 'high';
+    section.appendChild(img);
+  }
+  if (hero.title || hero.subtitle) {
+    const words = el('div', 'pf-hero-words');
+    if (hero.title) words.appendChild(el('h1', 'pf-hero-title', hero.title));
+    if (hero.subtitle) words.appendChild(el('p', 'pf-hero-sub', hero.subtitle));
+    section.appendChild(words);
+  }
+  return section;
+}
+
+// --- In-place view toggle ---
+// Each gallery renders in one of two views — a scanning grid and a full-screen
+// strip — and the visitor can switch between them without a reload. Both are
+// ordinary LAYOUTS entries: the gallery's own layout is used for whichever view
+// it belongs to, so the default view is exactly what the admin chose and no
+// second layout system exists.
+const PF_IMMERSIVE = ['horizontal', 'fullscreen', 'slideshow'];
+const VIEW_ICONS = {
+  grid: '<rect x="1" y="2" width="12" height="10"/><rect x="15" y="2" width="12" height="10"/><rect x="29" y="2" width="12" height="10"/><rect x="1" y="14" width="12" height="10"/><rect x="15" y="14" width="12" height="10"/><rect x="29" y="14" width="12" height="10"/>',
+  fullscreen: '<rect x="4" y="2" width="36" height="22"/>',
+};
+
+// A gallery has two presentations: `default` is its configured layout, `grid`
+// is a flat grid. Justified and masonry are already a flat grid, so toggling
+// shows the same thing either way; grid (fixed squares) is left as itself too.
+// Horizontal row, full screen, slideshow and featured tiles aren't a flat
+// grid, so toggling falls back to the gallery's own Grid style choice.
+function galleryViews(g) {
+  const configured = LAYOUTS[g.layout] ? g.layout : 'justified';
+  const rawGridStyle = (g.options || {}).gridStyle;
+  const gridStyle = (rawGridStyle === 'masonry' || rawGridStyle === 'grid') ? rawGridStyle : 'justified';
+  return {
+    default: configured,
+    grid: (configured === 'justified' || configured === 'masonry' || configured === 'grid') ? configured : gridStyle,
+  };
+}
+
+// Whether the grid view is on: ?view=grid, else the visitor's last choice.
+function readView() {
+  const fromUrl = new URLSearchParams(location.search).get('view');
+  if (fromUrl === 'grid') return true;
+  if (fromUrl) return false;
+  try { return localStorage.getItem('pf-view') === 'grid'; } catch (_) { return false; }
+}
+
+// Written only on a real toggle, so first paint never adds ?view= to the URL.
+function rememberView(on) {
+  try {
+    if (on) localStorage.setItem('pf-view', 'grid');
+    else localStorage.removeItem('pf-view');
+  } catch (_) {}
+  const url = new URL(location.href);
+  if (on) {
+    if (url.searchParams.get('view') === 'grid') return;
+    url.searchParams.set('view', 'grid');
+  } else {
+    if (!url.searchParams.has('view')) return;
+    url.searchParams.delete('view');
+  }
+  history.replaceState(null, '', url);
+}
+
+function buildViewToggle(onToggleGrid, onFullscreen) {
+  const bar = el('div', 'pf-viewtoggle');
+  bar.setAttribute('role', 'group');
+  bar.setAttribute('aria-label', 'Gallery view');
+  // One binary grid button: pressed = a flat grid, unpressed = the gallery's
+  // default view.
+  const g = el('button', 'pf-view-btn');
+  g.type = 'button';
+  g.title = 'Grid view';
+  g.setAttribute('aria-label', 'Grid view');
+  g.setAttribute('aria-pressed', 'false');
+  g.addEventListener('click', onToggleGrid);
+  bar.appendChild(g);
+  if (onFullscreen) {
+    const b = el('button', 'pf-view-btn pf-fs-btn');
+    b.type = 'button';
+    b.title = 'Full screen';
+    b.setAttribute('aria-label', 'Full screen');
+    b.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
+    b.addEventListener('click', onFullscreen);
+    bar.appendChild(b);
+  }
+  // The icon shows what the button switches to, not the current state —
+  // already in the flat grid, it offers the single square of the gallery's
+  // own layout; showing its own layout, it offers the grid.
+  bar.setGrid = on => {
+    g.classList.toggle('active', on);
+    g.setAttribute('aria-pressed', on ? 'true' : 'false');
+    g.innerHTML = `<svg viewBox="0 0 42 26" aria-hidden="true">${on ? VIEW_ICONS.fullscreen : VIEW_ICONS.grid}</svg>`;
+  };
+  return bar;
+}
+
+// Lays a gallery's items out in one layout, into `container`. Returns a cleanup
+// that tears the layout instances and the lightbox back down, so switching view
+// in place leaves nothing behind.
+function renderGalleryBody(container, gallery, layoutName) {
+  const options = gallery.options || {};
+  const media = gallery.items.filter(i => i.type !== 'header');
+  const lightbox = layoutName === 'slideshow' ? null : createLightbox(media, options);
+  const tiles = new Map();
+  const instances = [];
+
+  // Immersive layouts fill most of the viewport, so a 640px thumbnail
+  // stretched that large looks soft — use the 2048px proxy there. Scanning
+  // layouts render small grid tiles, where the thumbnail is already sharp
+  // and far lighter to load.
+  const immersive = layoutName === 'fullscreen' || layoutName === 'horizontal' || layoutName === 'slideshow';
+  const tile = item => {
+    const index = media.indexOf(item);
+    const node = el('button', 'pf-tile');
+    node.type = 'button';
+    const hiRes = item.type === 'video' ? item.poster : item.proxy;
+    const displaySrc = (immersive && hiRes) || item.thumb;
+    if (displaySrc) {
+      const img = el('img');
+      img.src = displaySrc;
+      img.alt = item.description || item.title || '';
+      // The first few are on screen at load: don't make them wait for the lazy
+      // loader, and let the very first one jump the queue. The rest stay lazy.
+      img.loading = index < 3 ? 'eager' : 'lazy';
+      if (index === 0) img.fetchPriority = 'high';
+      img.decoding = 'async';
+      node.appendChild(img);
+    } else {
+      // A video whose poster the admin hasn't captured yet.
+      node.appendChild(el('div', 'pf-tile-placeholder'));
+    }
+    if (item.type === 'video') node.appendChild(el('span', 'pf-badge', formatDuration(item.duration) || '▶'));
+    if (item.title && options.titles !== 'none') node.appendChild(el('span', 'pf-tile-title', item.title));
+    if (gallery.watermark && gallery.watermark.src) {
+      const wm = el('img', `pf-watermark pf-wm-${gallery.watermark.position || 'br'}`);
+      wm.src = gallery.watermark.src;
+      wm.alt = '';
+      if (gallery.watermark.scale) wm.style.width = gallery.watermark.scale + '%';
+      if (gallery.watermark.opacity != null) wm.style.opacity = gallery.watermark.opacity / 100;
+      node.appendChild(wm);
+    }
+    if (lightbox) node.addEventListener('click', () => lightbox.loadAndOpen(index));
+    tiles.set(index, node);
+    return node;
+  };
+
+  sections(gallery.items).forEach(section => {
+    if (section.title) container.appendChild(el('h2', 'pf-section', section.title));
+    const box = el('div', `pf-layout pf-${layoutName} pf-titles-${options.titles || 'hover'} pf-crop-${options.crop || 'fit'}`);
+    container.appendChild(box);
+    instances.push(LAYOUTS[layoutName](box, section.items, tile, options));
+  });
+
+  // Opening and closing animates from the thumbnail the viewer clicked.
+  if (lightbox) lightbox.addFilter('thumbEl', (node, data, index) => tiles.get(index) || node);
+
+  const observer = new ResizeObserver(() => instances.forEach(i => i.relayout()));
+  observer.observe(container);
+
+  return () => {
+    observer.disconnect();
+    instances.forEach(i => { try { i.destroy && i.destroy(); } catch (_) {} });
+    if (lightbox) { try { lightbox.destroy(); } catch (_) {} }
+  };
+}
+
+function renderGallery(gallery, opts = {}) {
+  if (opts.home && gallery.hero) {
+    root.appendChild(renderHero(gallery.hero));
+    // The cover is the whole page; the pictures under it are only there to
+    // give the cover something to point at.
+    if (gallery.hero.only) return;
+  }
+  // No per-gallery title header — the pictures are the page. The home page
+  // keeps its own intro line.
+  const coverImage = (gallery.items || []).find(i => i.proxy || i.thumb);
+  setSeoMeta({
+    title: gallery.title,
+    description: gallery.description,
+    image: coverImage && (coverImage.proxy || coverImage.thumb),
+  });
+  if (!opts.home) {
+    document.title = gallery.title;
+  } else if (gallery.description) {
+    const head = el('header', 'pf-head');
+    head.appendChild(el('p', 'pf-description', gallery.description));
+    root.appendChild(head);
+  }
+
+  // A collection lists its child galleries as cover cards, above any pictures
+  // the node itself holds.
+  if (gallery.children && gallery.children.length) {
+    if ((gallery.options || {}).view === 'page') renderCollectionPage(root, gallery.children);
+    else renderGalleryCards(root, gallery.children, {});
+  }
+
+  const views = galleryViews(gallery);
+  let grid = readView();
+  // A visitor who hasn't chosen a view yet (no ?view= and no remembered
+  // choice) gets the flat grid on a phone-sized screen regardless of the
+  // gallery's configured layout. Horizontal (swipe sideways to see the rest
+  // of a picture), featured/fullscreen (meant to fill a large screen) and
+  // slideshow all assume more room than a phone has; grid's plain vertical
+  // scroll, with a tap opening the same full-screen slide-through lightbox,
+  // is the one layout that was never designed around desktop in particular.
+  if (!new URLSearchParams(location.search).get('view') && views.default !== views.grid && window.innerWidth <= 720) {
+    grid = true;
+  }
+
+  const body = el('div', 'pf-gallery-body');
+  const hasPictures = gallery.items.some(i => i.type !== 'header');
+  // Beside the grid button, this one goes to real browser full screen.
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) {
+      (document.exitFullscreen || document.webkitExitFullscreen || (() => {})).call(document);
+      return;
+    }
+    const req = body.requestFullscreen || body.webkitRequestFullscreen || body.msRequestFullscreen;
+    if (req) req.call(body);
+  };
+  const toggle = hasPictures
+    ? buildViewToggle(() => { grid = !grid; paint(true); }, toggleFullscreen)
+    : null;
+  if (toggle) root.appendChild(toggle);
+  root.appendChild(body);
+
+  let cleanup = null;
+  const paint = persist => {
+    if (cleanup) cleanup();
+    body.replaceChildren();
+    if (toggle) toggle.setGrid(grid);
+    cleanup = renderGalleryBody(body, gallery, grid ? views.grid : views.default);
+    if (persist) rememberView(grid);
+  };
+  paint(false);
+}
+
+// --- Lightbox ---
+
+function createLightbox(media, opts = {}) {
+  // "None" hides the caption everywhere, the lightbox included.
+  const showCaption = opts.captions !== 'none';
+  const lightbox = new PhotoSwipeLightbox({
+    dataSource: media.map(item => (item.type === 'video'
+      ? { type: 'video', item, width: item.width || 1920, height: item.height || 1080 }
+      : {
+        src: item.proxy || item.src,
+        msrc: item.thumb || undefined,
+        width: item.width || 1600,
+        height: item.height || 1200,
+        alt: item.title || '',
+        description: showCaption ? item.description : undefined,
+      })),
+    bgOpacity: 0.95,
+    pswpModule: () => import('/vendor/photoswipe/photoswipe.esm.min.js'),
+  });
+
+  // Video slides get the shared player instead of an <img>.
+  const stages = new Map();
+  lightbox.on('contentLoad', e => {
+    const { content } = e;
+    if (content.type !== 'video') return;
+    e.preventDefault();
+    // A slide is built before the lightbox has measured itself, so fall back to
+    // the window until it has a viewport to give us.
+    const viewport = () => (lightbox.pswp && lightbox.pswp.viewportSize)
+      || { x: window.innerWidth, y: window.innerHeight };
+    const stage = window.createVideoStage(content.data.item, {
+      autoplay: false,
+      width: () => viewport().x * 0.94,
+      height: () => viewport().y * 0.94,
+    });
+    // The control strip sits at the bottom of the player: without this, dragging
+    // the scrubber reads as a swipe and flicks to the next slide.
+    stage.el.addEventListener('pointerdown', ev => ev.stopPropagation());
+    const wrap = document.createElement('div');
+    wrap.className = 'pswp-video';
+    wrap.appendChild(stage.el);
+    content.element = wrap;
+    stages.set(content, stage);
+    requestAnimationFrame(() => stage.layout());
+  });
+  lightbox.on('contentActivate', e => {
+    const stage = stages.get(e.content);
+    if (stage) { stage.layout(); stage.video.play().catch(() => {}); }
+  });
+  lightbox.on('contentDeactivate', e => {
+    const stage = stages.get(e.content);
+    if (stage) stage.pause();
+  });
+  lightbox.on('contentDestroy', e => {
+    const stage = stages.get(e.content);
+    if (stage) { stage.destroy(); stages.delete(e.content); }
+  });
+  lightbox.addFilter('isContentZoomable', (zoomable, content) =>
+    (content.type === 'video' ? false : zoomable));
+
+  // The caption box under a photo. A video draws its own inside the player,
+  // where the sizing maths can allow for its height.
+  lightbox.on('uiRegister', () => {
+    lightbox.pswp.ui.registerElement({
+      name: 'pf-caption',
+      order: 9,
+      appendTo: 'root',
+      onInit: (node, pswp) => {
+        node.className = 'lightbox-description pswp-caption';
+        const update = () => {
+          const data = pswp.currSlide && pswp.currSlide.data;
+          const shown = data && data.type !== 'video'
+            && window.renderCaptionBox(node, data.description);
+          node.hidden = !shown;
+        };
+        pswp.on('change', update);
+        update();
+      },
+    });
+  });
+
+  lightbox.init();
+  return lightbox;
+}
+
+// Wraps the page in a sidebar layout when one is switched on, and returns the
+// element the page content goes into.
+function withSidebar(categories, activeSlug, index) {
+  const side = index.sidebar;
+  if (side !== 'left' && side !== 'right') return root;
+  const wrap = el('div', 'pf-with-nav pf-with-nav-' + side);
+  const body = el('div', 'pf-with-nav-body');
+  const nav = renderSidebar(categories, activeSlug, side);
+  wrap.append(side === 'left' ? nav : body, side === 'left' ? body : nav);
+  root.appendChild(wrap);
+  return body;
+}
+
+// A password-protected gallery: the link works, the pictures wait.
+function renderLocked(catSlug, segments, title) {
+  document.title = title || 'Private gallery';
+  const box = el('div', 'pf-locked');
+  box.appendChild(el('h1', 'pf-title', title || 'Private gallery'));
+  box.appendChild(el('p', 'pf-description', 'This gallery is private. Enter the password to view it.'));
+
+  const form = el('form', 'pf-contact-form');
+  form.innerHTML = `
+    <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+    <button type="submit">View gallery</button>
+    <p class="pf-form-status" role="status"></p>`;
+  box.appendChild(form);
+  root.appendChild(box);
+  form.querySelector('input').focus();
+
+  const status = form.querySelector('.pf-form-status');
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    status.textContent = '';
+    try {
+      const res = await fetch(`/api/portfolio/g/${encodeURIComponent(catSlug)}/${segments.map(encodeURIComponent).join('/')}/unlock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: form.password.value }),
+      });
+      const out = await res.json();
+      if (!res.ok) throw new Error(out.error || 'That password does not match');
+      root.replaceChildren();
+      renderGallery(out.gallery);
+    } catch (err) {
+      status.textContent = err.message;
+    }
+  });
+}
+
+// --- Routing ---
+
+document.addEventListener('DOMContentLoaded', async () => {
+  // The homepage shell and the portfolio pages share this script.
+  if (!location.pathname.startsWith('/portfolio')) {
+    // Paint the home page from the copy saved on the last visit right away,
+    // then swap in the server's only if it changed, so a slow API response
+    // doesn't leave a blank page.
+    const KEY = 'sd-home-v1';
+    let saved = null;
+    try { saved = localStorage.getItem(KEY); } catch (_) {}
+    const show = gallery => {
+      root.replaceChildren();
+      root.classList.add('pf-home');
+      renderGallery(gallery, { home: true });
+    };
+    if (saved) {
+      try { show(JSON.parse(saved).gallery); } catch (_) { saved = null; root.replaceChildren(); }
+    }
+    try {
+      const res = await fetch('/api/portfolio/home');
+      if (!res.ok) throw new Error(res.status);
+      const text = await res.text();
+      if (text === saved) return;
+      const { gallery } = JSON.parse(text);
+      if (gallery) {
+        try { localStorage.setItem(KEY, text); } catch (_) {}
+        show(gallery);
+      } else if (saved) {
+        try { localStorage.removeItem(KEY); } catch (_) {}
+        root.replaceChildren();
+      }
+    } catch (_) {}
+    if (!root.childElementCount) root.dataset.idle = '1';
+    return;
+  }
+
+  const parts = location.pathname.replace(/^\/portfolio\/?/, '').split('/').filter(Boolean).map(decodeURIComponent);
+  try {
+    if (parts.length >= 2) {
+      const cat = parts[0];
+      const rest = parts.slice(1);
+      const data = await load(`/api/portfolio/g/${encodeURIComponent(cat)}/${rest.map(encodeURIComponent).join('/')}`);
+      if (data.locked) return renderLocked(cat, rest, data.title);
+      renderGallery(data.gallery);
+    } else if (parts.length === 1) {
+      const data = await load(`/api/portfolio/c/${encodeURIComponent(parts[0])}`);
+      if (data.locked) return renderLocked(parts[0], [parts[0]], data.title);
+      // A top-level gallery serves its own media here, not a list of galleries.
+      if (data.gallery) { renderGallery(data.gallery); return; }
+      const { category, index, categories } = data;
+      document.title = category.title;
+      setSeoMeta({
+        title: category.title,
+        description: category.description,
+        image: (category.galleries || []).find(g => g.cover)?.cover,
+      });
+      const body = withSidebar(categories || [], category.slug, index || {});
+      const head = el('header', 'pf-head');
+      head.appendChild(el('h1', 'pf-title', category.title));
+      if (category.description) head.appendChild(el('p', 'pf-description', category.description));
+      body.appendChild(head);
+      if (category.view === 'page') renderCollectionPage(body, category.galleries);
+      else renderGalleryCards(body, category.galleries, index);
+    } else {
+      const { categories, index = {} } = await load('/api/portfolio');
+      if (!categories.length) {
+        root.appendChild(el('div', 'empty-state', 'Nothing here yet.'));
+        return;
+      }
+      const body = withSidebar(categories, null, index);
+
+      // One shared filter: the category bar and the search box both narrow the
+      // same cover cards, and a section heading hides when its grid empties.
+      let activeCat = null;
+      let query = '';
+      const apply = () => {
+        const q = query.trim().toLowerCase();
+        const cards = [...body.querySelectorAll('.pf-card')];
+        cards.forEach(card => {
+          const okCat = !activeCat || card.dataset.category === activeCat;
+          const okText = !q || (card.dataset.search || '').includes(q);
+          card.hidden = !(okCat && okText);
+        });
+        body.querySelectorAll('.pf-section[data-category]').forEach(h => {
+          const grid = h.nextElementSibling;
+          h.hidden = !(grid && [...grid.querySelectorAll('.pf-card')].some(c => !c.hidden));
+        });
+        empty.hidden = cards.some(c => !c.hidden);
+      };
+
+      body.appendChild(renderIndexSearch(v => { query = v; apply(); }));
+      if (index.filters) {
+        // One page, every gallery, filtered in place.
+        const all = categories.flatMap(c => c.galleries.map(g => ({ ...g, categorySlug: c.slug, categoryTitle: c.title })));
+        body.appendChild(renderFilters(categories, slug => { activeCat = slug; apply(); }));
+        renderGalleryCards(body, all, index);
+      } else {
+        categories.forEach(c => {
+          const h = el('h2', 'pf-section');
+          h.dataset.category = c.slug;
+          const a = el('a', null, c.title);
+          a.href = c.url;
+          h.appendChild(a);
+          body.appendChild(h);
+          renderGalleryCards(body, c.galleries.map(g => ({ ...g, categorySlug: c.slug, categoryTitle: c.title })), index);
+        });
+      }
+      const empty = el('div', 'pf-index-empty', 'No galleries match.');
+      empty.hidden = true;
+      body.appendChild(empty);
+      apply();
+    }
+  } catch (err) {
+    root.replaceChildren(el('div', 'empty-state', 'Not found.'));
+  }
+});

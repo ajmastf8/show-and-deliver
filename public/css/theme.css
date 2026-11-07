@@ -1,0 +1,127 @@
+/* Header arrangements and the few surfaces a colour preset can't reach through
+   the palette variables alone. theme.js sets data-theme and data-header on
+   <html>, plus the palette itself as inline custom properties. */
+
+/* --- Light/dark logo pair ---
+   header.js renders both logos as a pair (.logo-img-light / .logo-img-dark)
+   when the config has both, and expects the theme to show exactly one. These
+   rules live here rather than only in style.css because collection.html and
+   download.html don't load style.css — without them both images stacked and
+   the header read as a doubled logo. */
+
+.logo-img-dark { display: none; }
+[data-theme="dark"] .logo-img-light { display: none; }
+[data-theme="dark"] .logo-img-dark { display: block; }
+
+/* --- Centered: logo over the links, the classic portfolio masthead --- */
+
+[data-header="stacked"] .header-inner {
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-top: 18px;
+  text-align: center;
+}
+
+[data-header="stacked"] .header-nav { justify-content: center; flex-wrap: wrap; }
+[data-header="stacked"] .header-contact { margin: 0; }
+
+/* --- Sidebar: a fixed column down the left, gallery fills the rest ---
+   Starts just past the 1100px breakpoint where style.css's generic
+   responsive rules hide .header-nav/.header-contact and switch to the
+   hamburger menu — a lower threshold here would leave both rules active
+   at once, reserving space for a column whose links had just vanished. */
+
+@media (min-width: 1101px) {
+  [data-header="sidebar"] .site-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 232px;
+    padding: 0;
+    border-right: 1px solid var(--color-gray-mid);
+    overflow-y: auto;
+  }
+
+  [data-header="sidebar"] .header-inner {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    height: 100%;
+    padding: 34px 24px;
+    gap: 22px;
+  }
+
+  [data-header="sidebar"] .header-nav { flex-direction: column; align-items: flex-start; gap: 12px; }
+  [data-header="sidebar"] .header-contact { flex-direction: column; align-items: flex-start; gap: 4px; margin-left: 0; white-space: normal; }
+  [data-header="sidebar"] .header-contact .contact-sep { display: none; }
+  [data-header="sidebar"] .header-social { justify-content: flex-start; }
+  [data-header="sidebar"] .logo-text { font-size: 30px; white-space: normal; }
+  [data-header="sidebar"] .logo-img { max-width: 100%; width: auto; height: auto !important; max-height: 74px; }
+  [data-header="sidebar"] body { padding-left: 232px; }
+
+  /* A flyout here would either overlap the column's own nav links or sit
+     over the gallery beside it — both read badly against a persistent
+     column. Instead this expands in place, like an accordion, pushing the
+     rest of the column's links down; header.js toggles .open on click
+     rather than this being a :hover reveal. */
+  [data-header="sidebar"] .nav-dropdown > .nav-link { cursor: pointer; }
+  [data-header="sidebar"] .nav-dropdown > .nav-link::after { display: inline-block; transition: transform 0.15s ease; }
+  [data-header="sidebar"] .nav-dropdown.open > .nav-link::after { transform: rotate(180deg); }
+  [data-header="sidebar"] .nav-dropdown-menu {
+    position: static;
+    display: none;
+    background: none;
+    border: none;
+    padding: 4px 0 0 14px;
+    min-width: 0;
+    width: 100%;
+  }
+  [data-header="sidebar"] .nav-dropdown:hover .nav-dropdown-menu { display: none; }
+  [data-header="sidebar"] .nav-dropdown.open .nav-dropdown-menu { display: block; }
+  [data-header="sidebar"] .nav-dropdown-menu a { padding: 6px 0; }
+}
+
+/* --- Social links --- */
+
+.header-social {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.header-social a {
+  display: inline-flex;
+  color: var(--color-gray-text);
+  transition: color 0.2s ease;
+}
+
+.header-social a:hover { color: var(--color-primary); }
+.header-social svg { width: 19px; height: 19px; fill: currentColor; display: block; }
+
+.mobile-nav-social { display: flex; gap: 16px; padding: 18px 0 6px; }
+.mobile-nav-social svg { width: 22px; height: 22px; fill: currentColor; }
+
+/* This file loads after style.css, so its unconditional .header-social rule
+   above would otherwise always beat style.css's @media(max-width:1100px)
+   rule that hides .header-nav/.header-contact and switches to the hamburger
+   menu — leaving the social icons as the one thing still crowding the bar,
+   with nothing to wrap them, past the point where the row has room for them
+   (they're still reachable, duplicated into .mobile-nav-social above). */
+@media (max-width: 1100px) {
+  .header-social { display: none; }
+}
+
+/* --- Dark preset touch-ups --- */
+
+/* This one paints itself white rather than through the palette, because it
+   is normally read against a photograph. .pf-tile matches the page itself
+   (see portfolio.css) so a sliver showing past an image's edge blends in
+   instead of reading as a box; .pf-card-frame keeps the lighter grey — cards
+   sit on the page with a gap around them, so a placeholder shade is fine. */
+[data-theme="dark"] .mobile-nav { background: var(--color-white); }
+[data-theme="dark"] .pf-card-frame { background: var(--color-gray-light); }
+[data-theme="dark"] .pf-tile-placeholder {
+  background: repeating-linear-gradient(45deg, #1b1b1b, #1b1b1b 10px, #222 10px, #222 20px);
+}

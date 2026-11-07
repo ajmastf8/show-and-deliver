@@ -1,5 +1,130 @@
 # Changelog
 
+## 2.6.0 — 2026-11-07
+- **The 2.x rewrite is now the main line.** The folder-backed portfolio, the reworked admin, client delivery galleries and collections, page/portfolio theming, captions, delivery packages and everything shipped through 2.5.13 are now what `main` carries; the 1.6.x single-file line is retired. Installs updating from 1.6.x land here.
+- **Replacing a gallery item's file goes through the upload queue.** The admin's replace button now shows a progress row, chunks large files, can Pause/retry and caches the new file's delivery checksum, instead of sending one bare request. (It also fixes a long-standing bug where a replace sent no file at all: PHP only parses a multipart body for POST, so the old PUT never reached `$_FILES`.)
+
+## 2.5.13 — 2026-11-06
+- **The select tools now sit on the select row, and stay there.** 2.5.12 kept Delete and Done in the floating bar at the bottom of the pane, which on a long gallery meant scrolling to the end to reach them — and Select all put them even further away. The count, **Delete** and **Done** are now on the select row itself, and that row is pinned to the top of the list, so they are in reach however far down you are. The floating bar is not used in the gallery view at all now.
+
+## 2.5.12 — 2026-11-06
+- **The bulk-delete control moved to where it belongs: a checkbox at the top of the item list.** 2.5.11 put a "Select" text button up in the gallery header; it now sits as a small checkbox at the top-left of the list, directly above the column the row checkboxes drop into. Click it to start selecting; click it again to select or clear everything, with the box showing a tick, a dash for a partial pick, or empty. **Done** appears on the right of that line. Same behavior, clearer home.
+
+## 2.5.11 — 2026-11-06
+- **A client gallery now updates itself as files arrive — no clicking required.** The live refresh added in 2.5.7 only offered a "Gallery updated — Refresh" notice; it did not actually bring the new files in. An open gallery now re-renders the new items the moment they land. If the viewer is busy — in the lightbox, or part-way through a comment — it holds off and shows the refresh notice instead, so the page is never rearranged under them. Either way the notice sits at the top of the page now, not the bottom.
+- **Delete many items at once in a client gallery.** The gallery screen in the admin has a **Select** button. Turn it on and each row shows a checkbox: click rows (shift-click for a run), use **Select all**, then **Delete** to remove the batch in one go, with a single confirmation. Press **Esc** or **Done** to leave. Deleting many photos no longer means clicking × on each one in turn.
+
+## 2.5.10 — 2026-11-06
+- **Page assets now version themselves, so a shipped change can't hide behind a browser cache again.** Every page loaded its CSS and JS with a hand-typed number (`proofing.js?v=14` and the like) that had to be bumped by hand whenever the file changed; miss it and a browser keeps running the old script even though the new one is on the server — which is exactly what made 2.5.7's live refresh and sort bar look dead on 2.5.9. The pages are now rendered by the server, which stamps each asset's real last-modified time onto its URL, so the number changes the moment the file does. Nothing to remember, nothing to drift. This is the last release that needed a manual asset bump.
+
+## 2.5.9 — 2026-11-06
+- **Fixed: the client-page live refresh and sort control could appear not to work.** Both live in `proofing.js` and `proofing.css`, which the gallery page loads with a cache-busting `?v=` number. 2.5.7 and 2.5.8 changed those files without moving the number, so a browser that had already visited a gallery kept serving the old script from its cache — the update was on the server, but the page still ran the previous version, with no live refresh and no sort bar. The version numbers are bumped (`proofing.js?v=15`, `proofing.css?v=14`), so every visitor gets the new code. If a gallery still looks stale after updating, one hard refresh (or a private window) clears any copy cached from before.
+
+## 2.5.8 — 2026-11-06
+- **Client galleries open newest-first by default.** The viewer sort control added in 2.5.7 started on your saved "Gallery order"; it now starts on Arrival, newest first, so a client opening a delivery sees the most recently added files at the top straight away. Their choice is still only theirs — the gallery's saved order is untouched — and "Gallery order" brings it back and sticks for that visit, even across a reload. Switching to Name starts A–Z; the date fields start newest-first.
+
+## 2.5.7 — 2026-11-06
+- **A client gallery that's being added to now updates itself, without a reload.** Previously only FTP watch folders could tell an open gallery page that new files had arrived; an upload through the admin or the API was invisible until the client refreshed by hand. Any gallery changed in the last half hour now counts as live, so an open page offers the "Gallery updated — Refresh" banner within 30 seconds of a new arrival. It also re-checks whenever the tab regains focus, so a client who was sitting on a quiet gallery and comes back after you uploaded sees it straight away. Once a gallery goes quiet the polling stops on its own, so a delivered gallery isn't asking forever.
+- **Clients can sort a gallery for themselves — Name, Arrival or Creation, each direction.** A sort bar above the grid lets the viewer reorder by file name (A–Z / Z–A), date added (Arrival), or capture time from EXIF / recorded date (Creation), and reverse it. Their choice is their own for the visit — it never changes the order you saved in the gallery settings, and "Gallery order" puts it back. Section headers stay put; items sort within them. Capture time falls back to date added for files that don't carry a date.
+
+## 2.5.6 — 2026-11-06
+- **Fixed: API uploads showed as "Untitled" instead of the file's name.** The upload API only used a title a client sent explicitly, so any client that omitted it — skipping `-F title=...` on the multipart item upload, or the `"title"` field on the chunked-upload finalize call — left every photo and video named "Untitled" in the gallery. When no title is sent, the server now derives one from the uploaded file's name, the same way the admin uploader and the import folder already do: extension and timestamp prefix stripped, underscores and dashes turned into spaces (`IMG_4821.jpg` → `IMG 4821`). A title you do send is still used exactly as sent.
+
+## 2.5.5 — 2026-11-06
+- **Fixed: the Recent rail now sorts strictly newest first, mixing collections and galleries.** It previously listed every recent collection above every recent gallery, so a gallery made an hour ago could sit below a collection from last week. The one list is now ordered by creation date alone, newest at the top.
+
+## 2.5.4 — 2026-11-06
+- **New: a Recent section at the top of the Client delivery rail.** Collections and galleries created in the last five days are listed above the Library and Client delivery sections, newest first, collections before galleries. A just-made delivery is one click away — pick a recent collection to open its list, or a recent gallery to open it straight away. The section stays out of the way when nothing is new.
+
+## 2.5.3 — 2026-11-06
+- **Fixed: the logo showed twice in the header on collection and delivery pages.** When two logos are set — one for light backgrounds and one for dark — both were drawn stacked instead of one being swapped by the theme, because the rule that hides the unused one was only in a stylesheet those two pages don't load. The swap rule now lives in the shared theme stylesheet, so the header shows a single logo everywhere.
+- **Fixed: a replaced logo could stay invisible for up to a week.** Logo images are cached in the browser for seven days, and a fresh upload kept the same URL, so the old image kept showing until the cache expired. Logo URLs now carry a version taken from the file's timestamp, so a replacement appears immediately.
+
+## 2.5.2 — 2026-11-04
+- **Fixed: a gallery created from inside a collection wasn't added to it.** Making a gallery from the New menu while looking at a collection left "Add to Collection" on "— None —", so the gallery landed ungrouped. That scope now preselects the collection you are in, and you can still change or clear it.
+- **Fixed: the Downloads and Commenting switches were ignored when you picked a collection.** Choosing a collection made the new gallery inherit the collection's settings, which hid those switches and quietly discarded any you had already turned on. If you set either one, the gallery now keeps your choice instead of falling back to the collection's.
+
+## 2.5.1 — 2026-10-26
+- **Fixed: the per-item Download button was missing in the client gallery viewer on Android Chrome.** The full-screen viewer was sized with `100vh`, which on mobile is the *large* viewport — the height with the browser's toolbars retracted — so while the address bar was showing the viewer extended below the screen and its bottom title bar (where Download sits) was cut off. It now uses `100dvh`, which tracks the visible viewport. "Download All" in the gallery header was never affected, which is why only the in-viewer button appeared to be gone.
+
+## 2.5.0 — 2026-10-26
+Client delivery galleries get a block of per-gallery options in Settings (not inherited from collections).
+- **Order.** Show items in your own drag order, or sorted by file name (natural order, so `IMG_2` comes before `IMG_10`), capture time (from the photo's EXIF, or a video's recorded date; ascending or descending) or date added. Section headers keep their place. The client page, Download All and delivery zips follow it, and the admin item list shows the order with dragging turned off while a sort is active. Capture times are recorded at upload; older galleries get theirs filled in the first time they are needed.
+- **Favorites.** Clients heart photos, up to an optional limit, and press Send my picks. You get an email with the file names and any note, and a new Favorites tab in the gallery drawer lists each visitor's picks with Copy file names (paste into Lightroom's filter) and Clear. Picks are private to the visitor's browser until sent, can be changed and re-sent, and need no account.
+- **Download as.** Originals, web size (the 2048px JPEG of each photo, far smaller), or let the client choose, for single downloads and Download All. Videos are always the original.
+- **Watermark previews.** Stamps the site watermark on thumbnails and the viewer, generated once per photo and kept. Downloads stay clean. It deters casual saving; it does not make previews un-fetchable.
+- **Show file names.** Turn off to hide titles and camera file names from the client page.
+- **Cover.** Choose a gallery's cover with the star next to any item; it shows in the library and in collections.
+- **Activity.** The drawer shows views, whole-gallery and single downloads, the last download, and the most recent downloads with file names and size, plus how many visitors sent favorites.
+
+## 2.4.1 — 2026-10-25
+- **The admin now works on a phone.** Below 1100px the library list was a blank screen (its sidebar left the layout but the list was still placed in a zero-width column), and the Portfolio tab had no way to open its sidebar at all. Both are fixed: the ☰ button opens whichever tab's sidebar as a slide-over with a scrim, and picking something closes it. On phones the top bar becomes two rows with the account links (Uploads, theme, password, logout) in a ⋯ menu; the gallery list shows name, items and access; row checkboxes, favorite stars and open links are always visible on touch screens instead of appearing on hover; the bulk bar fits the width and scrolls sideways; dialogs open as bottom sheets with link/copy button rows wrapping under their fields; the upload queue, drawer, preview player and portfolio grids reflow; and form fields are 16px so iOS no longer zooms in when you tap one.
+
+## 2.4.0 — 2026-10-23
+- **Galleries can watch an FTP folder and fill themselves.** Give a client gallery an FTP import folder (when you create it, or later in its settings) and anything uploaded to that folder under `site-data/imports/` is moved into the gallery automatically — photos and videos alike, with thumbnails, proxies and delivery checksums made as usual. It runs while someone has the gallery open (the client's page, or the gallery in admin), so there is nothing to set up on the server; reopening a gallery later picks up whatever arrived in the meantime. Files still being uploaded are left alone until they stop growing, and unreadable images are set aside in a `_failed` folder. A client with the gallery open sees a "Gallery updated" banner with a Refresh button when new items land.
+- Importing from the server by hand now registers files the same way as every other upload, so manually imported files get their delivery checksums up front too.
+
+## 2.3.7 — 2026-10-22
+- **Captions can now be uploaded as SRT as well as WebVTT, and the Captions dialog has a drop area.** An `.srt` file is converted to WebVTT on upload (no ffmpeg needed), so the player and delivery packages still only ever see `.vtt`. Drop a `.vtt` or `.srt` onto the dialog, or choose one, then pick a language and click Add Caption.
+
+## 2.3.6 — 2026-10-18
+- **Removed the scrollbar under the horizontal-scroll layout.** It showed as a bright bar in dark mode. The strip still scrolls by wheel, drag, swipe and arrow keys.
+
+## 2.3.5 — 2026-10-18
+- **Fixed: the home page could sit blank for seconds, or tens of seconds, on a busy host.** `/api/header`, `/api/portfolio` and `/api/portfolio/home` rescanned the portfolio folders on every request, which is slow when the host caps CPU, and the page drew nothing until they answered. Their JSON is now cached for 60 seconds (cleared immediately by any change made through the API; folders dropped in over FTP appear within the minute), and one request rebuilds an expired copy while everyone else keeps getting the old one. The browser also paints the header and home page from the copy it saved on the last visit and swaps in the server's only if it changed, and a first-ever visit shows a placeholder instead of a blank page.
+- **Slow requests can now be traced.** Every API response carries a `Server-Timing` header (boot, cache or build, total; `X-Api-Cache` says hit, miss or stale), and any request over 500 ms is appended to `site-data/data/slow-requests.log` (capped at 256 KB).
+
+## 2.3.4 — 2026-10-17
+- **Creating a client gallery now says why it failed, and two ways of creating one no longer fail on sites that still have old portfolio data.** The New gallery dialog used to show only "Create failed" whatever the server answered; it now shows the server's own message (or the HTTP status), signs you back in if the session had expired, and warns if the gallery was made but couldn't be added to the chosen collection. Pressing **+ Gallery** under a leftover portfolio collection (one from before the portfolio moved to folders) used to do nothing at all, and **Duplicate** on a leftover portfolio gallery was refused with no message; the first now opens the dialog with no collection preselected and the second makes a client gallery copy and reports any refusal.
+
+## 2.3.3 — 2026-10-17
+- **Faster first paint, most noticeably in Safari.** Pictures now decode off the main thread (`decoding="async"`) so large images no longer stall painting and scrolling, and the first few pictures on a page load eagerly with the first at high priority instead of waiting for the lazy loader (the rest stay lazy). The page also starts fetching what it needs sooner: the script imports and the header and home-page data are requested from the page head, so they download while the main script is still loading instead of after it.
+
+## 2.3.2 — 2026-10-16
+- **The old client-delivery API paths work again, as deprecated aliases.** 2.3.0 renamed them with no fallback, which broke Deadline Editor (its Test Connection answered "404 Not found") and would break any cached page. The old paths (`/api/galleries`, `/api/collections`, `/api/admin/galleries/{id}/videos`, `/api/proofing/…`, `/api/packages/…`, and the rest) are now translated to the new ones, the old multipart field `video` and the `videos` response key still work, and a finalize with no `target` is accepted. Every aliased response carries an `X-API-Deprecated` header naming the new path. They will be removed once the app has moved; `GET /api/videos` stays gone.
+
+## 2.3.1 — 2026-10-16
+- **Generating an API token now tells you where to use it.** The Settings → API panel has a **Site URL** (with a Copy button) at the top, and the one-time "Your new API token" dialog shows it above the token. It is just the site's address, with no `/api` or path, because tools add the paths themselves and one that was given `…/api/admin/portfolio` answered 404.
+
+## 2.3.0 — 2026-10-16
+- **The API now says which system a route belongs to, and treats both the same way. This is a breaking change: the old paths return 404 and there are no aliases.** Client delivery lives under `/api/admin/client/…` (admin) and `/api/client/…` (what a client's browser calls); the portfolio stays under `/api/admin/portfolio/…` and `/api/portfolio/…`. Items, captions, posters, headers and ordering are named the same on both sides (`…/items/{id}`, `…/items/{id}/poster`, `…/order`), the multipart upload field is `file` on both, and gallery responses carry `items` instead of `videos`. Chunked uploads finalize with `{"target": "client" | "portfolio", "galleryId": "…"}` instead of picking a system by which field you sent. `docs/API.md` is rewritten to cover both, with a table of every renamed route.
+- **Removed the legacy public portfolio feed.** `GET /api/videos`, the `reels` gallery type for new galleries, and the old homepage fallback grid are gone. An install that never migrated its reels galleries into folders shows an empty home page until it does (Portfolio tab, migration).
+
+## 2.2.13 — 2026-10-16
+- **Fixed: galleries filed under a top-level gallery vanished into a dead end.** A gallery sitting at the top of the Image Library holds pictures only, but nothing stopped you creating or moving a gallery *inside* one. The folder was made, then couldn't be found again, so opening, saving or changing its access all answered "Gallery not found". The server now refuses it with an explanation (use New collection and add galleries to that), the Location picker no longer offers top-level galleries as a destination, and an empty top-level gallery no longer offers "make it a collection". Galleries in collections and categories behave as before.
+
+## 2.2.12 — 2026-10-16
+- **Private galleries in a collection get their own section.** Open a collection in the admin and its public galleries are listed first, followed by a **Private** divider (with a count) and the private galleries underneath, the same way hidden pictures sit under **Hidden** in a gallery. It's a display grouping only: the stored order and what visitors see are unchanged, and making a gallery public moves it back up. Drag-to-reorder applies to the public galleries; private ones keep their place.
+
+## 2.2.11 — 2026-10-16
+- **Fixed: the From address (and anything else with quotes in it) looked blank after saving.** A value like `"AJ Mast" <aj@ajmast.com>` was saved correctly but the settings form drew it as an empty field, so it appeared not to save, and the next Save Email Settings would have erased it. The shared HTML-escape helper now escapes quotes as well, in the admin, header, collection, proofing and public pages, which also protects titles and alt text containing quotes from breaking their attributes.
+
+## 2.2.10 — 2026-10-16
+- **Login is more forgiving and more honest.** The email is no longer case-sensitive and ignores stray spaces, so `Name@Site.com` signs in as `name@site.com`. The login page now shows the real reason when it isn't a wrong password (for example the five-tries-a-minute lockout, which used to read "Invalid credentials").
+- **`admin:reset-password` now proves it worked.** After saving, it reads the account back the same way the login page does and prints the file's path, owner and permissions, and says so if the web server might not be able to read it.
+
+## 2.2.9 — 2026-10-16
+- **Fixed: the password reset email could silently never arrive.** A reset link was only sent when you typed the exact admin login address, with no hint if you used a different one, and a mail-server failure was swallowed while the page still said the link was on its way. Either admin address now works (the login email, or the notification address from Settings > Email, which the contact form uses), the link goes to the one you typed, and a send failure is logged and shown on the page with the mail server's reason.
+
+## 2.2.8 — 2026-10-15
+- **You can now recover and change the admin password.** The login page has a **Forgot password?** link that emails a one-hour, single-use reset link to the admin address (it needs email set up under Settings, with a real Base URL). A **Password** link in the top bar changes it from inside the app. Either way, every other signed-in browser is signed out, so resetting a password you suspect is compromised actually locks the other party out.
+- For sites that can't send email, `php index.php admin:reset-password [new-password]` resets it from the command line (it prints a random one if you don't give one). Run it as the same user the web server runs as, so the account file stays writable.
+- Installs still using `ADMIN_PASSWORD` in `.env` move to the in-app account the first time the password changes.
+
+## 2.2.7 — 2026-10-15
+- **Faster first load.** The public site no longer starts a PHP session for every visitor and bot. Sessions begin only when you log in or unlock a protected gallery (or already carry a session cookie), and read-only requests release the session lock immediately, so the header and portfolio data load in parallel instead of queuing. Old session files are pruned automatically (at most once a day) when someone logs in or unlocks a gallery.
+- The Google Fonts stylesheet no longer blocks the first paint; the page shows in the fallback font until Open Sans arrives.
+
+## 2.2.0 — 2026-10-09
+- **Duplicate files can be linked instead of copied.** A new **Duplicates** panel in the Portfolio tab finds files that exist byte-for-byte more than once across the portfolio, nested collections included, and lets you keep one and turn the rest into **picks** of it — the picture shows in every gallery while the bytes live in one place. Files are grouped on size first, so only genuine candidates are hashed; nothing is deleted (copies move to `site-data/portfolio-trash/`) and any title or caption on a copy carries onto the link. This is the app-level answer to "one picture, many galleries" — picks rather than symlinks, so identity and metadata stay shared and nothing breaks across FTP, backups or zips.
+
+## 2.1.0 — 2026-10-09
+- **Galleries can be viewed two ways, switched in place.** Any gallery with pictures now carries a Grid / Fullscreen toggle above it: the visitor flips between a scanning grid and an immersive strip without a page reload. The choice rides in the URL (`?view=`) so a shared link opens the way it was sent, and is remembered per visitor. Both views are one of the gallery's existing layouts, so nothing about how layouts are stored changed.
+- **Credits show in the immersive layouts.** The caption box that already rendered in the slideshow and the lightbox now appears in the fullscreen and horizontal (filmstrip) views as a small credit over the picture, matching the ajmast.com reference. The scanning views still leave credits to the lightbox.
+- **Search on the all-work index.** A search box narrows the gallery covers by title and category, and composes with the category filter bar rather than replacing it; a category heading hides when nothing under it matches and an empty result says so.
+- **Galleries can contain other galleries.** A folder inside a gallery makes it a collection: it lists its child galleries as cover cards and can still hold its own pictures. Nesting is recursive, URLs follow the path (`/portfolio/weddings/smith-jones/set-a`), and the public page shows a breadcrumb. Existing flat installs are unchanged. In the admin a collection gains a Sub-galleries section (open, create, reorder), and a gallery's Location control moves it to the top level of any category or inside another gallery — a gallery can never be moved into itself.
+- **A readiness gate in the Portfolio tab.** A pre-launch checklist (structure, presentation, editorial, performance) is summarised in the browse header and the rail, with the detail in a Readiness panel, and the gallery editor shows the same advice in place. Advisory only — it reports, it never blocks publishing.
+
 ## 1.6.9 — 2026-10-13
 - **Download the original file for any gallery item, right from admin.** Uploaded files are renamed on disk with a timestamp prefix, so there was no way to pull one back out short of digging through `site-data/uploads` over FTP. Every photo and video in a gallery's item list now has a download button next to Replace that saves the original file under its item title.
 

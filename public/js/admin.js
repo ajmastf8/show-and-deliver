@@ -2120,17 +2120,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (th && contentGid) { openThumbForItem(th.closest('.admin-video-item').dataset.id); return; }
   });
 
-  // Replace file
+  // Replace file: goes through the same upload queue as drop / Add files, so it
+  // gets the progress row, chunked resume for large files, retries and Pause.
   let replaceVideoId = null;
-  $('replace-file-input').addEventListener('change', () => {
-    const file = $('replace-file-input').files[0];
-    if (!file || !replaceVideoId) return;
-    const fd = new FormData(); fd.append('file', file);
-    const xhr = new XMLHttpRequest();
-    xhr.addEventListener('load', () => { if (xhr.status >= 200 && xhr.status < 300) loadContent(); else toast('Replace failed'); replaceVideoId = null; $('replace-file-input').value = ''; });
-    xhr.addEventListener('error', () => { toast('Replace failed'); replaceVideoId = null; $('replace-file-input').value = ''; });
-    xhr.open('PUT', `/api/admin/client/galleries/${contentGid}/items/${replaceVideoId}/replace`);
-    xhr.send(fd);
+  $('replace-file-input').addEventListener('change', (e) => {
+    const file = filterMediaFiles(e.target.files)[0];
+    const vid = replaceVideoId;
+    replaceVideoId = null; e.target.value = '';
+    if (!vid) return;
+    if (!file) { toast('Unsupported file type'); return; }
+    enqueueFiles([file], contentGid, vid);
   });
 
   // ==========================================================================
@@ -2248,14 +2247,14 @@ document.addEventListener('DOMContentLoaded', () => {
   function titleFromFilename(fn) {
     return fn.replace(/\.[^.]+$/, '').replace(/^\d{10,}-/, '').replace(/[_-]/g, ' ').replace(/\s+/g, ' ').trim() || 'Untitled';
   }
-  function enqueueFiles(files, gid) {
+  function enqueueFiles(files, gid, replaceId) {
     gid = gid || state.upload.destination.galleryId;
     if (!gid) { toast('Pick a destination gallery first'); return; }
     files.forEach(file => {
       state.upload.queue.push({
         id: 'u' + Date.now() + Math.random().toString(36).slice(2, 6),
         file, name: file.name, size: file.size, title: titleFromFilename(file.name),
-        galleryId: gid, pct: 0, status: 'waiting', error: '', retries: 0, xhr: null, uploaded: null,
+        galleryId: gid, replaceId: replaceId || null, pct: 0, status: 'waiting', error: '', retries: 0, xhr: null, uploaded: null,
         // Chunked-upload bookkeeping; unused for small multipart uploads.
         uploadId: null, sent: 0, chunkBytes: PREFERRED_CHUNK_BYTES,
       });
@@ -2350,7 +2349,7 @@ document.addEventListener('DOMContentLoaded', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item.portfolioGalleryId
           ? { target: 'portfolio', galleryId: item.portfolioGalleryId }
-          : { target: 'client', galleryId: item.galleryId, title: item.title }),
+          : { target: 'client', galleryId: item.galleryId, title: item.title, replaceId: item.replaceId || '' }),
       });
       item.uploadId = null;
       item.pct = 100; item.status = 'done'; item.uploaded = uploaded;
@@ -2370,6 +2369,10 @@ document.addEventListener('DOMContentLoaded', () => {
   function startMultipartUpload(item) {
     item.status = 'uploading'; item.error = '';
     const fd = new FormData(); fd.append('file', item.file); fd.append('title', item.title);
+    // Replaces ride the same POST: PHP only parses a multipart body for POST,
+    // so a PUT multipart never reaches $_FILES and the replace would silently
+    // send no file. The server swaps the item when replaceId is present.
+    if (item.replaceId) fd.append('replaceId', item.replaceId);
     const xhr = new XMLHttpRequest(); item.xhr = xhr;
     xhr.upload.addEventListener('progress', (e) => { if (e.lengthComputable) { item.pct = Math.round(e.loaded / e.total * 100); updateQueueProgress(item); } });
     xhr.addEventListener('load', () => {
@@ -2387,6 +2390,7 @@ document.addEventListener('DOMContentLoaded', () => {
       item.xhr = null; pumpQueue();
     });
     xhr.addEventListener('error', () => { failItem(item, 'Connection dropped at ' + item.pct + '%'); item.xhr = null; pumpQueue(); });
+    // Always POST /items: replaces carry replaceId in the body (see above).
     xhr.open('POST', `/api/admin/client/galleries/${item.galleryId}/items`);
     xhr.send(fd);
     renderQueues();

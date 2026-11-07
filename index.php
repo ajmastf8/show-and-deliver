@@ -2711,6 +2711,95 @@ function registerGalleryItem(string $gid, string $destName, string $title): arra
     return $item;
 }
 
+// Swap the file behind an existing gallery item for one already saved under
+// UPLOADS_DIR, keeping the item's id, title, position and visibility. Shared by
+// the multipart replace route and the chunked-upload finalize. Responds 404
+// itself when the item is missing, so callers must check that before moving
+// the new file into place. Mirrors registerGalleryItem()'s metadata work so a
+// replacement photo/video gets the same thumbnail, proxy, CRC and captions a
+// fresh upload would.
+function replaceGalleryItemFile(string $gid, string $vid, string $destName): array {
+    $destPath = UPLOADS_DIR . '/' . $destName;
+    $isPhoto = isImageFile($destName);
+    // Hash now, while we're already touching this file, so a delivery never has
+    // to pay for it later. See the CRC cache notes above CRC_CACHE_PATH.
+    fileCrc32($destPath);
+
+    $found = false;
+    $updated = null;
+    // Atomic update: find and rewrite the item in place, under the same lock
+    // that guards concurrent uploads to this gallery.
+    jsonUpdate(galleryDir($gid) . '/videos.json', function ($videos) use ($vid, $destName, $destPath, $isPhoto, &$found, &$updated) {
+        foreach ($videos as &$v) {
+            if ($v['id'] !== $vid) continue;
+            $found = true;
+
+            // Delete the old file and its derived assets; captions describe the
+            // old clip, so drop them rather than carry them onto a new file.
+            $oldPath = UPLOADS_DIR . '/' . $v['filename'];
+            if (file_exists($oldPath)) @unlink($oldPath);
+            if (!empty($v['thumbnail'])) {
+                $oldThumb = THUMBS_DIR . '/' . $v['thumbnail'];
+                if (file_exists($oldThumb)) @unlink($oldThumb);
+            }
+            if (!empty($v['proxy'])) {
+                $oldProxy = PROXY_DIR . '/' . $v['proxy'];
+                if (file_exists($oldProxy)) @unlink($oldProxy);
+            }
+            foreach (($v['captions'] ?? []) as $c) {
+                if (!empty($c['filename'])) {
+                    $oldCap = CAPTIONS_DIR . '/' . $c['filename'];
+                    if (file_exists($oldCap)) @unlink($oldCap);
+                }
+            }
+
+            $v['filename'] = $destName;
+            $v['type'] = $isPhoto ? 'photo' : 'video';
+            $v['replacedAt'] = date('c');
+            $v['capturedAt'] = galleryCaptureTime($destPath, $isPhoto ? 'photo' : 'video');
+            $v['thumbnail'] = null;
+            $v['proxy'] = null;
+            unset($v['duration'], $v['width'], $v['height'], $v['captions']);
+
+            if ($isPhoto) {
+                $meta = probeImage($destPath);
+                if ($meta) { $v['width'] = $meta['width']; $v['height'] = $meta['height']; }
+                $thumbFilename = $v['id'] . '.jpg';
+                $proxyFilename = $v['id'] . '_proxy.jpg';
+                if (generatePhotoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename)) $v['thumbnail'] = $thumbFilename;
+                if (generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename)) {
+                    $v['proxy'] = $proxyFilename;
+                    // Web-size downloads zip the proxy; hash it now like the original.
+                    fileCrc32(PROXY_DIR . '/' . $proxyFilename);
+                }
+            } else {
+                $meta = probeVideo($destPath);
+                if ($meta) {
+                    $v['width'] = $meta['width'];
+                    $v['height'] = $meta['height'];
+                }
+                $duration = (float)($meta['duration'] ?? 0);
+                if ($duration <= 0) $duration = mp4DurationSeconds($destPath);
+                if ($duration > 0) $v['duration'] = $duration;
+                $caps = extractEmbeddedCaptions($destPath, $v['id'], $duration);
+                if ($caps) $v['captions'] = $caps;
+            }
+            $updated = $v;
+            break;
+        }
+        unset($v);
+        return $videos;
+    });
+
+    if (!$found) {
+        // Item vanished between the caller's existence check and here; tidy up
+        // the orphaned upload so it doesn't linger in uploads/.
+        if (file_exists($destPath)) @unlink($destPath);
+        respondError('Not found', 404);
+    }
+    return $updated ?? [];
+}
+
 // Upload (multipart, single-request; used by the web admin for files that
 // fit under post_max_size). The shared registerGalleryItem() helper does
 // the heavy lifting so the chunked-upload path below stays consistent.
@@ -2724,12 +2813,25 @@ if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/items', 
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
     if (!in_array($ext, MEDIA_EXTS)) respondError('Unsupported file type', 400);
 
+    // Optional: swap the file behind an existing item instead of creating one.
+    // Multipart bodies are only parsed for POST, so this — not the PUT
+    // .../items/{iid}/replace route — is how a small-file replace actually
+    // arrives; large ones come through the chunked finalize with the same id.
+    $replaceId = trim((string)($_POST['replaceId'] ?? ''));
+    if ($replaceId !== '') {
+        $exists = false;
+        foreach (readGalleryVideos($params['gid']) as $v) { if ($v['id'] === $replaceId) { $exists = true; break; } }
+        if (!$exists) respondError('Item to replace not found', 404);
+    }
+
     $safeName = safeFilename($file['name']);
     $destName = time() . '-' . $safeName;
     $destPath = UPLOADS_DIR . '/' . $destName;
     move_uploaded_file($file['tmp_name'], $destPath);
 
-    $item = registerGalleryItem($params['gid'], $destName, $_POST['title'] ?? '');
+    $item = $replaceId !== ''
+        ? replaceGalleryItemFile($params['gid'], $replaceId, $destName)
+        : registerGalleryItem($params['gid'], $destName, $_POST['title'] ?? '');
     respond($item);
 }
 
@@ -2888,6 +2990,10 @@ if ($method === 'POST' && matchRoute('/api/admin/uploads/{uploadId}/finalize', $
     $gid = trim((string)($input['galleryId'] ?? ''));
     $pgid = $target === 'portfolio' ? $gid : '';
     $title = trim((string)($input['title'] ?? ''));
+    // Optional: swap the file behind an existing client-gallery item instead of
+    // creating a new one. Clients pass this so replace goes through the same
+    // chunked queue (progress, resume, CRC caching) as a fresh upload.
+    $replaceId = trim((string)($input['replaceId'] ?? ''));
     if ($gid === '') respondError('galleryId is required', 400);
 
     // Portfolio galleries are folders on disk: the file keeps its own name and
@@ -2909,13 +3015,23 @@ if ($method === 'POST' && matchRoute('/api/admin/uploads/{uploadId}/finalize', $
     $partPath = UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.part';
     if (!file_exists($partPath)) respondError('Upload payload missing on disk', 500);
 
+    $ext = strtolower(pathinfo($meta['filename'], PATHINFO_EXTENSION));
+    if ($replaceId !== '') {
+        if (!in_array($ext, MEDIA_EXTS)) respondError('Unsupported file type', 400);
+        $exists = false;
+        foreach (readGalleryVideos($gid) as $v) { if ($v['id'] === $replaceId) { $exists = true; break; } }
+        if (!$exists) respondError('Item to replace not found', 404);
+    }
+
     $safeName = safeFilename($meta['filename']);
     $destName = time() . '-' . $safeName;
     $destPath = UPLOADS_DIR . '/' . $destName;
     if (!rename($partPath, $destPath)) respondError('Could not move assembled file into uploads/', 500);
     @unlink(UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.json');
 
-    $item = registerGalleryItem($gid, $destName, $title);
+    $item = $replaceId !== ''
+        ? replaceGalleryItemFile($gid, $replaceId, $destName)
+        : registerGalleryItem($gid, $destName, $title);
     respond($item);
 }
 
@@ -3093,81 +3209,29 @@ if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{gid}/items/{ii
 }
 
 // Replace file
+// Legacy replace route. A multipart body is only parsed for POST, so on PHP
+// this never sees $_FILES['file'] — kept only so an old client gets a clear
+// "No file" rather than a 404. Use POST .../items with a replaceId field (small
+// files) or the chunked finalize with replaceId (large ones).
 if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{gid}/items/{iid}/replace', $uri, $params)) {
     requireAuth();
     if (empty($_FILES['file'])) respondError('No file', 400);
 
     $file = $_FILES['file'];
+    if ($file['error'] !== UPLOAD_ERR_OK) respondError('Upload error: ' . $file['error'], 400);
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
     if (!in_array($ext, MEDIA_EXTS)) respondError('Unsupported file type', 400);
 
-    $videos = readGalleryVideos($params['gid']);
-    $video = null;
-    foreach ($videos as &$v) {
-        if ($v['id'] === $params['iid']) { $video = &$v; break; }
-    }
-    unset($v);
-    if (!$video) respondError('Not found', 404);
+    // Check the item exists before moving the new file into place, so a bad id
+    // doesn't leave an orphaned upload behind.
+    $found = false;
+    foreach (readGalleryVideos($params['gid']) as $v) { if ($v['id'] === $params['iid']) { $found = true; break; } }
+    if (!$found) respondError('Not found', 404);
 
-    // Delete old file
-    $oldPath = UPLOADS_DIR . '/' . $video['filename'];
-    if (file_exists($oldPath)) unlink($oldPath);
-    if (!empty($video['thumbnail'])) {
-        $oldThumb = THUMBS_DIR . '/' . $video['thumbnail'];
-        if (file_exists($oldThumb)) unlink($oldThumb);
-    }
-    if (!empty($video['proxy'])) {
-        $oldProxy = PROXY_DIR . '/' . $video['proxy'];
-        if (file_exists($oldProxy)) unlink($oldProxy);
-    }
-    // Captions describe the old clip — drop them so they don't carry over to a
-    // different replacement file.
-    foreach (($video['captions'] ?? []) as $c) {
-        if (!empty($c['filename'])) {
-            $oldCap = CAPTIONS_DIR . '/' . $c['filename'];
-            if (file_exists($oldCap)) unlink($oldCap);
-        }
-    }
+    $destName = time() . '-' . safeFilename($file['name']);
+    move_uploaded_file($file['tmp_name'], UPLOADS_DIR . '/' . $destName);
 
-    $safeName = safeFilename($file['name']);
-    $destName = time() . '-' . $safeName;
-    $destPath = UPLOADS_DIR . '/' . $destName;
-    move_uploaded_file($file['tmp_name'], $destPath);
-
-    $isPhoto = isImageFile($destName);
-    $video['filename'] = $destName;
-    $video['type'] = $isPhoto ? 'photo' : 'video';
-    $video['replacedAt'] = date('c');
-    $video['capturedAt'] = galleryCaptureTime($destPath, $isPhoto ? 'photo' : 'video');
-    $video['thumbnail'] = null;
-    $video['proxy'] = null;
-    unset($video['duration'], $video['width'], $video['height'], $video['captions']);
-
-    if ($isPhoto) {
-        $meta = probeImage($destPath);
-        if ($meta) { $video['width'] = $meta['width']; $video['height'] = $meta['height']; }
-        $thumbFilename = $video['id'] . '.jpg';
-        $proxyFilename = $video['id'] . '_proxy.jpg';
-        generatePhotoThumbnail($destPath, THUMBS_DIR . '/' . $thumbFilename);
-        generatePhotoProxy($destPath, PROXY_DIR . '/' . $proxyFilename);
-        fileCrc32(PROXY_DIR . '/' . $proxyFilename);
-        $video['thumbnail'] = $thumbFilename;
-        $video['proxy'] = $proxyFilename;
-    } else {
-        $meta = probeVideo($destPath);
-        if ($meta) {
-            $video['width'] = $meta['width'];
-            $video['height'] = $meta['height'];
-        }
-        $duration = (float)($meta['duration'] ?? 0);
-        if ($duration <= 0) $duration = mp4DurationSeconds($destPath);
-        if ($duration > 0) $video['duration'] = $duration;
-        $caps = extractEmbeddedCaptions($destPath, $video['id'], $duration);
-        if ($caps) $video['captions'] = $caps;
-    }
-
-    writeGalleryVideos($params['gid'], $videos);
-    respond($video);
+    respond(replaceGalleryItemFile($params['gid'], $params['iid'], $destName));
 }
 
 // Delete video/photo

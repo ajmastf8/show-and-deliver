@@ -150,10 +150,21 @@ curl -X POST https://your.host/api/admin/uploads/$UPLOAD_ID/finalize \
   and the server derives one from the uploaded file's name (extension and any
   timestamp prefix stripped, `_`/`-` turned into spaces: `IMG_4821.jpg` →
   `IMG 4821`) instead of naming the item "Untitled".
+- `target: "client"` also accepts an optional `replaceId`: the id of an existing
+  item in that gallery whose file should be swapped for this upload. The item
+  keeps its id, title, position and visibility, and gets fresh thumbnail/proxy
+  metadata and delivery CRCs. An unknown id is a `404`. `replaceId` is ignored
+  for `target: "portfolio"`, where the file *is* the identity.
 - `target: "portfolio"` files the upload into the gallery's folder under its own
   name and returns `{ ok, file, photoshelter, gallery }`. Thumbnails and
   proxies are made by the background processor (`POST /api/admin/portfolio/process`).
 - A missing or unknown `target` is a `400`.
+
+For a **small** replacement file (under `post_max_size`), skip the session and
+send it multipart to `POST /api/admin/client/galleries/{gid}/items` with a
+`replaceId` field instead of `title`. (A multipart body is only parsed for
+`POST`, so `PUT …/items/{iid}/replace` cannot carry a file on PHP; the POST
+route is the one that works.)
 
 Abandoned sessions are cleaned up automatically after 24 hours.
 
@@ -253,9 +264,9 @@ DELETE /api/admin/client/galleries/{gid}/selections/{clientId}
 
 ```
 GET    /api/admin/client/galleries/{gid}/items                       # items + stats
-POST   /api/admin/client/galleries/{gid}/items                       # add a file (multipart, field "file")
+POST   /api/admin/client/galleries/{gid}/items                       # add a file (multipart, field "file"); add "replaceId" to swap an item's file
 PUT    /api/admin/client/galleries/{gid}/items/{iid}                 # update title, visible
-PUT    /api/admin/client/galleries/{gid}/items/{iid}/replace         # replace the file (multipart)
+PUT    /api/admin/client/galleries/{gid}/items/{iid}/replace         # legacy; a multipart body never reaches $_FILES on PUT — POST …/items instead
 PUT    /api/admin/client/galleries/{gid}/items/{iid}/poster          # video poster (raw JPEG/PNG, max 10 MB)
 POST   /api/admin/client/galleries/{gid}/items/{iid}/captions        # WebVTT track
 DELETE /api/admin/client/galleries/{gid}/items/{iid}/captions/{lang}

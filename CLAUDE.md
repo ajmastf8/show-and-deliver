@@ -4,21 +4,20 @@ Self-hosted portfolio and client-proofing site for photographers and
 videographers. Distributed publicly, so keep install-specific branding and
 credentials out of the code — per-site identity comes from Settings > Header.
 
-## Branching and the release freeze
+## Branching and releases
 
-`main` is the production/default branch. The folder-backed portfolio rewrite
-(the 2.x line) lives on its own branch and must not reach `main` until it is
-deliberately released.
+`main` is the production/default branch and carries the folder-backed portfolio
+(the 2.x line). The 1.6.x single-file rewrite is retired; 2.6.0 was the release
+that promoted 2.x to `main`.
 
-- **Do not merge or push to `main`** while `/.release-freeze` exists — a git
-  `pre-push` hook refuses it (`.githooks/pre-push`, enabled via
-  `core.hooksPath`).
-- **Do not propose promoting the rewrite to `main`** unless the owner asks.
-  Treat the freeze as standing; the owner initiates the release.
 - Feature work happens on `agent/<slug>` branches/worktrees and is reconciled
-  periodically. A release is a deliberate act: remove `.release-freeze`, merge
-  the branch to `main`, bump `VERSION` + `CHANGELOG.md`, tag `vX.Y.Z`, publish
-  a GitHub Release.
+  periodically.
+- A release is a deliberate act: bump `VERSION` + `CHANGELOG.md`, merge to
+  `main`, tag `vX.Y.Z` to match `VERSION`, and publish a GitHub Release (installs
+  auto-update from it — see Development below).
+- `.release-freeze` is a marker a pre-push hook uses to block pushes to `main`.
+  It is not present during normal development; add it only to hold `main` while
+  a large rewrite is in flight.
 
 ## Stack
 

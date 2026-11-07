@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.6.0 — 2026-11-07
+- **The 2.x rewrite is now the main line.** The folder-backed portfolio, the reworked admin, client delivery galleries and collections, page/portfolio theming, captions, delivery packages and everything shipped through 2.5.13 are now what `main` carries; the 1.6.x single-file line is retired. Installs updating from 1.6.x land here.
+- **Replacing a gallery item's file goes through the upload queue.** The admin's replace button now shows a progress row, chunks large files, can Pause/retry and caches the new file's delivery checksum, instead of sending one bare request. (It also fixes a long-standing bug where a replace sent no file at all: PHP only parses a multipart body for POST, so the old PUT never reached `$_FILES`.)
+
 ## 2.5.13 — 2026-11-06
 - **The select tools now sit on the select row, and stay there.** 2.5.12 kept Delete and Done in the floating bar at the bottom of the pane, which on a long gallery meant scrolling to the end to reach them — and Select all put them even further away. The count, **Delete** and **Done** are now on the select row itself, and that row is pinned to the top of the list, so they are in reach however far down you are. The floating bar is not used in the gallery view at all now.
 

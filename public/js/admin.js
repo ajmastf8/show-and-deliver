@@ -3104,7 +3104,7 @@ document.addEventListener('DOMContentLoaded', () => {
     $('pk-to').disabled = !pkgEmailConfigured;
     $('pk-to-hint').textContent = pkgEmailConfigured
       ? 'Separate several addresses with commas.'
-      : 'Set up Settings › Email to send from here. The link above works either way — copy it and send it yourself.';
+      : 'Set up Update / Config › Email to send from here. The link above works either way — copy it and send it yourself.';
     updateSendLabel();
   }
 

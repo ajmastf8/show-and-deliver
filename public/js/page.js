@@ -1,5 +1,5 @@
 // Plain pages at /p/<slug>: a title, a picture, some text, and — on a contact
-// page — a form that emails the address in Settings > Email.
+// page — a form that emails the address in Update / Config > Email.
 document.addEventListener('DOMContentLoaded', async () => {
   const root = document.getElementById('page');
   const slug = decodeURIComponent(location.pathname.replace(/^\/p\/?/, '').split('/')[0] || '');

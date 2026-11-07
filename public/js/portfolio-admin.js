@@ -26,10 +26,9 @@
     trash: null,        // its payload
     statsView: false,   // the Stats panel
     stats: null,        // its payload
-    emailView: false,   // the Email panel
-    email: null,        // its payload
-    updateView: false,  // the Update panel
-    apiView: false,     // the API panel
+    email: null,        // the email settings payload, while Update / Config has the Email tab open
+    configView: false,  // the Update / Config page (tabs: update | email | api)
+    configTab: 'update',// which tab of Update / Config is showing
     apiToken: null,     // its payload
     item: null,         // the open item's metadata view
     selectMode: false,  // multi-select in the open gallery's item grid
@@ -229,9 +228,7 @@
     else if (state.duplicatesView) renderDuplicates();
     else if (state.trashView) renderTrash();
     else if (state.statsView) renderStats();
-    else if (state.emailView) renderEmail();
-    else if (state.updateView) renderUpdate();
-    else if (state.apiView) renderApi();
+    else if (state.configView) renderConfig();
     else if (state.galleryId && state.gallery) renderGalleryEditor();
     else renderBrowse();
   }
@@ -285,14 +282,8 @@
         <div class="rail-row sub ${state.pagesView ? 'active' : ''}" id="pfa-pages-row">
           <span class="rail-name">Pages</span>
         </div>
-        <div class="rail-row sub ${state.updateView ? 'active' : ''}" id="pfa-update-row">
-          <span class="rail-name">Update</span>
-        </div>
-        <div class="rail-row sub ${state.emailView ? 'active' : ''}" id="pfa-email-row">
-          <span class="rail-name">Email</span>
-        </div>
-        <div class="rail-row sub ${state.apiView ? 'active' : ''}" id="pfa-api-row">
-          <span class="rail-name">API</span>
+        <div class="rail-row sub ${state.configView ? 'active' : ''}" id="pfa-config-row">
+          <span class="rail-name">Update / Config</span>
         </div>
         <div class="rail-row sub ${state.statsView ? 'active' : ''}" id="pfa-stats-row">
           <span class="rail-name">Stats</span>
@@ -397,9 +388,7 @@
         state.duplicatesView = false;
         state.trashView = false;
         state.statsView = false;
-        state.emailView = false;
-        state.updateView = false;
-        state.apiView = false;
+        state.configView = false;
         render();
       });
     });
@@ -432,9 +421,7 @@
     $('pfa-duplicates-row').addEventListener('click', openDuplicates);
     $('pfa-trash-row').addEventListener('click', openTrash);
     $('pfa-stats-row').addEventListener('click', openStats);
-    $('pfa-email-row').addEventListener('click', openEmail);
-    $('pfa-update-row').addEventListener('click', openUpdate);
-    $('pfa-api-row').addEventListener('click', openApi);
+    $('pfa-config-row').addEventListener('click', () => openConfig(state.configView ? state.configTab : 'update'));
 
     // Drag to reorder categories; the order is what the public nav follows.
     const list = $('pfa-cat-list');
@@ -944,9 +931,7 @@
       state.duplicatesView = false;
       state.trashView = false;
       state.statsView = false;
-      state.emailView = false;
-      state.updateView = false;
-      state.apiView = false;
+      state.configView = false;
       state.item = null;
       state.selectMode = false;
       state.selected = new Set();
@@ -1559,9 +1544,7 @@
     state.duplicatesView = false;
     state.trashView = false;
     state.statsView = false;
-    state.emailView = false;
-    state.updateView = false;
-    state.apiView = false;
+    state.configView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -2136,9 +2119,7 @@
     state.duplicatesView = false;
     state.trashView = false;
     state.statsView = false;
-    state.emailView = false;
-    state.updateView = false;
-    state.apiView = false;
+    state.configView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -2158,9 +2139,7 @@
     state.duplicatesView = false;
     state.trashView = false;
     state.statsView = false;
-    state.emailView = false;
-    state.updateView = false;
-    state.apiView = false;
+    state.configView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -2216,9 +2195,7 @@
     state.readinessView = false;
     state.trashView = false;
     state.statsView = false;
-    state.emailView = false;
-    state.updateView = false;
-    state.apiView = false;
+    state.configView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -2243,9 +2220,7 @@
     state.readinessView = false;
     state.duplicatesView = false;
     state.trashView = false;
-    state.emailView = false;
-    state.updateView = false;
-    state.apiView = false;
+    state.configView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
@@ -2386,36 +2361,39 @@
   // ---------- Email ----------
 
   async function openEmail() {
-    state.emailView = true;
+    return openConfig('email');
+  }
+
+  async function openConfig(tab) {
+    state.configView = true;
+    state.configTab = tab;
     state.design = false;
     state.pagesView = false;
     state.readinessView = false;
     state.duplicatesView = false;
     state.trashView = false;
     state.statsView = false;
-    state.updateView = false;
-    state.apiView = false;
     state.galleryId = null;
     state.gallery = null;
     try {
-      state.email = await req('/api/settings/email');
+      if (tab === 'email') state.email = await req('/api/settings/email');
+      else if (tab === 'api') state.apiToken = await req('/api/settings/api-token');
       render();
+      if (tab === 'update') {
+        checkForUpdates();
+        loadVideoToolsStatus();
+        loadSettingsExportSize();
+        loadGalleryExportList();
+      }
     } catch (err) {
-      S().toast(err.message || 'Could not load email settings');
+      S().toast(err.message || 'Could not load settings');
     }
   }
 
   function renderEmail() {
     const c = state.email || {};
     const hasResend = !!c.resendApiKey;   // returns '••••••••' when a key is stored
-    $('pfa-centre').innerHTML = `
-      <div class="centre-header">
-        <div>
-          <h1>Email</h1>
-          <p class="centre-sub">Notifications when clients leave comments. Use Resend (recommended) or SMTP.</p>
-        </div>
-      </div>
-      <div class="pfa-scroll">
+    $('pfa-config-panel').innerHTML = `
         <section class="pfa-group">
           <h3>Sender &amp; delivery</h3>
           <div class="pfa-group-body tight">
@@ -2459,7 +2437,7 @@
             <div id="pfa-email-status" class="pfa-hint"></div>
           </div>
         </section>
-      </div>`;
+        `;
     wireEmail();
   }
 
@@ -2518,22 +2496,7 @@
   // ---------- Update ----------
 
   async function openUpdate() {
-    state.updateView = true;
-    state.design = false;
-    state.pagesView = false;
-    state.readinessView = false;
-    state.duplicatesView = false;
-    state.trashView = false;
-    state.statsView = false;
-    state.emailView = false;
-    state.apiView = false;
-    state.galleryId = null;
-    state.gallery = null;
-    render();
-    checkForUpdates();
-    loadVideoToolsStatus();
-    loadSettingsExportSize();
-    loadGalleryExportList();
+    return openConfig('update');
   }
 
   async function loadSettingsExportSize() {
@@ -2566,15 +2529,46 @@
     }
   }
 
-  function renderUpdate() {
+  // One rail entry, "Update / Config", with three tabs: Update, Email Config
+  // and API. The tab bodies are the sections that used to be their own rail
+  // pages; each render* below fills #pfa-config-panel rather than the whole
+  // centre, so the header and tab bar (built here) stay put across switches.
+  function renderConfig() {
+    const tab = state.configTab || 'update';
+    const tabs = [
+      ['update', 'Update'],
+      ['email', 'Email Config'],
+      ['api', 'API'],
+    ];
+    const subs = {
+      update: 'Keep the installation and its video tools current.',
+      email: 'Notifications when clients leave comments. Use Resend (recommended) or SMTP.',
+      api: 'Generate an API token so an external tool (CLI, script, app) can create galleries and upload media over HTTP. See <a href="/docs/API.md" target="_blank" rel="noopener">the API docs</a>.',
+    };
     $('pfa-centre').innerHTML = `
       <div class="centre-header">
         <div>
-          <h1>Update</h1>
-          <p class="centre-sub">Keep the installation and its video tools current.</p>
+          <h1>Update / Config</h1>
+          <p class="centre-sub">${subs[tab] || ''}</p>
         </div>
       </div>
-      <div class="pfa-scroll">
+      <div class="pfa-tabs" role="tablist">
+        ${tabs.map(([id, label]) => `<button class="pfa-tab${tab === id ? ' active' : ''}" role="tab" aria-selected="${tab === id}" data-config-tab="${id}">${label}</button>`).join('')}
+      </div>
+      <div class="pfa-scroll" id="pfa-config-panel"></div>`;
+    document.querySelectorAll('[data-config-tab]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (state.configTab === btn.dataset.configTab) return;
+        openConfig(btn.dataset.configTab);
+      });
+    });
+    if (tab === 'email') renderEmail();
+    else if (tab === 'api') renderApi();
+    else renderUpdate();
+  }
+
+  function renderUpdate() {
+    $('pfa-config-panel').innerHTML = `
         <section class="pfa-group">
           <h3>Version</h3>
           <div class="pfa-group-body">
@@ -2639,7 +2633,7 @@
             </div>
           </div>
         </section>
-      </div>`;
+        `;
     wireUpdate();
   }
 
@@ -2767,35 +2761,12 @@
   // ---------- API ----------
 
   async function openApi() {
-    state.apiView = true;
-    state.design = false;
-    state.pagesView = false;
-    state.readinessView = false;
-    state.duplicatesView = false;
-    state.trashView = false;
-    state.statsView = false;
-    state.emailView = false;
-    state.updateView = false;
-    state.galleryId = null;
-    state.gallery = null;
-    try {
-      state.apiToken = await req('/api/settings/api-token');
-      render();
-    } catch (err) {
-      S().toast(err.message || 'Could not load API token state');
-    }
+    return openConfig('api');
   }
 
   function renderApi() {
     const info = state.apiToken || {};
-    $('pfa-centre').innerHTML = `
-      <div class="centre-header">
-        <div>
-          <h1>API</h1>
-          <p class="centre-sub">Generate an API token so an external tool (CLI, script, app) can create galleries and upload media over HTTP. See <a href="/docs/API.md" target="_blank" rel="noopener">the API docs</a>.</p>
-        </div>
-      </div>
-      <div class="pfa-scroll">
+    $('pfa-config-panel').innerHTML = `
         <section class="pfa-group">
           <h3>Site URL</h3>
           <div class="pfa-group-body">
@@ -2832,7 +2803,7 @@
             <p class="pfa-hint"><a href="https://www.deadlineeditor.com" target="_blank" rel="noopener">Deadline Editor</a> presently has upload capabilities directly to this API.</p>
           </div>
         </section>
-      </div>`;
+        `;
     wireApi();
   }
 

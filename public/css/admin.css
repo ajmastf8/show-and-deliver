@@ -361,6 +361,29 @@ code, kbd, samp { font-family: inherit; font-size: inherit; }
 .centre-sub a { color: var(--text-4); }
 .centre-sub a:hover { color: var(--accent); }
 
+/* Tab strip for the Update / Config page. Underlined active tab, quiet
+   inactive ones — the same "what you're on" cue the rail uses. */
+.pfa-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--border);
+}
+.pfa-tab {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 9px 12px;
+  margin-bottom: -1px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-4);
+  cursor: pointer;
+}
+.pfa-tab:hover { color: var(--text-2); }
+.pfa-tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
 .pfa-url-row { display: inline-flex; align-items: center; gap: 6px; }
 /* Underlined so it reads as a link regardless of its (deliberately muted)
    colour — the colour alone wasn't enough of a hint that it's clickable. */
@@ -2342,6 +2365,7 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 
   /* Settings */
   .settings-tabs { gap: 20px; overflow-x: auto; white-space: nowrap; }
+  .pfa-tabs { padding: 0 14px; overflow-x: auto; white-space: nowrap; }
   .settings-title-row { flex-wrap: wrap; gap: 10px; }
   .settings-actions { flex-wrap: wrap; }
 

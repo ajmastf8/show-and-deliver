@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.6.2 — 2026-11-07
+- **Update, Email and API are now one rail entry, "Update / Config".** The three pages shared a home already, so they've collapsed into a single entry with three tabs — Update, Email Config and API — which takes Email and API off the rail on their own. Nothing moved functionally: the same controls, exports and imports live under the Update tab, the sender/Resend/SMTP fields under Email Config, and the token and site URL under API.
+
 ## 2.6.1 — 2026-11-07
 - **Fixed: two client-gallery uploads with the same file name in the same second could overwrite each other.** Stored names were built only from the time and the file name, so a second upload of `DSC_0001.jpg` in the same second landed on the same path — one photo's bytes were lost and the other appeared twice in the gallery. Cameras reuse names (every body counts up from `DSC_0001`), so a gallery fed by more than one photographer, or by parallel API uploads, hit this. Each upload now reserves its own name atomically, keeping the old short name in the common case and adding a counter only on a collision. Applies to the multipart add, the chunked finalize, file replace and folder import.
 - Tracked the release upload tooling (`tools/release/`) so publishing is reproducible.

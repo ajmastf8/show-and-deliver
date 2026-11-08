@@ -180,20 +180,27 @@ site-data/             # Runtime data (gitignored)
   files**: `/media/` serves anything in the portfolio folders by direct URL,
   exactly as `/uploads/` does for client galleries.
 - **Drops** let a client gallery be added to by others: one URL (`/drop/{token}`),
-  one shared password, and each contributor's email for attribution. It is a
-  normal `proofing` gallery in `galleries.json` with a `drop` object beside its
-  own password (`enabled`, `password` hash, `allowPhotos`/`allowVideos`,
-  `maxFileMb`, `dailyCap`); items land in `uploads/` through
-  `registerGalleryItem()`, so thumbnails, proxies and CRCs are identical to an
-  admin upload — they just also carry `source: "drop"` and an `uploader` email.
-  The public routes (`/api/drop/{token}...`, see `docs/API.md`) mirror the admin
-  chunked-upload trio, with `requireAuth()` swapped for "unlocked this session,
-  enabled, unexpired" and no `target`/`galleryId` — the drop token is the
-  destination, so a visitor can only ever upload into that one drop. The page is
-  `public/drop.html` + `js/drop.js` (`SD_PAGE=drop`). **The email is a label,
-  not a credential** — never verified, never authorises anything — and the
-  password gates the page and adding, not the files. A drop cannot be enabled
-  without a password; the admin never sees the hash, only `hasPassword`.
+  one shared password, and an **invite list**. The owner invites people by email
+  (the **Create drop link** button in the gallery toolbar opens the modal); each
+  invited address is the credential that person signs in with, and it is what
+  their uploads are credited to (by invite name if one was set, otherwise the
+  address). It is a normal `proofing` gallery in `galleries.json` with a `drop`
+  object beside its own password (`enabled`, `password` hash,
+  `allowPhotos`/`allowVideos`, `maxFileMb`, `dailyCap`, `invites`); items land in
+  `uploads/` through `registerGalleryItem()`, so thumbnails, proxies and CRCs are
+  identical to an admin upload — they just also carry `source: "drop"`, the
+  uploader label and `uploaderEmail`. The public routes (`/api/drop/{token}...`,
+  see `docs/API.md`) mirror the admin chunked-upload trio, with `requireAuth()`
+  swapped for "the session's email is still on the invite list, the drop is
+  enabled and unexpired" and no `target`/`galleryId` — the drop token is the
+  destination, so a visitor can only ever upload into that one drop. Because the
+  unlock is tied to the invite, **removing an invite invalidates that person's
+  session immediately** on its next request. The page is `public/drop.html` +
+  `js/drop.js` (`SD_PAGE=drop`), styled as a client gallery with an upload zone
+  above the grid. **The email is a credential only against the owner's invite
+  list** — never verified — and the password gates the page and adding, not the
+  files. A drop cannot be enabled without a password; the admin never sees the
+  hash, only `hasPassword`.
 - **The home cover** is the home gallery's `hero`: one of its own entries shown
   full-bleed (a video plays muted and looping) with a title and subtitle over
   it, and the gallery below the fold — or, with `only` set, the cover alone with

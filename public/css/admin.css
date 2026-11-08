@@ -1386,8 +1386,27 @@ textarea.setting-input { height: auto; padding: 10px 12px; resize: vertical; }
 .gv-title-row { display: flex; align-items: center; gap: 14px; margin-top: 6px; }
 .gv-title { margin: 0; font-size: 24px; font-weight: 800; letter-spacing: .05em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gv-badge { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--text-5); flex: 0 0 auto; }
-.gv-badge.drop-badge { color: var(--color-primary, #0019ff); border: 1px solid currentColor; border-radius: 10px; padding: 1px 8px; letter-spacing: .1em; }
+.gv-badge.drop-badge { color: var(--accent, #DE5614); border: 1px solid currentColor; border-radius: 10px; padding: 1px 8px; letter-spacing: .1em; }
 .d-label-sub { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-5); font-size: 12px; margin-left: 8px; }
+
+/* Drop modal: the invite list. */
+.drop-invites { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.drop-invite-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-strong, #2a2a2a);
+  border-radius: 6px;
+  font-size: 13px;
+  background: var(--menu, #1c1c1c);
+}
+.drop-invite-row .di-email { flex: 1; color: var(--text, #f2f2f2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drop-invite-row .di-name { color: var(--text-4, #8e8e8e); white-space: nowrap; }
+.drop-invite-row .link-btn { font-size: 12px; white-space: nowrap; }
+
+/* "Create drop link" turns into "Drop link" once a drop is on. */
+.gv-add .link-btn.drop-on { color: var(--accent, #DE5614); }
 .gv-actions { margin-left: auto; display: flex; gap: 18px; flex: 0 0 auto; }
 .gv-sub {
   margin-top: 8px; font-size: 13px; color: var(--text-4);

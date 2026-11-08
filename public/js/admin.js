@@ -1119,6 +1119,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <label class="btn-primary small">Add files<input type="file" id="gv-file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v,image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden></label>
               <button class="link-btn accent" data-gv="header">Add section header</button>
               <button class="link-btn accent" data-gv="import">Import from server</button>
+              ${isProofing ? `<button class="link-btn accent${g.drop && g.drop.enabled ? ' drop-on' : ''}" data-gv="drop">${g.drop && g.drop.enabled ? 'Drop link' : 'Create drop link'}</button>` : ''}
               <button class="link-btn muted" data-gv="refresh">Refresh metadata</button>
             </div>
           </div>
@@ -1143,6 +1144,7 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (act === 'comments') openDrawer('comments');
     else if (act === 'deliver') openPackageModal('gallery', g.id, g.name);
     else if (act === 'import') { contentGid = g.id; openImportModal(); }
+    else if (act === 'drop') { openDropModal(g); }
     else if (act === 'copy') { copyText(window.location.origin + '/gallery/' + g.token); }
     else if (act === 'open') { window.open(window.location.origin + '/gallery/' + g.token, '_blank', 'noopener'); }
     else if (act === 'refresh') {
@@ -1273,14 +1275,6 @@ document.addEventListener('DOMContentLoaded', () => {
       watermark: !!g.watermark,
       showTitles: g.showTitles !== false,
       coverId: g.coverId || '',
-      // Drop: a gallery other people may add to, with its own shared password.
-      dropEnabled: !!(g.drop && g.drop.enabled),
-      dropHasPassword: !!(g.drop && g.drop.hasPassword),
-      dropPassword: '',        // only sent if typed
-      dropAllowPhotos: !g.drop || g.drop.allowPhotos !== false,
-      dropAllowVideos: !g.drop || g.drop.allowVideos !== false,
-      dropMaxFileMb: (g.drop && g.drop.maxFileMb) || 500,
-      dropDailyCap: (g.drop && g.drop.dailyCap) || 0,
     };
   }
 
@@ -1371,8 +1365,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (isProofing) html += galleryOptionsHtml(g, col, d);
 
-    if (isProofing) html += dropSectionHtml(g, d);
-
     html += `<div class="drawer-block">
       <div class="editable-row"><span class="er-key">FTP folder</span><span class="er-ctl"><input type="text" class="d-input" data-field="importFolder" maxlength="64" placeholder="None" autocomplete="off" spellcheck="false"></span></div>
       <div class="sr-sub" style="margin-top:6px;">Files FTP’d into this folder are added automatically.</div>
@@ -1432,50 +1424,6 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="d-label" style="margin-top:22px;">Activity</div>
       <div id="d-activity" class="d-activity"><div class="sr-sub">Loading…</div></div>
     </div>`;
-    return html;
-  }
-
-  // The Drop panel: a gallery other people may add to, with one shared password.
-  // Off by default, so nothing changes for an existing gallery. The email a
-  // contributor signs in with is attribution only, never a credential.
-  function dropSectionHtml(g, d) {
-    const baseUrl = window.location.origin;
-    const url = g.token ? baseUrl + '/drop/' + g.token : '';
-    const capOn = Number(d.dropDailyCap) > 0;
-    const pwPlaceholder = d.dropHasPassword ? 'Password set — type to change' : 'Set a password';
-    let html = `<div class="drawer-block">
-      <div class="d-label">Drop
-        <span class="d-label-sub">Let others add to this gallery</span>
-      </div>
-      <div class="switch-row"><div><div class="sr-text">Enable a drop</div><div class="sr-sub">One link, one shared password, anyone you invite can add photos and videos.</div></div><button class="switch${d.dropEnabled ? ' on' : ''}" data-switch="dropEnabled"></button></div>`;
-
-    if (d.dropEnabled) {
-      html += `<div class="editable-row"><span class="er-key">Drop link</span><span class="er-ctl er-pair">
-          <input type="text" class="d-input" value="${escapeHtml(url)}" readonly id="d-drop-url">
-          <button type="button" class="link-btn accent" data-drop="copy">Copy</button>
-          <button type="button" class="link-btn accent" data-drop="open">Open</button>
-          <button type="button" class="link-btn accent" data-drop="email">Email</button>
-        </span></div>
-      <div class="editable-row"><span class="er-key">Password</span><span class="er-ctl">
-          <input type="text" class="d-input" data-field="dropPassword" value="" placeholder="${pwPlaceholder}" autocomplete="new-password">
-          ${d.dropHasPassword ? '<button type="button" class="link-btn muted" data-drop="clear-password">Clear</button>' : ''}
-        </span></div>
-      <div class="sr-sub">Contributors type this plus their own email address. The email credits their uploads to them; it is not an account.</div>
-      <div class="switch-row"><div><div class="sr-text">Photos</div></div><button class="switch${d.dropAllowPhotos ? ' on' : ''}" data-switch="dropAllowPhotos"></button></div>
-      <div class="switch-row"><div><div class="sr-text">Videos</div></div><button class="switch${d.dropAllowVideos ? ' on' : ''}" data-switch="dropAllowVideos"></button></div>
-      <div class="editable-row"><span class="er-key">Max file size</span><span class="er-ctl">
-          <input type="number" class="d-input" data-field="dropMaxFileMb" min="1" max="4096" step="1" value="${Number(d.dropMaxFileMb) || 500}" style="max-width:110px"> MB
-        </span></div>
-      <div class="switch-row"><div><div class="sr-text">Daily upload cap</div><div class="sr-sub">A ceiling on files per day, to protect your disk quota.</div></div><button class="switch${capOn ? ' on' : ''}" data-switch="dropDailyCapOn"></button></div>`;
-      if (capOn) {
-        html += `<div class="editable-row"><span class="er-key">Files per day</span><span class="er-ctl">
-            <input type="number" class="d-input" data-field="dropDailyCap" min="1" max="100000" step="1" value="${Number(d.dropDailyCap) || 50}" style="max-width:110px">
-          </span></div>
-        <div class="sr-sub">0 means no cap.</div>`;
-      }
-      html += `<div class="sr-sub" style="margin-top:10px;">Note: the password gates the page and adding, not the files themselves — a direct file URL works, exactly as it does for any gallery.</div>`;
-    }
-    html += `</div>`;
     return html;
   }
 
@@ -1575,11 +1523,10 @@ document.addEventListener('DOMContentLoaded', () => {
     body.querySelectorAll('[data-switch]').forEach(sw => sw.addEventListener('click', () => {
       const key = sw.getAttribute('data-switch');
       if (key === 'useCollection') { d.override = !d.override; state.drawer.dirty = true; renderDrawer(); return; }
-      if (key === 'dropDailyCapOn') { d.dropDailyCap = sw.classList.contains('on') ? 0 : 50; state.drawer.dirty = true; renderDrawer(); return; }
       d[key] = !sw.classList.contains('on');
       sw.classList.toggle('on');
       state.drawer.dirty = true;
-      if (key === 'selEnabled' || key.startsWith('drop')) renderDrawer();
+      if (key === 'selEnabled') renderDrawer();
     }));
     body.querySelectorAll('[data-field="sortBy"]').forEach(sel => sel.addEventListener('change', () => renderDrawer()));
     if (g.type === 'proofing') {
@@ -1593,42 +1540,10 @@ document.addEventListener('DOMContentLoaded', () => {
       d.coverId = ''; state.drawer.dirty = true; renderDrawer();
     }));
     body.querySelectorAll('[data-link]').forEach(b => b.addEventListener('click', () => linkAction(g, b.getAttribute('data-link'))));
-    body.querySelectorAll('[data-drop]').forEach(b => b.addEventListener('click', () => dropAction(g, b.getAttribute('data-drop'))));
     body.querySelectorAll('[data-act]').forEach(b => {
       if (b.getAttribute('data-act') === 'clear-cover') return;
       b.addEventListener('click', () => drawerAction(g, col, b.getAttribute('data-act')));
     });
-  }
-
-  async function dropAction(g, act) {
-    const d = state.drawer.draft;
-    const url = window.location.origin + '/drop/' + g.token;
-    if (act === 'copy') { copyText(url); }
-    else if (act === 'open') { window.open(url, '_blank', 'noopener'); }
-    else if (act === 'clear-password') {
-      const res = await fetch(`/api/admin/client/galleries/${g.id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ drop: { clearPassword: true, enabled: false } }),
-      });
-      if (res.ok) { d.dropHasPassword = false; d.dropPassword = ''; d.dropEnabled = false; state.drawer.dirty = false; await loadData(); initDraft(); renderAll(); renderDrawer(); toast('Drop password cleared'); }
-      else toast('Could not clear the password');
-    }
-    else if (act === 'email') {
-      // Needs the plaintext password, which is never stored — so ask for it here
-      // and send it straight through to the invitation email.
-      const to = await promptModal({ title: 'Email the drop link', okText: 'Continue', field: { type: 'email', label: 'Send to', placeholder: 'name@example.com' } });
-      if (!to) return;
-      const password = await promptModal({ title: 'Drop password', okText: 'Continue', field: { type: 'text', label: 'Password (included in the email)', placeholder: 'The password to share' } });
-      if (password === null) return;
-      const message = await promptModal({ title: 'Add a message?', okText: 'Send', field: { type: 'textarea', label: 'Message (optional)', rows: 3, placeholder: 'Add a note…' } });
-      if (message === null) return;
-      const res = await fetch(`/api/admin/client/galleries/${g.id}/drop-email`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ to, password: password || '', message: message || '' }),
-      });
-      const data = await res.json().catch(() => ({}));
-      toast(res.ok ? 'Invitation sent' : (data.error || 'Could not send the email'));
-    }
   }
 
   async function linkAction(g, act) {
@@ -1667,16 +1582,6 @@ document.addEventListener('DOMContentLoaded', () => {
         body.watermark = !!d.watermark;
         body.showTitles = !!d.showTitles;
         body.coverId = d.coverId || '';
-        // The drop, sent whole so the server validates it as one unit. A password
-        // is only included when typed; clearPassword is handled by its own action.
-        body.drop = {
-          enabled: !!d.dropEnabled,
-          allowPhotos: !!d.dropAllowPhotos,
-          allowVideos: !!d.dropAllowVideos,
-          maxFileMb: Math.max(1, Math.min(4096, parseInt(d.dropMaxFileMb, 10) || 500)),
-          dailyCap: Math.max(0, parseInt(d.dropDailyCap, 10) || 0),
-        };
-        if (d.dropPassword) body.drop.password = d.dropPassword;
         if (col) {
           body.overrideCollectionSettings = d.override;
           if (d.override) {
@@ -3266,6 +3171,169 @@ document.addEventListener('DOMContentLoaded', () => {
     pkgCurrent = null;
     pkgModal.hidden = true;
     toast('Link revoked');
+  });
+
+  // ==========================================================================
+  // Drop link modal
+  // ==========================================================================
+  // A drop is a client gallery other people may add to. The owner sets one shared
+  // password and invites people by email; each invited address is the credential
+  // that person signs in with, which is also what their uploads are credited to.
+  const dropModal = $('drop-modal');
+  let dropGallery = null;   // the gallery being configured
+  let dropInvites = [];     // the current invite list, edited in place
+
+  function dropUrl() { return window.location.origin + '/drop/' + dropGallery.token; }
+
+  function randomPassword() {
+    const words = ['sunset', 'harbor', 'maple', 'copper', 'river', 'canyon', 'amber', 'willow', 'cedar', 'meadow'];
+    const w = () => words[Math.floor(Math.random() * words.length)];
+    return `${w()}-${w()}-${Math.floor(10 + Math.random() * 89)}`;
+  }
+
+  async function openDropModal(g) {
+    closeAllMenus();
+    dropGallery = g;
+    dropInvites = (g.drop && g.drop.invites) ? g.drop.invites.map(i => ({ email: i.email, name: i.name || '' })) : [];
+    const has = !!(g.drop && g.drop.enabled);
+
+    $('dropm-title').textContent = has ? 'Drop link' : 'Create drop link';
+    $('dropm-existing').hidden = !has;
+    $('dropm-deactivate').hidden = !has;
+    $('dropm-save').hidden = !has;
+    $('dropm-link').value = has ? dropUrl() : '';
+    $('dropm-enabled').classList.toggle('on', has);
+    $('dropm-password').value = '';
+    $('dropm-password').placeholder = (g.drop && g.drop.hasPassword) ? 'Password set — type to change' : 'Set a password';
+    $('dropm-photos').checked = !g.drop || g.drop.allowPhotos !== false;
+    $('dropm-videos').checked = !g.drop || g.drop.allowVideos !== false;
+    $('dropm-maxmb').value = (g.drop && g.drop.maxFileMb) || 500;
+    $('dropm-dailycap').value = (g.drop && g.drop.dailyCap) || 0;
+    $('dropm-invite-email').value = '';
+    $('dropm-invite-name').value = '';
+    $('dropm-message').value = '';
+    renderDropInvites();
+    dropModal.hidden = false;
+    setTimeout(() => (has ? $('dropm-invite-email') : $('dropm-password')).focus(), 50);
+  }
+
+  function renderDropInvites() {
+    const box = $('dropm-invites');
+    if (!dropInvites.length) {
+      box.innerHTML = '<div class="sr-sub" style="padding:6px 0;">No one invited yet.</div>';
+      return;
+    }
+    box.innerHTML = dropInvites.map((inv, i) => `
+      <div class="drop-invite-row">
+        <span class="di-email">${escapeHtml(inv.email)}</span>
+        ${inv.name ? `<span class="di-name">${escapeHtml(inv.name)}</span>` : ''}
+        <button type="button" class="link-btn danger muted" data-drop-uninvite="${i}">Remove</button>
+      </div>`).join('');
+    box.querySelectorAll('[data-drop-uninvite]').forEach(b => b.addEventListener('click', () => {
+      const i = Number(b.getAttribute('data-drop-uninvite'));
+      const email = dropInvites[i] && dropInvites[i].email;
+      dropInvites.splice(i, 1);
+      renderDropInvites();
+      // If the drop already exists, removal is a real server change.
+      if (email && dropGallery.drop && dropGallery.drop.enabled) {
+        fetch(`/api/admin/client/galleries/${dropGallery.id}/drop-uninvite`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        }).then(r => r.ok ? r.json() : null).then(d => { if (d) dropInvites = d.invites.map(x => ({ email: x.email, name: x.name || '' })); renderDropInvites(); });
+      }
+    }));
+  }
+
+  // Save the drop's own settings (password, allowances, caps, enabled) — the
+  // invite list rides along on every save so removals stick.
+  async function saveDropSettings() {
+    const body = {
+      drop: {
+        enabled: $('dropm-enabled').classList.contains('on'),
+        allowPhotos: $('dropm-photos').checked,
+        allowVideos: $('dropm-videos').checked,
+        maxFileMb: Math.max(1, Math.min(4096, parseInt($('dropm-maxmb').value, 10) || 500)),
+        dailyCap: Math.max(0, parseInt($('dropm-dailycap').value, 10) || 0),
+        invites: dropInvites,
+      },
+    };
+    if ($('dropm-password').value.trim()) body.drop.password = $('dropm-password').value.trim();
+    const res = await fetch(`/api/admin/client/galleries/${dropGallery.id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.error || 'Could not save the drop settings'); return false; }
+    return true;
+  }
+
+  $('dropm-password-random').addEventListener('click', () => { $('dropm-password').value = randomPassword(); });
+  $('dropm-copy').addEventListener('click', () => copyText(dropUrl()));
+  $('dropm-open').addEventListener('click', () => window.open(dropUrl(), '_blank', 'noopener'));
+  $('dropm-enabled').addEventListener('click', () => $('dropm-enabled').classList.toggle('on'));
+  $('dropm-close').addEventListener('click', () => { dropModal.hidden = true; });
+  dropModal.querySelector('.modal-backdrop').addEventListener('click', () => { dropModal.hidden = true; });
+
+  $('dropm-save').addEventListener('click', async () => {
+    if (await saveDropSettings()) {
+      await loadData(); renderAll();
+      const g = state.galleries.find(x => x.id === dropGallery.id);
+      if (g) dropGallery = g;
+      toast('Drop settings saved');
+    }
+  });
+
+  $('dropm-send').addEventListener('click', async () => {
+    const email = $('dropm-invite-email').value.trim();
+    const name = $('dropm-invite-name').value.trim();
+    const password = $('dropm-password').value.trim();
+    const enabled = $('dropm-enabled').classList.contains('on');
+    const alreadyHasPassword = !!(dropGallery.drop && dropGallery.drop.hasPassword);
+    if (!email) { toast('Enter an email address to invite'); return; }
+    // A new drop needs a password in the same click that turns it on.
+    if (!alreadyHasPassword && !password) { toast('Set a password for the drop first'); return; }
+    // Make sure the invite is in the list we save.
+    if (!dropInvites.some(i => i.email === email.toLowerCase())) {
+      dropInvites.push({ email: email.toLowerCase(), name });
+    } else {
+      dropInvites = dropInvites.map(i => i.email === email.toLowerCase() ? { email: i.email, name } : i);
+    }
+    // Sending an invite implies the drop is on.
+    if (!enabled) $('dropm-enabled').classList.add('on');
+    if (!await saveDropSettings()) return;
+    renderDropInvites();
+
+    const btn = $('dropm-send');
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res = await fetch(`/api/admin/client/galleries/${dropGallery.id}/drop-invite`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: email, name, password, message: $('dropm-message').value.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      toast(res.ok ? `Invite sent to ${email}` : (data.error || 'Could not send the invite'));
+      if (res.ok) {
+        $('dropm-invite-email').value = ''; $('dropm-invite-name').value = ''; $('dropm-message').value = '';
+        if (data.invites) { dropInvites = data.invites.map(x => ({ email: x.email, name: x.name || '' })); renderDropInvites(); }
+        await loadData(); renderAll();
+        $('dropm-existing').hidden = false;
+        $('dropm-deactivate').hidden = false;
+        $('dropm-save').hidden = false;
+        $('dropm-link').value = dropUrl();
+      }
+    } finally {
+      btn.disabled = false; btn.textContent = label;
+    }
+  });
+
+  $('dropm-deactivate').addEventListener('click', async () => {
+    if (!await confirmModal({ title: 'Turn off drop', message: 'The drop link stops working immediately. Invited people can no longer sign in, and their existing uploads stay in the gallery.', okText: 'Turn off', danger: true })) return;
+    $('dropm-enabled').classList.remove('on');
+    if (await saveDropSettings()) {
+      dropModal.hidden = true;
+      await loadData(); renderAll();
+      toast('Drop turned off');
+    }
   });
 
   function copyCollectionLink(colId) {

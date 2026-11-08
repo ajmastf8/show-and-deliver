@@ -1,9 +1,9 @@
-// Drop page: a shared gallery visitors can add to.
+// Drop page: a client gallery visitors can add to.
 //
-// One URL, one shared password, and a visitor's email captured at unlock (used
-// only to credit what they upload). The page shows the current grid and an
-// uploader; uploads ride the same chunked contract the admin uses, so a big
-// video isn't capped by the host's post_max_size.
+// Deliberately the same shell as the client gallery (proofing.css and the same
+// .proofing-* markup), with one addition at the top: an upload zone. One URL, one
+// shared password, and each contributor's email captured at unlock (used only to
+// credit what they upload).
 document.addEventListener('DOMContentLoaded', () => {
   const token = window.location.pathname.split('/').pop();
 
@@ -13,56 +13,60 @@ document.addEventListener('DOMContentLoaded', () => {
   const errorMessage = document.getElementById('error-message');
   const passwordView = document.getElementById('password-view');
   const passwordForm = document.getElementById('password-form');
-  const passwordDropName = document.getElementById('password-drop-name');
+  const passwordGalleryName = document.getElementById('password-gallery-name');
   const emailInput = document.getElementById('drop-email');
-  const passwordInput = document.getElementById('drop-password');
+  const passwordInput = document.getElementById('gallery-password');
   const passwordError = document.getElementById('password-error');
-  const dropView = document.getElementById('drop-view');
-  const dropName = document.getElementById('drop-name');
-  const dropSub = document.getElementById('drop-sub');
-  const dropWhoEmail = document.getElementById('drop-who-email');
+  const galleryView = document.getElementById('gallery-view');
+  const galleryName = document.getElementById('gallery-name');
+  const viewerDisplayName = document.getElementById('viewer-display-name');
+  const videoListEl = document.getElementById('video-list');
+
   const dropZone = document.getElementById('drop-zone');
   const dropFile = document.getElementById('drop-file');
   const dzHint = document.getElementById('dz-hint');
   const queueEl = document.getElementById('drop-queue');
-  const gridEl = document.getElementById('drop-grid');
-  const emptyEl = document.getElementById('drop-empty');
-  const countEl = document.getElementById('drop-count');
-  const refreshBtn = document.getElementById('drop-refresh');
 
   const lightbox = document.getElementById('lightbox');
-  const lbVideo = document.getElementById('lightbox-video');
-  const lbPhoto = document.getElementById('lightbox-photo');
-  const lbTitle = document.getElementById('lightbox-title');
-  const lbUploader = document.getElementById('lightbox-uploader');
-  const lbSpinner = document.getElementById('lightbox-spinner');
+  const lightboxVideo = document.getElementById('lightbox-video');
+  const lightboxPhoto = document.getElementById('lightbox-photo');
+  const lightboxTitle = document.getElementById('lightbox-title');
+  const lightboxSpinner = document.getElementById('lightbox-spinner');
   const lbPrev = document.querySelector('.lightbox-prev');
   const lbNext = document.querySelector('.lightbox-next');
   const lbClose = document.querySelector('.lightbox-close-btn');
   const PREFERRED_CHUNK_BYTES = 8 * 1024 * 1024;
+  const VIDEO_CONTROL_BAR = 40;
 
-  let data = null;      // the last payload from GET /api/drop/{token}
-  let version = null;   // the server's version marker, to know when to refresh
-  let lbIndex = -1;     // which item the lightbox is showing
+  let galleryData = null;   // the last payload from GET /api/drop/{token}
+  let version = null;       // the server's version marker, for the live poll
+  let currentIndex = -1;    // which item the lightbox is showing
 
   const photoMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 
   function showError(title, msg) {
     loadingView.style.display = 'none';
     passwordView.style.display = 'none';
-    dropView.style.display = 'none';
+    galleryView.style.display = 'none';
     errorTitle.textContent = title;
     errorMessage.textContent = msg;
     errorView.style.display = 'flex';
   }
 
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // Thumbnails and proxies are served straight off disk (the password gates the
+  // page, not the files), so a plain URL is all a preview needs.
   function previewUrl(item, kind) {
     return kind === 'thumb'
       ? '/thumbnails/' + encodeURIComponent(item.thumbnail)
       : '/proxies/' + encodeURIComponent(item.proxy);
   }
 
-  // --- Loading and unlocking ------------------------------------------------
+  // ---- Loading and unlocking ##
 
   async function load() {
     let res, body;
@@ -70,27 +74,23 @@ document.addEventListener('DOMContentLoaded', () => {
       res = await fetch(`/api/drop/${encodeURIComponent(token)}`);
       body = await res.json().catch(() => ({}));
     } catch (_) {
-      showError('Drop unavailable', 'Could not reach the server. Check your connection and try again.');
+      showError('Gallery unavailable', 'Could not reach the server. Check your connection and try again.');
       return;
     }
     if (!res.ok) {
-      showError('Drop Not Found', body.error || 'This drop may have been closed or the link is incorrect.');
+      showError('Gallery Not Found', body.error || 'This gallery may have been removed or the link is incorrect.');
       return;
     }
-    if (body.locked) {
-      showPassword(body.galleryName);
-      return;
-    }
+    if (body.locked) { showPassword(body.galleryName); return; }
     render(body);
   }
 
   function showPassword(name) {
     loadingView.style.display = 'none';
     errorView.style.display = 'none';
-    dropView.style.display = 'none';
-    passwordDropName.textContent = name || '';
+    galleryView.style.display = 'none';
+    passwordGalleryName.textContent = name || '';
     passwordView.style.display = 'flex';
-    // Remember the last email used on this browser so returning is one field less.
     const saved = localStorage.getItem('drop-email:' + token);
     if (saved) emailInput.value = saved;
     (emailInput.value ? passwordInput : emailInput).focus();
@@ -110,7 +110,7 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify({ email, password }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) { passwordError.textContent = body.error || 'Could not unlock the drop'; return; }
+      if (!res.ok) { passwordError.textContent = body.error || 'Could not unlock the gallery'; return; }
       localStorage.setItem('drop-email:' + token, email);
       passwordView.style.display = 'none';
       render(body);
@@ -121,119 +121,182 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // --- Rendering the grid ---------------------------------------------------
+  // ---- Rendering the gallery ##
 
   function render(body) {
-    data = body;
+    galleryData = body;
     version = body.gallery.version;
     loadingView.style.display = 'none';
     passwordView.style.display = 'none';
     errorView.style.display = 'none';
-    dropView.style.display = 'block';
+    galleryView.style.display = 'block';
 
-    dropName.textContent = body.gallery.name;
-    dropWhoEmail.textContent = body.email || '';
-    document.title = body.gallery.name || 'Drop';
+    galleryName.textContent = body.gallery.name;
+    viewerDisplayName.textContent = body.email || '';
+    document.title = body.gallery.name || 'Gallery';
 
-    // Tell the visitor what they may add, and keep the file input honest.
     const accepts = [];
     if (body.gallery.allowPhotos) accepts.push(...photoMimes, '.jpg', '.jpeg', '.png', '.webp', '.gif');
     if (body.gallery.allowVideos) accepts.push('video/mp4', 'video/webm', 'video/quicktime', '.mp4', '.webm', '.mov', '.m4v');
     dropFile.setAttribute('accept', accepts.join(','));
+
     const parts = [];
     if (body.gallery.allowPhotos) parts.push('photos');
     if (body.gallery.allowVideos) parts.push('videos');
     dzHint.textContent = parts.length
       ? `Add ${parts.join(' or ')} · up to ${body.gallery.maxFileMb} MB each · large files upload in chunks`
-      : 'This drop is not accepting uploads right now.';
+      : 'This gallery is not accepting uploads right now.';
 
-    renderGrid();
+    renderVideoList();
   }
 
-  function renderGrid() {
-    const items = data.items || [];
-    countEl.textContent = items.length === 1 ? '1 item' : `${items.length} items`;
-    emptyEl.hidden = items.length > 0;
-    gridEl.replaceChildren();
+  // Same card markup as the client gallery, with the uploader standing in for
+  // the comment count in the meta line.
+  function renderVideoList() {
+    videoListEl.innerHTML = '';
+    const items = galleryData.items || [];
 
-    items.forEach((item, i) => {
-      const tile = document.createElement('button');
-      tile.type = 'button';
-      tile.className = 'drop-tile';
-      tile.addEventListener('click', () => openLightbox(i));
+    items.forEach(item => {
+      const card = document.createElement('div');
+      card.className = 'proofing-video-card';
+      card.dataset.id = item.id;
 
-      if (item.type === 'photo' && item.thumbnail) {
-        const img = document.createElement('img');
-        img.loading = 'lazy';
-        img.src = previewUrl(item, 'thumb');
-        img.alt = item.title || '';
-        tile.appendChild(img);
-      } else {
-        const ph = document.createElement('div');
-        ph.className = 'drop-tile-video';
-        ph.innerHTML = '<span class="drop-play">&#9658;</span>';
-        if (item.type === 'video' && item.thumbnail) {
-          ph.style.backgroundImage = `url("${previewUrl(item, 'thumb')}")`;
+      const isPhoto = item.type === 'photo';
+      const thumbSrc = item.thumbnail ? previewUrl(item, 'thumb') : '';
+
+      let durationLabel = '';
+      if (!isPhoto && item.duration) {
+        const mins = Math.floor(item.duration / 60);
+        const secs = Math.floor(item.duration % 60).toString().padStart(2, '0');
+        durationLabel = `<span class="proofing-thumb-duration">${mins}:${secs}</span>`;
+      }
+
+      let resLabel = '';
+      if (item.width && item.height) {
+        if (isPhoto) {
+          resLabel = `<span class="proofing-card-res">${item.width}&times;${item.height}</span>`;
+        } else {
+          const h = Math.max(item.width, item.height);
+          const v = Math.min(item.width, item.height);
+          if (h >= 3840) resLabel = '4K';
+          else if (h >= 2560) resLabel = '1440p';
+          else if (v >= 1080 || h >= 1920) resLabel = '1080p';
+          else if (v >= 720 || h >= 1280) resLabel = '720p';
+          else resLabel = v + 'p';
+          resLabel = `<span class="proofing-card-res">${resLabel}</span>`;
         }
-        tile.appendChild(ph);
       }
-      if (item.uploader) {
-        const who = document.createElement('span');
-        who.className = 'drop-tile-who';
-        who.textContent = item.uploader;
-        tile.appendChild(who);
+
+      const whoLabel = item.uploader
+        ? `<span class="proofing-card-comments">${escapeHtml(item.uploader)}</span>`
+        : '';
+
+      let thumbContent;
+      if (thumbSrc) {
+        thumbContent = `<img src="${thumbSrc}" alt="${escapeHtml(item.title)}" loading="lazy">`;
+      } else if (isPhoto) {
+        thumbContent = `<img src="/uploads/${encodeURIComponent(item.filename || '')}" alt="${escapeHtml(item.title)}" loading="lazy">`;
+      } else {
+        thumbContent = `<video src="/uploads/${encodeURIComponent(item.filename || '')}" muted preload="metadata"></video>`;
       }
-      gridEl.appendChild(tile);
+
+      card.innerHTML = `
+        <div class="proofing-thumb-wrapper">
+          ${thumbContent}
+          ${durationLabel}
+        </div>
+        ${item.title || resLabel || whoLabel ? `<div class="proofing-card-info">
+          <span class="proofing-card-title">${escapeHtml(item.title)}</span>
+          <div class="proofing-card-meta">${resLabel}${whoLabel}</div>
+        </div>` : ''}
+      `;
+
+      card.addEventListener('click', () => openLightbox(item.id));
+      videoListEl.appendChild(card);
     });
   }
 
-  // --- Lightbox -------------------------------------------------------------
+  // ---- Lightbox ##
 
-  function openLightbox(i) {
-    const items = data.items || [];
-    if (i < 0 || i >= items.length) return;
-    lbIndex = i;
-    const item = items[i];
-    lbTitle.textContent = item.title || '';
-    lbUploader.textContent = item.uploader ? 'Added by ' + item.uploader : '';
-    lbVideo.pause();
-    lbVideo.style.display = 'none';
-    lbPhoto.style.display = 'none';
-    lbSpinner.style.display = 'block';
+  function openLightbox(itemId) {
+    const items = galleryData.items || [];
+    const idx = items.findIndex(v => v.id === itemId);
+    if (idx < 0) return;
+    currentIndex = idx;
+    const item = items[idx];
 
-    if (item.type === 'video') {
-      lbVideo.src = '/uploads/' + encodeURIComponent(item.filename || '');
-      lbVideo.poster = item.thumbnail ? previewUrl(item, 'thumb') : '';
-      lbVideo.style.display = 'block';
-      lbVideo.load();
-      lbVideo.play().catch(() => {});
-      lbSpinner.style.display = 'none';
-    } else if (item.proxy) {
-      lbPhoto.src = '/proxies/' + encodeURIComponent(item.proxy);
-      lbPhoto.style.display = 'block';
-      lbPhoto.onload = () => { lbSpinner.style.display = 'none'; };
-    } else if (item.thumbnail) {
-      lbPhoto.src = '/thumbnails/' + encodeURIComponent(item.thumbnail);
-      lbPhoto.style.display = 'block';
-      lbPhoto.onload = () => { lbSpinner.style.display = 'none'; };
-    }
+    lightboxTitle.textContent = item.title || (item.uploader ? 'Added by ' + item.uploader : '');
     lightbox.style.display = 'flex';
-    refreshBtn.hidden = true;
+    document.body.style.overflow = 'hidden';
+
+    const isPhoto = item.type === 'photo';
+    if (isPhoto) {
+      lightboxVideo.pause();
+      lightboxVideo.src = '';
+      lightboxVideo.style.display = 'none';
+      lightboxSpinner.classList.remove('active');
+      lightboxPhoto.src = item.proxy
+        ? previewUrl(item, 'proxy')
+        : '/uploads/' + encodeURIComponent(item.filename || '');
+      lightboxPhoto.style.display = '';
+    } else {
+      lightboxPhoto.style.display = 'none';
+      lightboxPhoto.src = '';
+      lightboxVideo.style.display = '';
+      lightboxSpinner.classList.add('active');
+      lightboxVideo.src = '/uploads/' + encodeURIComponent(item.filename || '');
+      if (item.thumbnail) lightboxVideo.poster = previewUrl(item, 'thumb');
+      lightboxVideo.load();
+      lightboxVideo.addEventListener('canplay', function onCanPlay() {
+        lightboxVideo.removeEventListener('canplay', onCanPlay);
+        lightboxVideo.play().catch(() => {});
+      });
+    }
+    layoutLightboxVideo();
   }
 
   function closeLightbox() {
     lightbox.style.display = 'none';
-    lbVideo.pause();
-    lbVideo.removeAttribute('src');
-    lbVideo.load();
-    lbIndex = -1;
+    lightboxVideo.pause();
+    lightboxVideo.src = '';
+    lightboxPhoto.src = '';
+    lightboxPhoto.style.display = 'none';
+    currentIndex = -1;
+    document.body.style.overflow = '';
   }
 
   function step(delta) {
-    const items = data.items || [];
+    const items = galleryData.items || [];
     if (!items.length) return;
-    openLightbox((lbIndex + delta + items.length) % items.length);
+    openLightbox(items[(currentIndex + delta + items.length) % items.length].id);
   }
+
+  // Size the <video> element to the picture height plus a strip for the native
+  // controls, so the controls sit below the picture rather than over it — the
+  // same trick proofing.js uses.
+  function layoutLightboxVideo() {
+    if (lightboxVideo.style.display === 'none') return;
+    const wrapper = lightboxVideo.parentElement;
+    const availW = wrapper.clientWidth;
+    const availH = wrapper.clientHeight;
+    const w = lightboxVideo.videoWidth || 16;
+    const h = lightboxVideo.videoHeight || 9;
+    if (!w || !h) return;
+    let dispW = Math.min(availW, availH * (w / h));
+    let dispH = dispW * (h / w);
+    if (dispH + VIDEO_CONTROL_BAR > availH) {
+      dispH = Math.max(0, availH - VIDEO_CONTROL_BAR);
+      dispW = dispH * (w / h);
+    }
+    lightboxVideo.style.width = dispW + 'px';
+    lightboxVideo.style.height = (dispH + VIDEO_CONTROL_BAR) + 'px';
+  }
+
+  lightboxVideo.addEventListener('loadedmetadata', layoutLightboxVideo);
+  lightboxVideo.addEventListener('waiting', () => lightboxSpinner.classList.add('active'));
+  lightboxVideo.addEventListener('playing', () => lightboxSpinner.classList.remove('active'));
+  lightboxVideo.addEventListener('canplay', () => lightboxSpinner.classList.remove('active'));
+  window.addEventListener('resize', layoutLightboxVideo);
 
   lbClose.addEventListener('click', closeLightbox);
   lightbox.querySelector('.lightbox-backdrop').addEventListener('click', closeLightbox);
@@ -246,7 +309,7 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (e.key === 'ArrowRight') step(1);
   });
 
-  // --- Uploading ------------------------------------------------------------
+  // ---- Uploading ##
 
   queueEl.addEventListener('click', (e) => {
     const retry = e.target.closest('[data-retry]');
@@ -266,29 +329,26 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   function allowed(file) {
-    const allowedList = (data && data.gallery) || {};
-    if (file.type.startsWith('image/') && !allowedList.allowPhotos) return false;
-    if (file.type.startsWith('video/') && !allowedList.allowVideos) return false;
+    const g = (galleryData && galleryData.gallery) || {};
+    if (file.type.startsWith('image/') && !g.allowPhotos) return false;
+    if (file.type.startsWith('video/') && !g.allowVideos) return false;
     return true;
   }
 
   function enqueue(files) {
-    if (!data) return;
+    if (!galleryData) return;
     const usable = files.filter(f => f && f.size > 0);
     if (!usable.length) return;
     for (const file of usable) {
-      if (!allowed(file)) {
-        toast('That file type is not allowed in this drop.');
-        continue;
-      }
-      if (file.size > data.gallery.maxFileMb * 1024 * 1024) {
-        toast(`"${file.name}" is over the ${data.gallery.maxFileMb} MB limit.`);
+      if (!allowed(file)) { toast('That file type is not allowed in this gallery.'); continue; }
+      if (file.size > galleryData.gallery.maxFileMb * 1024 * 1024) {
+        toast(`"${file.name}" is over the ${galleryData.gallery.maxFileMb} MB limit.`);
         continue;
       }
       const job = { file, name: file.name, size: file.size, status: 'queued', pct: 0, sent: 0, uploadId: null };
       job.row = queueRow(job);
       queueEl.appendChild(job.row.el);
-      pump(job);
+      startUpload(job);
     }
   }
 
@@ -318,18 +378,14 @@ document.addEventListener('DOMContentLoaded', () => {
     job.row.retry._job = job;
   }
 
-  function pump(job) {
-    if (job.status === 'done' || job.status === 'uploading') return;
-    job.status = 'uploading';
-    job.error = '';
-    updateRow(job);
-    startUpload(job);
-  }
-
   // Chunked upload, same contract as the admin: initiate, PUT contiguous
   // chunks, finalize. A dropped connection leaves `sent` where the server last
   // acknowledged, so Retry resumes rather than restarting.
   async function startUpload(job) {
+    if (job.status === 'done' || job.status === 'uploading') return;
+    job.status = 'uploading';
+    job.error = '';
+    updateRow(job);
     try {
       if (!job.uploadId) {
         const init = await sendJson(`/api/drop/${encodeURIComponent(token)}/uploads`, {
@@ -343,8 +399,7 @@ document.addEventListener('DOMContentLoaded', () => {
       while (job.sent < job.size) {
         const start = job.sent;
         const end = Math.min(start + job.chunkBytes, job.size) - 1;
-        const chunk = job.file.slice(start, end + 1);
-        const ack = await sendChunk(job, start, end, chunk);
+        const ack = await sendChunk(job, start, end, job.file.slice(start, end + 1));
         job.sent = typeof ack.received === 'number' ? ack.received : end + 1;
         job.pct = Math.round(job.sent / job.size * 100);
         updateRow(job);
@@ -391,14 +446,12 @@ document.addEventListener('DOMContentLoaded', () => {
     throw err;
   }
 
-  // Slot a finished upload into the grid without a full refetch, and mark the
-  // page as having something new so the poll doesn't double-insert it.
   function onUploaded(res) {
     if (res && res.item) {
-      data.items = data.items || [];
-      data.items.push(res.item);
+      galleryData.items = galleryData.items || [];
+      galleryData.items.push(res.item);
       version = res.version || version;
-      renderGrid();
+      renderVideoList();
       toast('Added');
     }
   }
@@ -417,30 +470,31 @@ document.addEventListener('DOMContentLoaded', () => {
     el._t = setTimeout(() => el.classList.remove('show'), 2600);
   }
 
-  // --- Live refresh ---------------------------------------------------------
+  // ---- Live poll ##
   //
   // Someone else's upload should appear here too. Poll the cheap version
-  // endpoint every 20s while the tab is visible and offer a refresh when it
-  // changes — the same pattern the proofing page uses.
+  // endpoint while the tab is visible and pull the full list when it changes.
 
   async function poll() {
-    if (!data || document.hidden) return;
+    if (!galleryData || document.hidden || lightbox.style.display !== 'none') return;
     try {
       const res = await fetch(`/api/drop/${encodeURIComponent(token)}/version`);
       if (!res.ok) return;
       const body = await res.json();
-      if (body.version && version && body.version !== version) refreshBtn.hidden = false;
+      if (body.version && version && body.version !== version) {
+        const full = await fetch(`/api/drop/${encodeURIComponent(token)}`);
+        if (full.ok) {
+          const data = await full.json();
+          if (!data.locked) {
+            const scrollY = window.scrollY;
+            render(data);
+            window.scrollTo(0, scrollY);
+          }
+        }
+      }
     } catch (_) { /* a poll failure is not worth surfacing */ }
   }
   setInterval(poll, 20000);
-
-  refreshBtn.addEventListener('click', async () => {
-    const res = await fetch(`/api/drop/${encodeURIComponent(token)}`);
-    if (res.ok) {
-      const body = await res.json();
-      if (!body.locked) { render(body); refreshBtn.hidden = true; }
-    }
-  });
 
   load();
 });

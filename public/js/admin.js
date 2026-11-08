@@ -176,8 +176,9 @@ document.addEventListener('DOMContentLoaded', () => {
       showAuth(null); show($('app'));
       await Promise.all([loadData(), loadHeaderConfig()]);
       renderAll();
-      // Come back to whichever side of the app you were last working on.
-      if (lastTab() === 'portfolio') setScreen('portfolio');
+      // Open on Client delivery. Signing in should land you on the day-to-day
+      // side of the app, not wherever the Portfolio tab was left last.
+      setScreen('library');
     } else if (resetToken()) {
       showAuth('auth-reset');
     } else {
@@ -359,14 +360,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (screen === 'upload') renderUpload();
     if (screen === 'portfolio' && window.SDPortfolio) window.SDPortfolio.open();
   }
-  $('tab-portfolio').addEventListener('click', () => { rememberTab('portfolio'); setScreen('portfolio'); });
-  $('tab-delivery').addEventListener('click', () => { rememberTab('delivery'); setScreen('library'); });
-  function rememberTab(which) {
-    try { localStorage.setItem('admin2:tab', which); } catch (_) {}
-  }
-  function lastTab() {
-    try { return localStorage.getItem('admin2:tab') || 'delivery'; } catch (_) { return 'delivery'; }
-  }
+  $('tab-portfolio').addEventListener('click', () => setScreen('portfolio'));
+  $('tab-delivery').addEventListener('click', () => setScreen('library'));
   function renderAll() {
     updateUploadsCount();
     renderRail();

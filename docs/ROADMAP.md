@@ -62,6 +62,13 @@ delivery) before building it.
 
 ## Shipped (kept for reference)
 
+- **Drop galleries** — a client gallery can be turned into a *drop*: one URL, one
+  shared password, and an invite list. The owner invites people by email from the
+  gallery's **Create drop link** button; each invited address is the credential
+  that person signs in with, and their uploads are credited to them (by name if
+  one was given). Removing an invite closes that person's access immediately.
+  The page is a client gallery with an upload zone at the top. Shipped in 2.7.0 —
+  see `docs/API.md` and the drop notes in `CLAUDE.md`.
 - **Email: Reply-To** — contact-form notifications now set `Reply-To` to the
   visitor, on both the Resend and `mail()` paths.
 - **Email settings page** — reordered (Sender & delivery first), SMTP collapses

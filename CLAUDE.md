@@ -37,8 +37,9 @@ public/
   proofing.html        # Client proofing gallery (token-based access)
   collection.html      # Collection landing page (groups of galleries)
   download.html        # Client delivery download page (/d/{token})
+  drop.html            # Drop page (/drop/{token}) — a gallery visitors can add to
   portfolio.html       # Folder-backed portfolio pages (/portfolio/...)
-  css/                 # Stylesheets (style.css, proofing.css, collection.css, download.css, portfolio.css)
+  css/                 # Stylesheets (style.css, proofing.css, collection.css, download.css, drop.css, portfolio.css)
   vendor/              # Vendored MIT libraries, no build step (PhotoSwipe 5)
   js/
     admin.js           # Admin UI logic
@@ -46,6 +47,7 @@ public/
     proofing.js        # Client proofing page logic
     collection.js      # Collection page logic
     download.js        # Delivery download page logic
+    drop.js            # Drop page logic (unlock, grid, chunked uploader)
     portfolio.js       # Portfolio page logic (routing, tiles, PhotoSwipe)
     layouts.js         # Gallery layouts: justified, masonry, grid, slideshow
     media-stage.js     # Shared video player (controls strip, caption overlay, caption box)
@@ -177,6 +179,21 @@ site-data/             # Runtime data (gitignored)
   picks have their own `visible` flag. **The password gates the page, not the
   files**: `/media/` serves anything in the portfolio folders by direct URL,
   exactly as `/uploads/` does for client galleries.
+- **Drops** let a client gallery be added to by others: one URL (`/drop/{token}`),
+  one shared password, and each contributor's email for attribution. It is a
+  normal `proofing` gallery in `galleries.json` with a `drop` object beside its
+  own password (`enabled`, `password` hash, `allowPhotos`/`allowVideos`,
+  `maxFileMb`, `dailyCap`); items land in `uploads/` through
+  `registerGalleryItem()`, so thumbnails, proxies and CRCs are identical to an
+  admin upload — they just also carry `source: "drop"` and an `uploader` email.
+  The public routes (`/api/drop/{token}...`, see `docs/API.md`) mirror the admin
+  chunked-upload trio, with `requireAuth()` swapped for "unlocked this session,
+  enabled, unexpired" and no `target`/`galleryId` — the drop token is the
+  destination, so a visitor can only ever upload into that one drop. The page is
+  `public/drop.html` + `js/drop.js` (`SD_PAGE=drop`). **The email is a label,
+  not a credential** — never verified, never authorises anything — and the
+  password gates the page and adding, not the files. A drop cannot be enabled
+  without a password; the admin never sees the hash, only `hasPassword`.
 - **The home cover** is the home gallery's `hero`: one of its own entries shown
   full-bleed (a video plays muted and looping) with a title and subtitle over
   it, and the gallery below the fold — or, with `only` set, the cover alone with

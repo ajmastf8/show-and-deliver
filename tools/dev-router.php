@@ -112,6 +112,7 @@ $pages = [
     '#^gallery/.+$#' => 'proofing',
     '#^collection/.+$#' => 'collection',
     '#^d/.+$#' => 'download',
+    '#^drop/.+$#' => 'drop',
     '#^portfolio(/.*)?$#' => 'portfolio',
     '#^p/.+$#' => 'page',
     '#^$#' => 'index',

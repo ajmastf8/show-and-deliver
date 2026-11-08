@@ -1,0 +1,403 @@
+/* Drop page — a shared gallery visitors can add to.
+   Loads style.css (site shell, buttons, header) and theme.css, so colour
+   presets and the accent reach here like every other public page. Only the
+   drop-specific pieces live in this file. */
+
+/* ---- Error / loading / password ---- */
+
+.error-view,
+.loading-view,
+.password-view {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  text-align: center;
+  padding: 40px 24px;
+}
+
+.error-inner h1,
+.password-inner h1 {
+  font-size: 28px;
+  color: var(--color-black);
+  margin-bottom: 12px;
+}
+
+.error-inner p,
+.password-inner p {
+  font-size: 16px;
+  color: var(--color-gray-text);
+}
+
+.password-inner { max-width: 420px; width: 100%; }
+
+.password-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.password-form input {
+  font-family: var(--font-family);
+  font-size: 15px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-gray-mid);
+  border-radius: 4px;
+  background: var(--color-white);
+  color: var(--color-body-text);
+}
+
+.password-form input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.password-form .btn { width: 100%; padding: 12px; }
+
+.error-text { color: #c0392b; font-size: 14px; margin-top: 10px; min-height: 18px; }
+
+/* ---- Page head ---- */
+
+.drop-header {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 40px 24px 8px;
+}
+
+.drop-header h1 {
+  font-size: 30px;
+  font-weight: 800;
+  color: var(--color-black);
+  line-height: 1.2;
+}
+
+.drop-sub {
+  margin-top: 8px;
+  font-size: 15px;
+  color: var(--color-gray-text);
+  max-width: 640px;
+}
+
+.drop-who {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--color-gray-text);
+}
+
+.drop-who strong { color: var(--color-body-text); font-weight: 600; }
+
+/* ---- Uploader ---- */
+
+.drop-add {
+  max-width: 1100px;
+  margin: 20px auto 0;
+  padding: 0 24px;
+}
+
+.drop-zone {
+  border: 2px dashed var(--color-gray-mid);
+  border-radius: 10px;
+  padding: 34px 24px;
+  text-align: center;
+  background: var(--color-gray-light);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.drop-zone.drag-over {
+  border-color: var(--color-primary);
+  background: var(--color-white);
+}
+
+.dz-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--color-black);
+}
+
+.dz-hint {
+  font-size: 13px;
+  color: var(--color-gray-text);
+  margin: 6px 0 16px;
+}
+
+.drop-queue { margin-top: 14px; display: flex; flex-direction: column; gap: 8px; }
+
+.drop-qrow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border: 1px solid var(--color-gray-mid);
+  border-radius: 8px;
+  background: var(--color-white);
+}
+
+.drop-qmain {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  grid-column: 1;
+  font-size: 13px;
+}
+
+.drop-qname {
+  font-weight: 600;
+  color: var(--color-body-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drop-qstatus { color: var(--color-gray-text); white-space: nowrap; }
+
+.drop-qbar {
+  grid-column: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-gray-mid);
+  overflow: hidden;
+}
+
+.drop-qbar-fill {
+  height: 100%;
+  width: 0;
+  background: var(--color-primary);
+  transition: width 0.2s;
+}
+
+.drop-qrow.done .drop-qbar-fill { background: #2e9e5b; }
+.drop-qrow.error .drop-qbar-fill { background: #c0392b; }
+.drop-qrow.error .drop-qstatus { color: #c0392b; }
+
+.drop-qretry { grid-row: 1 / span 2; grid-column: 2; }
+
+/* ---- The grid ---- */
+
+.drop-grid-head {
+  max-width: 1100px;
+  margin: 32px auto 0;
+  padding: 0 24px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--color-gray-text);
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-size: 13px;
+  color: var(--color-primary);
+  padding: 0;
+}
+
+.link-btn:hover { text-decoration: underline; }
+
+.drop-grid {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 24px 60px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.drop-tile {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: none;
+  cursor: pointer;
+  aspect-ratio: 1 / 1;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--color-gray-light);
+}
+
+.drop-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.25s;
+}
+
+.drop-tile:hover img { transform: scale(1.04); }
+
+.drop-tile-video {
+  width: 100%;
+  height: 100%;
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #111;
+}
+
+.drop-play {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  padding-left: 3px;
+}
+
+.drop-tile-who {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  max-width: calc(100% - 16px);
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.drop-tile:hover .drop-tile-who { opacity: 1; }
+
+.drop-empty {
+  max-width: 1100px;
+  margin: 0 auto 60px;
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--color-gray-text);
+}
+
+/* ---- Lightbox ---- */
+
+.drop-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lightbox-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.88);
+}
+
+.lightbox-container {
+  position: relative;
+  width: 92vw;
+  height: 92vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.lightbox-body {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+
+.lightbox-body img,
+.lightbox-body video {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.lightbox-caption {
+  padding: 14px 8px 4px;
+  text-align: center;
+  color: #fff;
+}
+
+.lightbox-caption h2 { font-size: 16px; font-weight: 600; }
+.lightbox-uploader { font-size: 12px; opacity: 0.7; }
+
+.lightbox-close-btn {
+  position: absolute;
+  top: -8px;
+  right: 0;
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 34px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.8;
+}
+.lightbox-close-btn:hover { opacity: 1; }
+
+.lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 46px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 10px;
+  opacity: 0.7;
+}
+.lightbox-nav:hover { opacity: 1; }
+.lightbox-prev { left: 4px; }
+.lightbox-next { right: 4px; }
+
+.lightbox-spinner {
+  display: none;
+  width: 34px;
+  height: 34px;
+  border: 3px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: drop-spin 0.8s linear infinite;
+}
+
+@keyframes drop-spin { to { transform: rotate(360deg); } }
+
+/* ---- Toast ---- */
+
+.drop-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%) translateY(20px);
+  background: #1a1a1a;
+  color: #fff;
+  font-size: 14px;
+  padding: 10px 20px;
+  border-radius: 24px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 1100;
+}
+
+.drop-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+@media (max-width: 600px) {
+  .drop-header h1 { font-size: 24px; }
+  .drop-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .lightbox-nav { font-size: 36px; }
+}

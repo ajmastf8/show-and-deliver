@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drop</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+  <noscript><link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700;800&display=swap" rel="stylesheet"></noscript>
+  <link rel="stylesheet" href="/css/style.css?v=0">
+  <link rel="stylesheet" href="/css/drop.css?v=0">
+  <link rel="stylesheet" href="/css/theme.css?v=0">
+  <script src="/js/theme.js?v=0"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner"></div>
+  </header>
+  <div id="mobile-nav" class="mobile-nav">
+    <div class="mobile-nav-links"></div>
+  </div>
+
+  <!-- Not Found / Closed -->
+  <div id="error-view" class="error-view" style="display:none;">
+    <div class="error-inner">
+      <h1 id="error-title">Drop Not Found</h1>
+      <p id="error-message">This drop may have been closed or the link is incorrect.</p>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div id="loading-view" class="loading-view">
+    <p>Loading drop&hellip;</p>
+  </div>
+
+  <!-- Password + email prompt -->
+  <div id="password-view" class="password-view" style="display:none;">
+    <div class="password-inner">
+      <h1 id="password-drop-name"></h1>
+      <p>Enter the password to add your photos and videos.</p>
+      <form id="password-form" class="password-form">
+        <input type="email" id="drop-email" placeholder="Your email address" required autocomplete="email">
+        <input type="password" id="drop-password" placeholder="Drop password" required autocomplete="current-password">
+        <button type="submit" class="btn btn-primary">Enter</button>
+      </form>
+      <p id="password-error" class="error-text"></p>
+    </div>
+  </div>
+
+  <!-- Drop view -->
+  <div id="drop-view" style="display:none;">
+    <header class="drop-header">
+      <h1 id="drop-name"></h1>
+      <p id="drop-sub" class="drop-sub"></p>
+      <div class="drop-who">
+        <span>Signed in as <strong id="drop-who-email"></strong></span>
+      </div>
+    </header>
+
+    <div class="drop-add">
+      <div class="drop-zone" id="drop-zone">
+        <div class="dz-title">Drop files here</div>
+        <div class="dz-hint" id="dz-hint">JPG, PNG, WEBP, GIF, MP4, MOV &middot; large files upload in chunks</div>
+        <label class="btn btn-primary">
+          Choose files
+          <input type="file" id="drop-file" multiple hidden>
+        </label>
+      </div>
+      <div id="drop-queue" class="drop-queue"></div>
+    </div>
+
+    <div class="drop-grid-head">
+      <span id="drop-count"></span>
+      <button type="button" id="drop-refresh" class="link-btn" hidden>Refresh</button>
+    </div>
+    <div id="drop-grid" class="drop-grid"></div>
+    <div id="drop-empty" class="drop-empty" hidden>Nothing here yet. Be the first to add something.</div>
+  </div>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="drop-lightbox" style="display:none;">
+    <div class="lightbox-backdrop"></div>
+    <div class="lightbox-container">
+      <button class="lightbox-close-btn">&times;</button>
+      <button class="lightbox-nav lightbox-prev" aria-label="Previous">&#8249;</button>
+      <button class="lightbox-nav lightbox-next" aria-label="Next">&#8250;</button>
+      <div class="lightbox-body">
+        <video id="lightbox-video" controls playsinline preload="auto" style="display:none;"></video>
+        <img id="lightbox-photo" class="lightbox-photo" style="display:none;" alt="">
+        <div id="lightbox-spinner" class="lightbox-spinner"></div>
+      </div>
+      <div class="lightbox-caption">
+        <h2 id="lightbox-title"></h2>
+        <span id="lightbox-uploader" class="lightbox-uploader"></span>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/header.js?v=0"></script>
+  <script src="/js/drop.js?v=0"></script>
+</body>
+</html>

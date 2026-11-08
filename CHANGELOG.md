@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- **Drop galleries — give someone a link and a password, and they can add to a gallery and see what's in it.** A client gallery can now be turned into a *drop*: one URL (`/drop/{token}`), one shared password, and anyone you invite can drop in photos and videos and watch the shared grid fill up. A contributor signs in with their own email, which is written onto every item they add so you can tell their uploads apart — it is attribution only, never an account. Enable it from the gallery's Settings drawer (a collapsed **Drop** panel, off by default): set the password, choose photos/videos, a per-file size cap and an optional daily upload cap, then **Copy** the link or **Email** it to someone. Uploads ride the same chunked pipeline the admin uses, so a multi-GB video isn't capped by the host's `post_max_size`. The password gates the page and adding, not the files themselves — a direct file URL works, exactly as it does for any gallery.
+
 ## 2.6.2 — 2026-11-07
 - **Update, Email and API are now one rail entry, "Update / Config".** The three pages shared a home already, so they've collapsed into a single entry with three tabs — Update, Email Config and API — which takes Email and API off the rail on their own. Nothing moved functionally: the same controls, exports and imports live under the Update tab, the sender/Resend/SMTP fields under Email Config, and the token and site URL under API.
 

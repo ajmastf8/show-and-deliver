@@ -1089,6 +1089,7 @@ document.addEventListener('DOMContentLoaded', () => {
     contentSelection.clear();
     const isProofing = g.type === 'proofing';
     const badge = isProofing ? 'Client gallery' : 'Portfolio';
+    const dropBadge = (g.drop && g.drop.enabled) ? '<span class="gv-badge drop-badge">Drop</span>' : '';
     const link = galleryPublicUrl(g) || '';
     const meta = [`${g.videoCount || 0} items`, `${g.viewCount || 0} views`];
     if (g.lastViewedAt) meta.push('last viewed ' + shortDate(g.lastViewedAt));
@@ -1101,6 +1102,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="gv-title-row">
             <h1 class="gv-title">${escapeHtml(g.name)}</h1>
             <span class="gv-badge">${badge}</span>
+            ${dropBadge}
             <div class="gv-actions">
               <button class="link-btn accent" data-gv="settings">Settings</button>
               ${isProofing ? `<button class="link-btn accent" data-gv="comments">Comments</button>` : ''}
@@ -1276,6 +1278,14 @@ document.addEventListener('DOMContentLoaded', () => {
       watermark: !!g.watermark,
       showTitles: g.showTitles !== false,
       coverId: g.coverId || '',
+      // Drop: a gallery other people may add to, with its own shared password.
+      dropEnabled: !!(g.drop && g.drop.enabled),
+      dropHasPassword: !!(g.drop && g.drop.hasPassword),
+      dropPassword: '',        // only sent if typed
+      dropAllowPhotos: !g.drop || g.drop.allowPhotos !== false,
+      dropAllowVideos: !g.drop || g.drop.allowVideos !== false,
+      dropMaxFileMb: (g.drop && g.drop.maxFileMb) || 500,
+      dropDailyCap: (g.drop && g.drop.dailyCap) || 0,
     };
   }
 
@@ -1366,6 +1376,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (isProofing) html += galleryOptionsHtml(g, col, d);
 
+    if (isProofing) html += dropSectionHtml(g, d);
+
     html += `<div class="drawer-block">
       <div class="editable-row"><span class="er-key">FTP folder</span><span class="er-ctl"><input type="text" class="d-input" data-field="importFolder" maxlength="64" placeholder="None" autocomplete="off" spellcheck="false"></span></div>
       <div class="sr-sub" style="margin-top:6px;">Files FTP’d into this folder are added automatically.</div>
@@ -1425,6 +1437,50 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="d-label" style="margin-top:22px;">Activity</div>
       <div id="d-activity" class="d-activity"><div class="sr-sub">Loading…</div></div>
     </div>`;
+    return html;
+  }
+
+  // The Drop panel: a gallery other people may add to, with one shared password.
+  // Off by default, so nothing changes for an existing gallery. The email a
+  // contributor signs in with is attribution only, never a credential.
+  function dropSectionHtml(g, d) {
+    const baseUrl = window.location.origin;
+    const url = g.token ? baseUrl + '/drop/' + g.token : '';
+    const capOn = Number(d.dropDailyCap) > 0;
+    const pwPlaceholder = d.dropHasPassword ? 'Password set — type to change' : 'Set a password';
+    let html = `<div class="drawer-block">
+      <div class="d-label">Drop
+        <span class="d-label-sub">Let others add to this gallery</span>
+      </div>
+      <div class="switch-row"><div><div class="sr-text">Enable a drop</div><div class="sr-sub">One link, one shared password, anyone you invite can add photos and videos.</div></div><button class="switch${d.dropEnabled ? ' on' : ''}" data-switch="dropEnabled"></button></div>`;
+
+    if (d.dropEnabled) {
+      html += `<div class="editable-row"><span class="er-key">Drop link</span><span class="er-ctl er-pair">
+          <input type="text" class="d-input" value="${escapeHtml(url)}" readonly id="d-drop-url">
+          <button type="button" class="link-btn accent" data-drop="copy">Copy</button>
+          <button type="button" class="link-btn accent" data-drop="open">Open</button>
+          <button type="button" class="link-btn accent" data-drop="email">Email</button>
+        </span></div>
+      <div class="editable-row"><span class="er-key">Password</span><span class="er-ctl">
+          <input type="text" class="d-input" data-field="dropPassword" value="" placeholder="${pwPlaceholder}" autocomplete="new-password">
+          ${d.dropHasPassword ? '<button type="button" class="link-btn muted" data-drop="clear-password">Clear</button>' : ''}
+        </span></div>
+      <div class="sr-sub">Contributors type this plus their own email address. The email credits their uploads to them; it is not an account.</div>
+      <div class="switch-row"><div><div class="sr-text">Photos</div></div><button class="switch${d.dropAllowPhotos ? ' on' : ''}" data-switch="dropAllowPhotos"></button></div>
+      <div class="switch-row"><div><div class="sr-text">Videos</div></div><button class="switch${d.dropAllowVideos ? ' on' : ''}" data-switch="dropAllowVideos"></button></div>
+      <div class="editable-row"><span class="er-key">Max file size</span><span class="er-ctl">
+          <input type="number" class="d-input" data-field="dropMaxFileMb" min="1" max="4096" step="1" value="${Number(d.dropMaxFileMb) || 500}" style="max-width:110px"> MB
+        </span></div>
+      <div class="switch-row"><div><div class="sr-text">Daily upload cap</div><div class="sr-sub">A ceiling on files per day, to protect your disk quota.</div></div><button class="switch${capOn ? ' on' : ''}" data-switch="dropDailyCapOn"></button></div>`;
+      if (capOn) {
+        html += `<div class="editable-row"><span class="er-key">Files per day</span><span class="er-ctl">
+            <input type="number" class="d-input" data-field="dropDailyCap" min="1" max="100000" step="1" value="${Number(d.dropDailyCap) || 50}" style="max-width:110px">
+          </span></div>
+        <div class="sr-sub">0 means no cap.</div>`;
+      }
+      html += `<div class="sr-sub" style="margin-top:10px;">Note: the password gates the page and adding, not the files themselves — a direct file URL works, exactly as it does for any gallery.</div>`;
+    }
+    html += `</div>`;
     return html;
   }
 
@@ -1524,10 +1580,11 @@ document.addEventListener('DOMContentLoaded', () => {
     body.querySelectorAll('[data-switch]').forEach(sw => sw.addEventListener('click', () => {
       const key = sw.getAttribute('data-switch');
       if (key === 'useCollection') { d.override = !d.override; state.drawer.dirty = true; renderDrawer(); return; }
+      if (key === 'dropDailyCapOn') { d.dropDailyCap = sw.classList.contains('on') ? 0 : 50; state.drawer.dirty = true; renderDrawer(); return; }
       d[key] = !sw.classList.contains('on');
       sw.classList.toggle('on');
       state.drawer.dirty = true;
-      if (key === 'selEnabled') renderDrawer();
+      if (key === 'selEnabled' || key.startsWith('drop')) renderDrawer();
     }));
     body.querySelectorAll('[data-field="sortBy"]').forEach(sel => sel.addEventListener('change', () => renderDrawer()));
     if (g.type === 'proofing') {
@@ -1541,10 +1598,42 @@ document.addEventListener('DOMContentLoaded', () => {
       d.coverId = ''; state.drawer.dirty = true; renderDrawer();
     }));
     body.querySelectorAll('[data-link]').forEach(b => b.addEventListener('click', () => linkAction(g, b.getAttribute('data-link'))));
+    body.querySelectorAll('[data-drop]').forEach(b => b.addEventListener('click', () => dropAction(g, b.getAttribute('data-drop'))));
     body.querySelectorAll('[data-act]').forEach(b => {
       if (b.getAttribute('data-act') === 'clear-cover') return;
       b.addEventListener('click', () => drawerAction(g, col, b.getAttribute('data-act')));
     });
+  }
+
+  async function dropAction(g, act) {
+    const d = state.drawer.draft;
+    const url = window.location.origin + '/drop/' + g.token;
+    if (act === 'copy') { copyText(url); }
+    else if (act === 'open') { window.open(url, '_blank', 'noopener'); }
+    else if (act === 'clear-password') {
+      const res = await fetch(`/api/admin/client/galleries/${g.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ drop: { clearPassword: true, enabled: false } }),
+      });
+      if (res.ok) { d.dropHasPassword = false; d.dropPassword = ''; d.dropEnabled = false; state.drawer.dirty = false; await loadData(); initDraft(); renderAll(); renderDrawer(); toast('Drop password cleared'); }
+      else toast('Could not clear the password');
+    }
+    else if (act === 'email') {
+      // Needs the plaintext password, which is never stored — so ask for it here
+      // and send it straight through to the invitation email.
+      const to = await promptModal({ title: 'Email the drop link', okText: 'Continue', field: { type: 'email', label: 'Send to', placeholder: 'name@example.com' } });
+      if (!to) return;
+      const password = await promptModal({ title: 'Drop password', okText: 'Continue', field: { type: 'text', label: 'Password (included in the email)', placeholder: 'The password to share' } });
+      if (password === null) return;
+      const message = await promptModal({ title: 'Add a message?', okText: 'Send', field: { type: 'textarea', label: 'Message (optional)', rows: 3, placeholder: 'Add a note…' } });
+      if (message === null) return;
+      const res = await fetch(`/api/admin/client/galleries/${g.id}/drop-email`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to, password: password || '', message: message || '' }),
+      });
+      const data = await res.json().catch(() => ({}));
+      toast(res.ok ? 'Invitation sent' : (data.error || 'Could not send the email'));
+    }
   }
 
   async function linkAction(g, act) {
@@ -1583,6 +1672,16 @@ document.addEventListener('DOMContentLoaded', () => {
         body.watermark = !!d.watermark;
         body.showTitles = !!d.showTitles;
         body.coverId = d.coverId || '';
+        // The drop, sent whole so the server validates it as one unit. A password
+        // is only included when typed; clearPassword is handled by its own action.
+        body.drop = {
+          enabled: !!d.dropEnabled,
+          allowPhotos: !!d.dropAllowPhotos,
+          allowVideos: !!d.dropAllowVideos,
+          maxFileMb: Math.max(1, Math.min(4096, parseInt(d.dropMaxFileMb, 10) || 500)),
+          dailyCap: Math.max(0, parseInt(d.dropDailyCap, 10) || 0),
+        };
+        if (d.dropPassword) body.drop.password = d.dropPassword;
         if (col) {
           body.overrideCollectionSettings = d.override;
           if (d.override) {

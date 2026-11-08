@@ -364,6 +364,63 @@ GET  /api/client/packages/{token}/part/{index}         # download a zip
 GET  /api/client/packages/{token}/file/{fileIndex}     # download one original file
 ```
 
+## Drops (a gallery visitors can add to)
+
+A **drop** is a client gallery other people may add to: one URL, one shared
+password, and each contributor's email for attribution. It is a normal
+`proofing` gallery with a `drop` object beside its own password (see the data
+shapes below); items land in the same `uploads/` store through the same
+pipeline, so thumbnails, proxies and delivery CRCs are identical to an admin
+upload. Page: `/drop/{token}`.
+
+The password gates the page and adding **for attribution only** — the email a
+visitor types is never verified and never authorises anything, and the password
+does not protect the files themselves (`/uploads/` serves by direct URL, as for
+any gallery).
+
+```
+GET  /api/drop/{token}                                 # the drop + items, or {"locked": true}
+POST /api/drop/{token}/unlock                          # {"email": "...", "password": "..."}
+GET  /api/drop/{token}/version                         # {"version", "count"} — cheap poll for new arrivals
+
+POST   /api/drop/{token}/uploads                       # start an upload session (chunked, like the admin's)
+PUT    /api/drop/{token}/uploads/{uploadId}/chunk      # Content-Range: bytes X-Y/TOTAL
+POST   /api/drop/{token}/uploads/{uploadId}/finalize   # attach to the drop, attributed to the session's email
+DELETE /api/drop/{token}/uploads/{uploadId}            # cancel
+```
+
+The upload trio mirrors `/api/admin/uploads/*` exactly — same chunk cap, same
+`Content-Range` contract — except the drop token *is* the destination, so there
+is no `target`/`galleryId` to smuggle. Limits enforced before a session starts:
+allowed file types (`allowPhotos`/`allowVideos`), a per-file cap (`maxFileMb`,
+default 500), and an optional per-drop daily cap (`dailyCap`). Everything is
+rate limited.
+
+Admin side, a drop is configured through the gallery's own PUT, and its link can
+be emailed to a contributor:
+
+```
+PUT  /api/admin/client/galleries/{id}                  # send {"drop": {...}} to configure
+POST /api/admin/client/galleries/{gid}/drop-email      # {"to", "password", "message"} — email the link
+```
+
+The `drop` object on a gallery is:
+
+```json
+{
+  "enabled": false,
+  "password": "bcrypt hash",
+  "allowPhotos": true,
+  "allowVideos": true,
+  "maxFileMb": 500,
+  "dailyCap": 0
+}
+```
+
+A drop cannot be enabled without a password; a `PUT` that tries gets a `400`.
+`clearPassword: true` removes it (and a drop with no password cannot stay
+enabled). The admin payload never returns the hash — it returns `hasPassword`.
+
 ### Viewer sort, and knowing a gallery changed
 
 `GET /api/client/galleries/{token}` takes two optional query params, `sort` and

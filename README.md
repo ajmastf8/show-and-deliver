@@ -9,6 +9,10 @@ shared hosting (cPanel, Apache/LiteSpeed) with one-click in-app updates.
 - **Portfolio reels** — a public page showcasing your video work
 - **Client proofing galleries** — share a private, token-based link per client;
   optional password protection and expiry dates
+- **Drops** — turn a gallery into a shared album anyone you invite can add to:
+  one link plus a password, and contributors sign in with their email so it
+  credits what they upload. Great for gathering guest shots at an event or a
+  client's "send us your footage" inbox.
 - **Collections** — group multiple galleries under one shareable link, with
   collection-level password, download, commenting, and expiry settings that
   galleries inherit. Collections are either client delivery or portfolio;

@@ -176,8 +176,9 @@ document.addEventListener('DOMContentLoaded', () => {
       showAuth(null); show($('app'));
       await Promise.all([loadData(), loadHeaderConfig()]);
       renderAll();
-      // Come back to whichever side of the app you were last working on.
-      if (lastTab() === 'portfolio') setScreen('portfolio');
+      // Open on Client delivery. Signing in should land you on the day-to-day
+      // side of the app, not wherever the Portfolio tab was left last.
+      setScreen('library');
     } else if (resetToken()) {
       showAuth('auth-reset');
     } else {
@@ -359,14 +360,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (screen === 'upload') renderUpload();
     if (screen === 'portfolio' && window.SDPortfolio) window.SDPortfolio.open();
   }
-  $('tab-portfolio').addEventListener('click', () => { rememberTab('portfolio'); setScreen('portfolio'); });
-  $('tab-delivery').addEventListener('click', () => { rememberTab('delivery'); setScreen('library'); });
-  function rememberTab(which) {
-    try { localStorage.setItem('admin2:tab', which); } catch (_) {}
-  }
-  function lastTab() {
-    try { return localStorage.getItem('admin2:tab') || 'delivery'; } catch (_) { return 'delivery'; }
-  }
+  $('tab-portfolio').addEventListener('click', () => setScreen('portfolio'));
+  $('tab-delivery').addEventListener('click', () => setScreen('library'));
   function renderAll() {
     updateUploadsCount();
     renderRail();
@@ -1089,6 +1084,7 @@ document.addEventListener('DOMContentLoaded', () => {
     contentSelection.clear();
     const isProofing = g.type === 'proofing';
     const badge = isProofing ? 'Client gallery' : 'Portfolio';
+    const dropBadge = (g.drop && g.drop.enabled) ? '<span class="gv-badge drop-badge">Drop</span>' : '';
     const link = galleryPublicUrl(g) || '';
     const meta = [`${g.videoCount || 0} items`, `${g.viewCount || 0} views`];
     if (g.lastViewedAt) meta.push('last viewed ' + shortDate(g.lastViewedAt));
@@ -1101,6 +1097,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="gv-title-row">
             <h1 class="gv-title">${escapeHtml(g.name)}</h1>
             <span class="gv-badge">${badge}</span>
+            ${dropBadge}
             <div class="gv-actions">
               <button class="link-btn accent" data-gv="settings">Settings</button>
               ${isProofing ? `<button class="link-btn accent" data-gv="comments">Comments</button>` : ''}
@@ -1122,6 +1119,7 @@ document.addEventListener('DOMContentLoaded', () => {
               <label class="btn-primary small">Add files<input type="file" id="gv-file" accept="video/mp4,video/webm,video/quicktime,.mp4,.webm,.mov,.m4v,image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif" multiple hidden></label>
               <button class="link-btn accent" data-gv="header">Add section header</button>
               <button class="link-btn accent" data-gv="import">Import from server</button>
+              ${isProofing ? `<button class="link-btn accent${g.drop && g.drop.enabled ? ' drop-on' : ''}" data-gv="drop">${g.drop && g.drop.enabled ? 'Drop link' : 'Create drop link'}</button>` : ''}
               <button class="link-btn muted" data-gv="refresh">Refresh metadata</button>
             </div>
           </div>
@@ -1146,6 +1144,7 @@ document.addEventListener('DOMContentLoaded', () => {
     else if (act === 'comments') openDrawer('comments');
     else if (act === 'deliver') openPackageModal('gallery', g.id, g.name);
     else if (act === 'import') { contentGid = g.id; openImportModal(); }
+    else if (act === 'drop') { openDropModal(g); }
     else if (act === 'copy') { copyText(window.location.origin + '/gallery/' + g.token); }
     else if (act === 'open') { window.open(window.location.origin + '/gallery/' + g.token, '_blank', 'noopener'); }
     else if (act === 'refresh') {
@@ -3172,6 +3171,169 @@ document.addEventListener('DOMContentLoaded', () => {
     pkgCurrent = null;
     pkgModal.hidden = true;
     toast('Link revoked');
+  });
+
+  // ==========================================================================
+  // Drop link modal
+  // ==========================================================================
+  // A drop is a client gallery other people may add to. The owner sets one shared
+  // password and invites people by email; each invited address is the credential
+  // that person signs in with, which is also what their uploads are credited to.
+  const dropModal = $('drop-modal');
+  let dropGallery = null;   // the gallery being configured
+  let dropInvites = [];     // the current invite list, edited in place
+
+  function dropUrl() { return window.location.origin + '/drop/' + dropGallery.token; }
+
+  function randomPassword() {
+    const words = ['sunset', 'harbor', 'maple', 'copper', 'river', 'canyon', 'amber', 'willow', 'cedar', 'meadow'];
+    const w = () => words[Math.floor(Math.random() * words.length)];
+    return `${w()}-${w()}-${Math.floor(10 + Math.random() * 89)}`;
+  }
+
+  async function openDropModal(g) {
+    closeAllMenus();
+    dropGallery = g;
+    dropInvites = (g.drop && g.drop.invites) ? g.drop.invites.map(i => ({ email: i.email, name: i.name || '' })) : [];
+    const has = !!(g.drop && g.drop.enabled);
+
+    $('dropm-title').textContent = has ? 'Drop link' : 'Create drop link';
+    $('dropm-existing').hidden = !has;
+    $('dropm-deactivate').hidden = !has;
+    $('dropm-save').hidden = !has;
+    $('dropm-link').value = has ? dropUrl() : '';
+    $('dropm-enabled').classList.toggle('on', has);
+    $('dropm-password').value = '';
+    $('dropm-password').placeholder = (g.drop && g.drop.hasPassword) ? 'Password set — type to change' : 'Set a password';
+    $('dropm-photos').checked = !g.drop || g.drop.allowPhotos !== false;
+    $('dropm-videos').checked = !g.drop || g.drop.allowVideos !== false;
+    $('dropm-maxmb').value = (g.drop && g.drop.maxFileMb) || 500;
+    $('dropm-dailycap').value = (g.drop && g.drop.dailyCap) || 0;
+    $('dropm-invite-email').value = '';
+    $('dropm-invite-name').value = '';
+    $('dropm-message').value = '';
+    renderDropInvites();
+    dropModal.hidden = false;
+    setTimeout(() => (has ? $('dropm-invite-email') : $('dropm-password')).focus(), 50);
+  }
+
+  function renderDropInvites() {
+    const box = $('dropm-invites');
+    if (!dropInvites.length) {
+      box.innerHTML = '<div class="sr-sub" style="padding:6px 0;">No one invited yet.</div>';
+      return;
+    }
+    box.innerHTML = dropInvites.map((inv, i) => `
+      <div class="drop-invite-row">
+        <span class="di-email">${escapeHtml(inv.email)}</span>
+        ${inv.name ? `<span class="di-name">${escapeHtml(inv.name)}</span>` : ''}
+        <button type="button" class="link-btn danger muted" data-drop-uninvite="${i}">Remove</button>
+      </div>`).join('');
+    box.querySelectorAll('[data-drop-uninvite]').forEach(b => b.addEventListener('click', () => {
+      const i = Number(b.getAttribute('data-drop-uninvite'));
+      const email = dropInvites[i] && dropInvites[i].email;
+      dropInvites.splice(i, 1);
+      renderDropInvites();
+      // If the drop already exists, removal is a real server change.
+      if (email && dropGallery.drop && dropGallery.drop.enabled) {
+        fetch(`/api/admin/client/galleries/${dropGallery.id}/drop-uninvite`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        }).then(r => r.ok ? r.json() : null).then(d => { if (d) dropInvites = d.invites.map(x => ({ email: x.email, name: x.name || '' })); renderDropInvites(); });
+      }
+    }));
+  }
+
+  // Save the drop's own settings (password, allowances, caps, enabled) — the
+  // invite list rides along on every save so removals stick.
+  async function saveDropSettings() {
+    const body = {
+      drop: {
+        enabled: $('dropm-enabled').classList.contains('on'),
+        allowPhotos: $('dropm-photos').checked,
+        allowVideos: $('dropm-videos').checked,
+        maxFileMb: Math.max(1, Math.min(4096, parseInt($('dropm-maxmb').value, 10) || 500)),
+        dailyCap: Math.max(0, parseInt($('dropm-dailycap').value, 10) || 0),
+        invites: dropInvites,
+      },
+    };
+    if ($('dropm-password').value.trim()) body.drop.password = $('dropm-password').value.trim();
+    const res = await fetch(`/api/admin/client/galleries/${dropGallery.id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(data.error || 'Could not save the drop settings'); return false; }
+    return true;
+  }
+
+  $('dropm-password-random').addEventListener('click', () => { $('dropm-password').value = randomPassword(); });
+  $('dropm-copy').addEventListener('click', () => copyText(dropUrl()));
+  $('dropm-open').addEventListener('click', () => window.open(dropUrl(), '_blank', 'noopener'));
+  $('dropm-enabled').addEventListener('click', () => $('dropm-enabled').classList.toggle('on'));
+  $('dropm-close').addEventListener('click', () => { dropModal.hidden = true; });
+  dropModal.querySelector('.modal-backdrop').addEventListener('click', () => { dropModal.hidden = true; });
+
+  $('dropm-save').addEventListener('click', async () => {
+    if (await saveDropSettings()) {
+      await loadData(); renderAll();
+      const g = state.galleries.find(x => x.id === dropGallery.id);
+      if (g) dropGallery = g;
+      toast('Drop settings saved');
+    }
+  });
+
+  $('dropm-send').addEventListener('click', async () => {
+    const email = $('dropm-invite-email').value.trim();
+    const name = $('dropm-invite-name').value.trim();
+    const password = $('dropm-password').value.trim();
+    const enabled = $('dropm-enabled').classList.contains('on');
+    const alreadyHasPassword = !!(dropGallery.drop && dropGallery.drop.hasPassword);
+    if (!email) { toast('Enter an email address to invite'); return; }
+    // A new drop needs a password in the same click that turns it on.
+    if (!alreadyHasPassword && !password) { toast('Set a password for the drop first'); return; }
+    // Make sure the invite is in the list we save.
+    if (!dropInvites.some(i => i.email === email.toLowerCase())) {
+      dropInvites.push({ email: email.toLowerCase(), name });
+    } else {
+      dropInvites = dropInvites.map(i => i.email === email.toLowerCase() ? { email: i.email, name } : i);
+    }
+    // Sending an invite implies the drop is on.
+    if (!enabled) $('dropm-enabled').classList.add('on');
+    if (!await saveDropSettings()) return;
+    renderDropInvites();
+
+    const btn = $('dropm-send');
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      const res = await fetch(`/api/admin/client/galleries/${dropGallery.id}/drop-invite`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: email, name, password, message: $('dropm-message').value.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      toast(res.ok ? `Invite sent to ${email}` : (data.error || 'Could not send the invite'));
+      if (res.ok) {
+        $('dropm-invite-email').value = ''; $('dropm-invite-name').value = ''; $('dropm-message').value = '';
+        if (data.invites) { dropInvites = data.invites.map(x => ({ email: x.email, name: x.name || '' })); renderDropInvites(); }
+        await loadData(); renderAll();
+        $('dropm-existing').hidden = false;
+        $('dropm-deactivate').hidden = false;
+        $('dropm-save').hidden = false;
+        $('dropm-link').value = dropUrl();
+      }
+    } finally {
+      btn.disabled = false; btn.textContent = label;
+    }
+  });
+
+  $('dropm-deactivate').addEventListener('click', async () => {
+    if (!await confirmModal({ title: 'Turn off drop', message: 'The drop link stops working immediately. Invited people can no longer sign in, and their existing uploads stay in the gallery.', okText: 'Turn off', danger: true })) return;
+    $('dropm-enabled').classList.remove('on');
+    if (await saveDropSettings()) {
+      dropModal.hidden = true;
+      await loadData(); renderAll();
+      toast('Drop turned off');
+    }
   });
 
   function copyCollectionLink(colId) {

@@ -241,9 +241,88 @@
     </div>
   </div>
 
-  <!-- Delivery package modal -->
-  <div id="package-modal" class="modal" hidden>
+  <!-- Drop modal: invite people to add to a gallery via a link + a shared password -->
+  <div id="drop-modal" class="modal" hidden>
     <div class="modal-backdrop"></div>
+    <div class="modal-inner wide">
+      <h3 id="dropm-title">Create drop link</h3>
+      <p class="sub" id="dropm-sub">Invite someone to add photos and videos to this gallery. You set the password and send the invite; they sign in with their email.</p>
+
+      <div id="dropm-existing" hidden>
+        <div class="setting-group">
+          <label>Drop link</label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="text" id="dropm-link" class="setting-input" readonly>
+            <button id="dropm-copy" class="btn-ghost" style="white-space:nowrap;">Copy</button>
+            <button id="dropm-open" class="btn-ghost" style="white-space:nowrap;">Open</button>
+          </div>
+        </div>
+        <div class="switch-row"><div><div class="sr-text">Drop is active</div><div class="sr-sub">Turn off to close the door — invites stop working immediately.</div></div><button type="button" class="switch" id="dropm-enabled"></button></div>
+        <div class="setting-group" style="margin-top:12px;">
+          <label>Invited people</label>
+          <div id="dropm-invites" class="drop-invites"></div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:10px;">
+            <input type="email" id="dropm-invite-email" class="setting-input" placeholder="name@example.com" autocomplete="off">
+            <input type="text" id="dropm-invite-name" class="setting-input" placeholder="Name (optional)" maxlength="80" autocomplete="off" style="max-width:180px;">
+          </div>
+          <p class="setting-hint" id="dropm-invite-hint">They sign in with this exact email address, so send the invite to the address they will use.</p>
+        </div>
+        <hr class="settings-divider">
+      </div>
+
+      <div class="setting-group">
+        <label>Password for this drop</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" id="dropm-password" class="setting-input" placeholder="Set a password" autocomplete="new-password">
+          <button id="dropm-password-random" class="btn-ghost" style="white-space:nowrap;">Suggest</button>
+        </div>
+        <p class="setting-hint" id="dropm-password-hint">Everyone invited uses this same password. It is included in their invitation email.</p>
+      </div>
+
+      <div class="setting-group">
+        <label>Allow</label>
+        <div style="display:flex;gap:22px;">
+          <label class="toggle-label"><input type="checkbox" id="dropm-photos" checked> Photos</label>
+          <label class="toggle-label"><input type="checkbox" id="dropm-videos" checked> Videos</label>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label>Max file size</label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="number" id="dropm-maxmb" class="setting-input" min="1" max="4096" step="1" value="500" style="max-width:120px;">
+          <span class="setting-hint" style="margin:0;">MB per file</span>
+        </div>
+      </div>
+
+      <div class="setting-group">
+        <label>Daily upload cap <span class="setting-hint" style="font-weight:400;">(optional)</span></label>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="number" id="dropm-dailycap" class="setting-input" min="0" max="100000" step="1" value="0" style="max-width:120px;">
+          <span class="setting-hint" style="margin:0;">files per day · 0 means no cap</span>
+        </div>
+      </div>
+
+      <hr class="settings-divider">
+      <p class="setting-hint" style="margin-bottom:10px;">Send the invitation</p>
+      <div class="setting-group">
+        <label>Message <span class="setting-hint" style="font-weight:400;">(optional)</span></label>
+        <textarea id="dropm-message" class="setting-input" rows="2" placeholder="Add a note to the invitation email."></textarea>
+      </div>
+
+      <div class="modal-actions">
+        <button id="dropm-deactivate" class="link-btn danger muted" hidden>Turn off drop</button>
+        <div class="right">
+          <button id="dropm-close" class="btn-ghost">Close</button>
+          <button id="dropm-save" class="btn-ghost" hidden>Save settings</button>
+          <button id="dropm-send" class="btn-primary">Send invite</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delivery package modal -->
+  <div id="package-modal" class="modal" hidden>    <div class="modal-backdrop"></div>
     <div class="modal-inner wide">
       <h3 id="pk-title">Send files</h3>
       <p class="sub" id="pk-sub"></p>

@@ -1,0 +1,131 @@
+/* Drop page.
+   The page is a client gallery (proofing.css and the same .proofing-* markup)
+   with one addition at the top: the upload zone and its queue. Everything in
+   this file styles only that addition, so the gallery below stays pixel-for-
+   pixel what a client sees. */
+
+.drop-add {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px 24px 0;
+}
+
+.drop-zone {
+  border: 2px dashed var(--color-gray-mid);
+  border-radius: var(--radius-card);
+  padding: 30px 24px;
+  text-align: center;
+  background: var(--color-gray-light);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.drop-zone.drag-over {
+  border-color: var(--color-primary);
+  background: var(--color-white);
+}
+
+.dz-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--color-black);
+}
+
+.dz-hint {
+  font-size: 13px;
+  color: var(--color-gray-text);
+  margin: 6px 0 16px;
+}
+
+.drop-queue {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.drop-qrow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border: 1px solid var(--color-gray-mid);
+  border-radius: var(--radius-card);
+  background: var(--color-white);
+}
+
+.drop-qmain {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  grid-column: 1;
+  font-size: 13px;
+}
+
+.drop-qname {
+  font-weight: 600;
+  color: var(--color-black);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drop-qstatus {
+  color: var(--color-gray-text);
+  white-space: nowrap;
+}
+
+.drop-qbar {
+  grid-column: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-gray-mid);
+  overflow: hidden;
+}
+
+.drop-qbar-fill {
+  height: 100%;
+  width: 0;
+  background: var(--color-primary);
+  transition: width 0.2s;
+}
+
+.drop-qrow.done .drop-qbar-fill { background: #4caf50; }
+.drop-qrow.error .drop-qbar-fill { background: #e00; }
+.drop-qrow.error .drop-qstatus { color: #e00; }
+
+.drop-qretry {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-family);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-primary);
+  padding: 0;
+}
+.drop-qretry:hover { text-decoration: underline; }
+
+.drop-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%) translateY(20px);
+  background: #2f3440;
+  color: #fff;
+  font-size: 14px;
+  padding: 10px 20px;
+  border-radius: 24px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 1100;
+}
+
+.drop-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+@media (max-width: 768px) {
+  .drop-add { padding: 16px 16px 0; }
+}

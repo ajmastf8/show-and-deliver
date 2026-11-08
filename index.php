@@ -36,6 +36,14 @@ define('THEME_CONFIG_PATH', DATA_DIR . '/theme.json');
 // here because routes above that section run before it is reached.
 define('GALLERY_SORTS', ['custom', 'name', 'captured', 'added']);
 define('GALLERY_DOWNLOAD_MODES', ['original', 'web', 'both']);
+// Drop galleries (see the DROP GALLERIES section). These live up here because
+// the admin gallery routes, which run long before that section is reached,
+// validate a drop's password and size cap against them.
+define('DROP_DEFAULT_MAX_FILE_MB', 500);
+define('DROP_MAX_FILE_MB_CEILING', 4096);
+define('DROP_EMAIL_MAX_LEN', 160);
+define('DROP_PASSWORD_MIN_LEN', 4);
+const DROP_SHARE_RULES = 'Drop password must be 4-200 characters.';
 // Backfilling capture times reads every photo's EXIF once; stop after this long
 // and carry on with the next request rather than outlive the PHP time limit.
 define('GALLERY_META_BUDGET_SECONDS', 15);
@@ -280,7 +288,10 @@ $createsSession = ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST'
     && ($sessionPath === '/api/auth/setup'
         || $sessionPath === '/api/auth/login'
         || $sessionPath === '/api/auth/change-password'
-        || substr($sessionPath, -7) === '/unlock');
+        || substr($sessionPath, -7) === '/unlock'
+        // Drop uploads run under a visitor's own session, which may not exist
+        // yet on a first drop (their cookie is minted at unlock).
+        || strpos($sessionPath, '/api/drop/') === 0);
 if (isset($_COOKIE[session_name()]) || $createsSession) {
     session_start();
     if ($createsSession) pruneStaleSessions();
@@ -446,6 +457,7 @@ const PUBLIC_PAGES = [
     'download'   => 'public/download.html',
     'portfolio'  => 'public/portfolio.html',
     'page'       => 'public/page.html',
+    'drop'       => 'public/drop.html',
     'index'      => 'public/index.html',
 ];
 
@@ -1444,6 +1456,10 @@ function sanitizeGallery($g) {
     $out = $g;
     $out['hasPassword'] = !empty($g['password']);
     unset($out['password']);
+    // Never leak the drop password hash either; the admin gets a hasPassword.
+    if (isset($out['drop'])) {
+        $out['drop'] = dropAdminPayload($g);
+    }
     return $out;
 }
 
@@ -2161,6 +2177,7 @@ if ($method === 'GET' && $uri === '/api/admin/client/galleries') {
         $s['viewCount'] = $views['total'] ?? 0;
         $s['uniqueVisitors'] = $views['unique'] ?? 0;
         $s['lastViewedAt'] = $views['lastViewedAt'] ?? null;
+        $s['drop'] = dropAdminPayload($g);
         return $s;
     }, readGalleries());
     respond($galleries);
@@ -2202,6 +2219,10 @@ if ($method === 'POST' && $uri === '/api/admin/client/galleries') {
         $gallery['importFolder'] = $folder;
     }
 
+    // A drop, if the create body carries one. applyDropInput() validates and
+    // hashes the password; a drop cannot be enabled without one.
+    if (array_key_exists('drop', $input)) applyDropInput($gallery, $input);
+
     $dir = ensureGalleryDir($id);
     jsonWrite("$dir/videos.json", []);
     jsonWrite("$dir/comments.json", []);
@@ -2232,6 +2253,7 @@ if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{id}', $uri, $p
     if (isset($input['active'])) $gallery['active'] = $input['active'];
     if (isset($input['favorite'])) $gallery['favorite'] = $input['favorite'];
     applyGalleryOptionsInput($gallery, $input);
+    if (array_key_exists('drop', $input)) applyDropInput($gallery, $input);
     if (array_key_exists('importFolder', $input)) {
         [$folder, $err] = resolveImportFolder($input['importFolder'], $gallery['id'], $galleries);
         if ($err) respondError($err, 400);
@@ -2273,6 +2295,89 @@ if ($method === 'PUT' && matchRoute('/api/admin/client/galleries/{id}', $uri, $p
 
     writeGalleries($galleries);
     respond(sanitizeGallery($gallery));
+}
+
+// Invite a contributor to a drop: add them to the drop's invite list and email
+// them the link and password. The email address is the credential they sign in
+// with, so an invite must be sent (which is what registers it) before it works.
+// The password is not stored in the clear anywhere; it is only ever the owner's
+// own recent text, passed straight into the email.
+if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/drop-invite', $uri, $params)) {
+    requireAuth();
+    $galleries = readGalleries();
+    $idx = null;
+    foreach ($galleries as $i => $g) { if ($g['id'] === $params['gid']) { $idx = $i; break; } }
+    if ($idx === null) respondError('Not found', 404);
+    $drop = galleryDrop($galleries[$idx]);
+    if (!$drop['enabled']) respondError('This gallery has no active drop', 400);
+
+    $input = getInput();
+    $to = strtolower(trim((string)($input['to'] ?? '')));
+    $name = trim((string)($input['name'] ?? ''));
+    $password = (string)($input['password'] ?? '');
+    $message = trim((string)($input['message'] ?? ''));
+    if (!filter_var($to, FILTER_VALIDATE_EMAIL) || strlen($to) > DROP_EMAIL_MAX_LEN) {
+        respondError('Enter a valid email address', 400);
+    }
+
+    // Register the invite before sending, replace-style by address so
+    // re-inviting someone updates their name rather than duplicating them.
+    $invites = $drop['invites'];
+    $found = false;
+    foreach ($invites as &$inv) {
+        if ($inv['email'] === $to) { $inv['name'] = $name; $found = true; break; }
+    }
+    unset($inv);
+    if (!$found) {
+        $invites[] = ['email' => $to, 'name' => $name, 'createdAt' => date('c')];
+    }
+    $galleries[$idx]['drop'] = galleryDrop(['drop' => array_merge($drop, ['invites' => $invites])]);
+    writeGalleries($galleries);
+
+    $gallery = $galleries[$idx];
+    $base = rtrim((string)(getEmailConfig()['baseUrl'] ?? ''), '/');
+    if (!preg_match('#^https?://#i', $base)) respondError('Set the Site Base URL under Settings > Email first.', 400);
+    $url = $base . '/drop/' . $gallery['token'];
+
+    $greeting = $name !== '' ? 'Hi ' . $name . ',' : 'Hello,';
+    $lead = $message !== '' ? $message : $greeting . ' You have been invited to add your photos and videos to "' . $gallery['name'] . '".';
+    $credentials = '<p style="margin:10px 0 0;color:#5f6570;font-size:14px;line-height:1.7;">'
+        . 'Sign in with this email address and the password below.<br>'
+        . 'Email: <strong>' . escHtml($to) . '</strong><br>'
+        . 'Password: <strong>' . escHtml($password !== '' ? $password : '(the password you set for this drop)') . '</strong></p>';
+    $html = emailShell([
+        'title' => 'Add to ' . $gallery['name'],
+        'lead' => escHtml($lead),
+        'body' => $credentials,
+        'cta' => ['label' => 'Open the gallery', 'url' => $url],
+        'note' => 'If you were not expecting this, you can ignore this email.',
+    ]);
+    $text = $lead . "\n\n" . $url . "\n\nSign in with this email address and the password below.\n"
+        . "Email: " . $to . "\nPassword: " . ($password !== '' ? $password : '(set by the owner)') . "\n";
+
+    try {
+        sendEmail($to, emailSubject('Invitation to add files', $gallery['name']), $text, $html);
+    } catch (Exception $e) {
+        respondError('Invite saved, but the email could not be sent: ' . $e->getMessage(), 502);
+    }
+    respond(['ok' => true, 'url' => $url, 'to' => $to, 'invites' => dropAdminPayload($gallery)['invites']]);
+}
+
+// Remove an invite. Their uploads stay; they just can't sign in again.
+if ($method === 'POST' && matchRoute('/api/admin/client/galleries/{gid}/drop-uninvite', $uri, $params)) {
+    requireAuth();
+    $galleries = readGalleries();
+    $idx = null;
+    foreach ($galleries as $i => $g) { if ($g['id'] === $params['gid']) { $idx = $i; break; } }
+    if ($idx === null) respondError('Not found', 404);
+
+    $input = getInput();
+    $email = strtolower(trim((string)($input['email'] ?? '')));
+    $drop = galleryDrop($galleries[$idx]);
+    $invites = array_values(array_filter($drop['invites'], fn($inv) => $inv['email'] !== $email));
+    $galleries[$idx]['drop'] = galleryDrop(['drop' => array_merge($drop, ['invites' => $invites])]);
+    writeGalleries($galleries);
+    respond(['ok' => true, 'invites' => dropAdminPayload($galleries[$idx])['invites']]);
 }
 
 if ($method === 'DELETE' && matchRoute('/api/admin/client/galleries/{id}', $uri, $params)) {
@@ -2385,6 +2490,245 @@ function applyGalleryOptionsInput(array &$gallery, array $input): void {
         if (is_string($input['coverId']) && $input['coverId'] !== '') $gallery['coverId'] = $input['coverId'];
         else unset($gallery['coverId']);
     }
+}
+
+// ============================================================
+// DROP GALLERIES
+//
+// A "drop" is a client gallery other people may add to: one URL, one shared
+// password, and a contributor's email address for attribution. It is a normal
+// proofing gallery in galleries.json with a `drop` object beside its own
+// password; the items it collects go through registerGalleryItem() exactly like
+// an admin upload, so thumbnails, proxies and delivery CRCs are identical.
+//
+// The email a visitor signs in with is a LABEL, not a credential: it is never
+// verified and never authorises anything. The shared password is the only
+// secret, and it gates the page and the write — not the files, which
+// /uploads/ serves by direct URL (same caveat as everywhere else).
+// ============================================================
+
+// Default per-file size cap for the drop path. The admin's own uploader has no
+// ceiling beyond the host's; a drop is unauthenticated, so it has one.
+// (Constants are defined near the top of the file with the other gallery ones,
+// because the admin routes validate against them before this section is read.)
+
+// The drop settings for a gallery, normalised, with defaults for a gallery that
+// has never had a drop. `enabled` is the only thing that decides whether the
+// public routes answer at all.
+function galleryDrop(array $g): array {
+    $d = is_array($g['drop'] ?? null) ? $g['drop'] : [];
+    $maxMb = (int)($d['maxFileMb'] ?? DROP_DEFAULT_MAX_FILE_MB);
+    if ($maxMb < 1) $maxMb = DROP_DEFAULT_MAX_FILE_MB;
+    if ($maxMb > DROP_MAX_FILE_MB_CEILING) $maxMb = DROP_MAX_FILE_MB_CEILING;
+    return [
+        'enabled' => !empty($d['enabled']),
+        // Stored as a bcrypt hash, like the gallery password; never returned.
+        'password' => (string)($d['password'] ?? ''),
+        'allowPhotos' => ($d['allowPhotos'] ?? true) !== false,
+        'allowVideos' => ($d['allowVideos'] ?? true) !== false,
+        'maxFileMb' => $maxMb,
+        // 0 means no cap. Guards a shared link against filling the host's disk.
+        'dailyCap' => max(0, (int)($d['dailyCap'] ?? 0)),
+        // Who the owner has invited. The email is a credential: only an invited
+        // address may unlock the drop, and it is what each upload is attributed
+        // to. `name` is an optional label the owner can give an invite, shown on
+        // the tile instead of the raw address.
+        'invites' => dropNormalizeInvites($d['invites'] ?? []),
+    ];
+}
+
+// An invite, normalised: a lowercase email and an optional display name. Anything
+// without a valid address is dropped rather than kept half-formed.
+function dropNormalizeInvites($invites): array {
+    $out = [];
+    foreach (is_array($invites) ? $invites : [] as $inv) {
+        $email = strtolower(trim((string)($inv['email'] ?? '')));
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > DROP_EMAIL_MAX_LEN) continue;
+        $name = trim((string)($inv['name'] ?? ''));
+        if (strlen($name) > 80) $name = mb_substr($name, 0, 80);
+        $out[] = [
+            'email' => $email,
+            'name' => $name,
+            'createdAt' => (string)($inv['createdAt'] ?? $inv['addedAt'] ?? date('c')),
+        ];
+    }
+    return $out;
+}
+
+// The invite for an address, or null. Case-insensitive.
+function dropFindInvite(array $g, string $email): ?array {
+    $email = strtolower(trim($email));
+    foreach (galleryDrop($g)['invites'] as $inv) {
+        if ($inv['email'] === $email) return $inv;
+    }
+    return null;
+}
+
+// What a contributor is called on their own uploads: their invite's name if the
+// owner set one, otherwise the address itself.
+function dropInviteLabel(array $invite): string {
+    return $invite['name'] !== '' ? $invite['name'] : $invite['email'];
+}
+
+// Copy the `drop` fields present in an admin PUT onto the gallery, validated.
+// The password is hashed here the same way the gallery password is; a blank or
+// absent one leaves the existing hash alone, and `clearDropPassword` removes it.
+function applyDropInput(array &$gallery, array $input): void {
+    if (!array_key_exists('drop', $input) || !is_array($input['drop'])) return;
+    $in = $input['drop'];
+    $cur = galleryDrop($gallery);
+
+    $out = [
+        'enabled' => array_key_exists('enabled', $in) ? !empty($in['enabled']) : $cur['enabled'],
+        'password' => $cur['password'],
+        'allowPhotos' => array_key_exists('allowPhotos', $in) ? !empty($in['allowPhotos']) : $cur['allowPhotos'],
+        'allowVideos' => array_key_exists('allowVideos', $in) ? !empty($in['allowVideos']) : $cur['allowVideos'],
+        'maxFileMb' => array_key_exists('maxFileMb', $in) ? (int)$in['maxFileMb'] : $cur['maxFileMb'],
+        'dailyCap' => array_key_exists('dailyCap', $in) ? (int)$in['dailyCap'] : $cur['dailyCap'],
+        'invites' => $cur['invites'],
+    ];
+
+    if (!empty($in['clearPassword'])) {
+        $out['password'] = '';
+    } elseif (isset($in['password']) && trim((string)$in['password']) !== '') {
+        $pw = (string)$in['password'];
+        if (strlen($pw) < DROP_PASSWORD_MIN_LEN || strlen($pw) > 200) {
+            respondError(DROP_SHARE_RULES, 400);
+        }
+        $out['password'] = password_hash($pw, PASSWORD_BCRYPT);
+    }
+
+    // Invites are replace-style when sent, like a collection's galleryIds — the
+    // modal always has the full list. Absent means "leave them alone".
+    if (array_key_exists('invites', $in)) {
+        $out['invites'] = dropNormalizeInvites($in['invites']);
+    }
+
+    // Normalise the bounds the same way galleryDrop() reads them.
+    $norm = galleryDrop(['drop' => $out]);
+    // A drop must have a password; it is the only thing standing between a
+    // leaked link and an open write path.
+    if ($norm['enabled'] && $norm['password'] === '') {
+        respondError('A drop needs a password before it can be enabled.', 400);
+    }
+    $gallery['drop'] = $norm;
+}
+
+// What the admin sees for a drop: never the hash.
+function dropAdminPayload(array $g): array {
+    $d = galleryDrop($g);
+    $d['hasPassword'] = $d['password'] !== '';
+    unset($d['password']);
+    return $d;
+}
+
+// Which drop ids this session has unlocked, mirroring the collection convention.
+function isDropUnlocked(string $gid): bool {
+    return !empty($_SESSION['unlocked_drops'])
+        && in_array($gid, $_SESSION['unlocked_drops'], true);
+}
+
+function markDropUnlocked(string $gid): void {
+    if (!isset($_SESSION['unlocked_drops']) || !is_array($_SESSION['unlocked_drops'])) {
+        $_SESSION['unlocked_drops'] = [];
+    }
+    if (!in_array($gid, $_SESSION['unlocked_drops'], true)) {
+        $_SESSION['unlocked_drops'][] = $gid;
+    }
+}
+
+// The name a contributor signed in with, remembered for the session, so their
+// uploads can be attributed. Returns '' when they haven't identified yet.
+function dropSessionEmail(): string {
+    $e = (string)($_SESSION['drop_email'] ?? '');
+    return filter_var($e, FILTER_VALIDATE_EMAIL) ? $e : '';
+}
+
+function setDropSessionEmail(string $email): void {
+    $_SESSION['drop_email'] = strtolower(trim($email));
+}
+
+// Resolve a drop by its share token and answer 404/403/410 itself, so every
+// drop route starts from the same place: the gallery exists, the drop is
+// enabled, the gallery is live, and this session has unlocked it. Returns the
+// gallery record with resolved settings.
+// A session only counts as unlocked while the address it signed in with is still
+// on the invite list. Removing an invite (or an invite that vanished) therefore
+// invalidates the session immediately, rather than leaving a stale cookie able to
+// keep uploading.
+function dropSessionValid(array $gallery): bool {
+    if (!isDropUnlocked($gallery['id'])) return false;
+    $email = dropSessionEmail();
+    return $email !== '' && dropFindInvite($gallery, $email) !== null;
+}
+
+function getDropGallery($token, bool $requireUnlocked = true): array {
+    $gallery = findGalleryByToken($token);
+    if (!$gallery) respondError('Not found', 404);
+    $gallery = resolveEffectiveSettings($gallery);
+    if (($gallery['active'] ?? true) === false) respondError('Not found', 404);
+    if (!empty($gallery['expiresAt']) && strtotime($gallery['expiresAt']) < time()) {
+        respondError('Gallery expired', 410);
+    }
+    $drop = galleryDrop($gallery);
+    if (!$drop['enabled']) respondError('Not found', 404);
+    if ($requireUnlocked && !dropSessionValid($gallery)) {
+        respondError('Drop is locked', 403);
+    }
+    return $gallery;
+}
+
+// The items a drop shows: visible items only (a hidden one is one the owner
+// pulled), in the gallery's sort order.
+function dropItems(array $gallery): array {
+    $items = array_values(array_filter(readGalleryVideos($gallery['id']), function ($v) {
+        return ($v['type'] ?? '') !== 'header' && ($v['visible'] ?? true) !== false;
+    }));
+    return applyGallerySort($gallery, $items, true, null);
+}
+
+// The public drop payload: the gallery's name, what a visitor may add, and the
+// current items. No token, no password hash, no uploader email beyond the
+// items' own `uploader` field (which is the attribution the whole thing is for).
+function dropPayload(array $gallery): array {
+    $d = galleryDrop($gallery);
+    $items = dropItems($gallery);
+    $out = [];
+    foreach ($items as $v) {
+        $keep = [
+            'id' => $v['id'] ?? '',
+            'type' => $v['type'] ?? 'photo',
+            'title' => $v['title'] ?? '',
+            // The stored name is what builds a playable/lightbox URL. It is not
+            // secret — /uploads/ serves by direct URL regardless (the password
+            // gates the page, not the files).
+            'filename' => $v['filename'] ?? '',
+            'thumbnail' => $v['thumbnail'] ?? null,
+            'proxy' => $v['proxy'] ?? null,
+            'width' => $v['width'] ?? null,
+            'height' => $v['height'] ?? null,
+            'duration' => $v['duration'] ?? null,
+            'createdAt' => $v['createdAt'] ?? null,
+            'uploader' => $v['uploader'] ?? null,
+        ];
+        $out[] = $keep;
+    }
+    $email = dropSessionEmail();
+    $invite = $email !== '' ? dropFindInvite($gallery, $email) : null;
+    return [
+        'gallery' => [
+            'name' => $gallery['name'],
+            'allowPhotos' => $d['allowPhotos'],
+            'allowVideos' => $d['allowVideos'],
+            'maxFileMb' => $d['maxFileMb'],
+            'version' => galleryVersion($gallery['id']),
+        ],
+        'items' => $out,
+        'unlocked' => true,
+        // What the page shows in its header: the invite's name when the owner set
+        // one, otherwise the address they signed in with.
+        'email' => $invite ? dropInviteLabel($invite) : $email,
+    ];
 }
 
 // The file name the photographer uploaded, recovered from the stored name
@@ -3803,6 +4147,275 @@ if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/unlock', $ur
     }
     recordView(galleryStatsPath($gallery['id']));
     respond(galleryPayload($gallery, clientViewSort()));
+}
+
+// ============================================================
+// DROP (public, token-based) — visitors can add, not just look
+// ============================================================
+//
+// A drop is unlocked with a shared password plus the visitor's email, which is
+// remembered for the session and stamped on everything they upload. The email
+// is a label for attribution, never a credential.
+
+// A per-drop, per-day upload counter, kept in the drop's own gallery folder so
+// it travels with the gallery and is deleted with it. Returns the count for
+// today (used both to check a cap and to record one).
+function dropDailyCount(string $gid, int $bump = 0): int {
+    $path = galleryDir($gid) . '/drop-usage.json';
+    $today = date('Y-m-d');
+    $count = 0;
+    jsonUpdate($path, function ($data) use ($today, $bump, &$count) {
+        $data = is_array($data) ? $data : [];
+        $day = $data['day'] ?? '';
+        $n = ($day === $today) ? (int)($data['count'] ?? 0) : 0;
+        if ($bump > 0) { $n += $bump; $day = $today; }
+        $count = $n;
+        return ['day' => $day, 'count' => $n];
+    });
+    return $count;
+}
+
+if ($method === 'GET' && matchRoute('/api/drop/{token}', $uri, $params)) {
+    $gallery = findGalleryByToken($params['token']);
+    if (!$gallery) respondError('Not found', 404);
+    $gallery = resolveEffectiveSettings($gallery);
+    if (($gallery['active'] ?? true) === false) respondError('Not found', 404);
+    if (!empty($gallery['expiresAt']) && strtotime($gallery['expiresAt']) < time()) {
+        respondError('Gallery expired', 410);
+    }
+    $drop = galleryDrop($gallery);
+    if (!$drop['enabled']) respondError('Not found', 404);
+    // The visitor may not be unlocked yet: tell the page to ask for the
+    // password + email rather than 403, so it can render the prompt. A session
+    // whose invite has since been removed counts as not unlocked.
+    if (!dropSessionValid($gallery)) {
+        respond(['locked' => true, 'galleryName' => $gallery['name']]);
+    }
+    recordView(galleryStatsPath($gallery['id']));
+    respond(dropPayload($gallery));
+}
+
+if ($method === 'POST' && matchRoute('/api/drop/{token}/unlock', $uri, $params)) {
+    rateLimitCheck('drop-unlock:' . $params['token'] . ':' . ($_SERVER['REMOTE_ADDR'] ?? ''), 8, 60);
+    $gallery = findGalleryByToken($params['token']);
+    if (!$gallery) respondError('Not found', 404);
+    $gallery = resolveEffectiveSettings($gallery);
+    if (($gallery['active'] ?? true) === false) respondError('Not found', 404);
+    if (!empty($gallery['expiresAt']) && strtotime($gallery['expiresAt']) < time()) {
+        respondError('Gallery expired', 410);
+    }
+    $drop = galleryDrop($gallery);
+    if (!$drop['enabled']) respondError('Not found', 404);
+
+    $input = getInput();
+    $password = (string)($input['password'] ?? '');
+    $email = strtolower(trim((string)($input['email'] ?? '')));
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL) || strlen($email) > DROP_EMAIL_MAX_LEN) {
+        respondError('Please enter a valid email address', 400);
+    }
+    if ($password === '') respondError('Incorrect password', 401);
+    if (!password_verify($password, $drop['password'])) {
+        respondError('Incorrect password', 401);
+    }
+    // The email is a credential, not just a label: only an address the owner
+    // invited may unlock the drop. Saying so plainly (rather than a bare
+    // "incorrect") is what lets an invited guest fix a typo; it still reveals
+    // nothing an attacker holding the link does not already have.
+    $invite = dropFindInvite($gallery, $email);
+    if (!$invite) {
+        respondError('That email has not been invited to this gallery. Check the address, or ask for a new invitation.', 403);
+    }
+
+    markDropUnlocked($gallery['id']);
+    setDropSessionEmail($email);
+    recordView(galleryStatsPath($gallery['id']));
+    respond(dropPayload($gallery));
+}
+
+// Start an upload session. The drop token is the destination, so there is no
+// target/galleryId to smuggle: a visitor can only ever upload into this drop.
+if ($method === 'POST' && matchRoute('/api/drop/{token}/uploads', $uri, $params)) {
+    $gallery = getDropGallery($params['token']);
+    rateLimitCheck('drop-up:' . $gallery['id'] . ':' . ($_SERVER['REMOTE_ADDR'] ?? ''), 30, 60);
+
+    cleanupStaleUploads();
+    $input = getInput();
+    $filename = trim((string)($input['filename'] ?? ''));
+    $totalSize = (int)($input['totalSize'] ?? 0);
+    $contentType = (string)($input['contentType'] ?? '');
+    if ($filename === '') respondError('filename is required', 400);
+    if ($totalSize <= 0) respondError('totalSize must be a positive integer', 400);
+
+    $drop = galleryDrop($gallery);
+    $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+    $isPhoto = in_array($ext, IMAGE_EXTS, true);
+    $isVideo = in_array($ext, VIDEO_EXTS, true);
+    if (!$isPhoto && !$isVideo) respondError('Unsupported file type', 400);
+    if ($isPhoto && !$drop['allowPhotos']) respondError('Photo uploads are turned off for this drop', 403);
+    if ($isVideo && !$drop['allowVideos']) respondError('Video uploads are turned off for this drop', 403);
+
+    // Per-file cap and per-drop daily ceiling: the two brakes that keep a leaked
+    // link from filling the host's disk. The daily count is checked here and
+    // incremented at finalize, so a session that is abandoned costs nothing.
+    $cap = $drop['maxFileMb'] * 1024 * 1024;
+    if ($totalSize > $cap) {
+        respondError('That file is larger than the ' . $drop['maxFileMb'] . ' MB limit for this drop.', 413);
+    }
+    if ($drop['dailyCap'] > 0 && dropDailyCount($gallery['id']) >= $drop['dailyCap']) {
+        respondError('This drop has reached its upload limit for today. Try again tomorrow.', 429);
+    }
+
+    $uploadId = bin2hex(random_bytes(16));
+    $partPath = UPLOAD_TMP_DIR . '/' . $uploadId . '.part';
+    $fh = fopen($partPath, 'wb');
+    if (!$fh) respondError('Could not create upload session', 500);
+    fclose($fh);
+
+    writeUploadMeta($uploadId, [
+        'filename'    => $filename,
+        'totalSize'   => $totalSize,
+        'contentType' => $contentType,
+        'received'    => 0,
+        'dropGid'     => $gallery['id'],
+        'createdAt'   => date('c'),
+    ]);
+
+    respond([
+        'uploadId'      => $uploadId,
+        'chunkMaxBytes' => UPLOAD_CHUNK_MAX_BYTES,
+        'totalSize'     => $totalSize,
+    ]);
+}
+
+// Append one chunk. Same Content-Range contract as the admin uploader; the only
+// difference is that the session must belong to this drop.
+if ($method === 'PUT' && matchRoute('/api/drop/{token}/uploads/{uploadId}/chunk', $uri, $params)) {
+    $gallery = getDropGallery($params['token']);
+    $meta = readUploadMeta($params['uploadId']);
+    if (!$meta || ($meta['dropGid'] ?? '') !== $gallery['id']) respondError('Upload session not found', 404);
+
+    $range = $_SERVER['HTTP_CONTENT_RANGE'] ?? '';
+    if (!preg_match('#^bytes\s+(\d+)-(\d+)/(\d+)$#', $range, $m)) {
+        respondError('Content-Range header required (e.g. "bytes 0-1048575/5242880")', 400);
+    }
+    $start = (int)$m[1]; $end = (int)$m[2]; $total = (int)$m[3];
+    if ($total !== (int)$meta['totalSize']) respondError('Content-Range total does not match session totalSize', 400);
+    if ($start !== (int)$meta['received']) respondError('Chunk out of order; expected start=' . $meta['received'], 409);
+    if ($end < $start || $end >= $total) respondError('Invalid Content-Range', 400);
+
+    $expectedLen = $end - $start + 1;
+    if ($expectedLen > UPLOAD_CHUNK_MAX_BYTES) respondError('Chunk exceeds chunkMaxBytes', 413);
+
+    $body = file_get_contents('php://input');
+    if ($body === false) respondError('Could not read request body', 500);
+    if (strlen($body) !== $expectedLen) {
+        respondError('Chunk length ' . strlen($body) . ' does not match Content-Range ' . $expectedLen, 400);
+    }
+
+    $partPath = UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.part';
+    $fh = fopen($partPath, 'ab');
+    if (!$fh) respondError('Could not open upload file', 500);
+    $written = fwrite($fh, $body);
+    fclose($fh);
+    if ($written !== $expectedLen) respondError('Short write appending chunk', 500);
+
+    $meta['received'] = $end + 1;
+    writeUploadMeta($params['uploadId'], $meta);
+    respond([
+        'received'  => $meta['received'],
+        'totalSize' => (int)$meta['totalSize'],
+        'complete'  => $meta['received'] >= (int)$meta['totalSize'],
+    ]);
+}
+
+// Attach the assembled file to the drop, attributed to the signed-in email.
+if ($method === 'POST' && matchRoute('/api/drop/{token}/uploads/{uploadId}/finalize', $uri, $params)) {
+    $gallery = getDropGallery($params['token']);
+    $meta = readUploadMeta($params['uploadId']);
+    if (!$meta || ($meta['dropGid'] ?? '') !== $gallery['id']) respondError('Upload session not found', 404);
+    if ((int)$meta['received'] !== (int)$meta['totalSize']) {
+        respondError('Upload incomplete: received ' . $meta['received'] . ' of ' . $meta['totalSize'] . ' bytes', 400);
+    }
+
+    $email = dropSessionEmail();
+    if ($email === '') respondError('Please unlock the gallery again', 403);
+
+    $drop = galleryDrop($gallery);
+    // Re-check the daily ceiling at finalize: several sessions can be open at
+    // once, so the start-of-session check alone would let them all through.
+    if ($drop['dailyCap'] > 0 && dropDailyCount($gallery['id']) >= $drop['dailyCap']) {
+        @unlink(UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.part');
+        @unlink(UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.json');
+        respondError('This gallery has reached its upload limit for today.', 429);
+    }
+
+    $partPath = UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.part';
+    if (!file_exists($partPath)) respondError('Upload payload missing on disk', 500);
+
+    $safeName = safeFilename($meta['filename']);
+    $destName = reserveUploadName($safeName);
+    $destPath = UPLOADS_DIR . '/' . $destName;
+    if (!rename($partPath, $destPath)) {
+        releaseUploadName($destName);
+        respondError('Could not move assembled file into uploads/', 500);
+    }
+    @unlink(UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.json');
+
+    // Attribution is the point of the email: stamp it on the item so the owner
+    // can tell guest contributions apart. The label is the invite's name when the
+    // owner set one, otherwise the address, and the raw address is kept too so
+    // the admin can always reach the person.
+    $invite = dropFindInvite($gallery, $email);
+    $label = $invite ? dropInviteLabel($invite) : $email;
+    $item = registerGalleryItem($gallery['id'], $destName, '');
+    $item['uploader'] = $label;
+    $item['uploaderEmail'] = $email;
+    $item['source'] = 'drop';
+    jsonUpdate(galleryDir($gallery['id']) . '/videos.json', function ($videos) use ($item) {
+        foreach ($videos as &$v) {
+            if (($v['id'] ?? '') === $item['id']) { $v = $item; break; }
+        }
+        unset($v);
+        return $videos;
+    });
+    dropDailyCount($gallery['id'], 1);
+
+    // The visitor only needs enough to slot the item into their grid now.
+    respond([
+        'item' => [
+            'id' => $item['id'],
+            'type' => $item['type'],
+            'title' => $item['title'],
+            'thumbnail' => $item['thumbnail'] ?? null,
+            'proxy' => $item['proxy'] ?? null,
+            'width' => $item['width'] ?? null,
+            'height' => $item['height'] ?? null,
+            'duration' => $item['duration'] ?? null,
+            'createdAt' => $item['createdAt'] ?? null,
+            'uploader' => $label,
+        ],
+        'version' => galleryVersion($gallery['id']),
+    ]);
+}
+
+// Cancel an in-progress drop upload.
+if ($method === 'DELETE' && matchRoute('/api/drop/{token}/uploads/{uploadId}', $uri, $params)) {
+    $gallery = getDropGallery($params['token']);
+    $meta = readUploadMeta($params['uploadId']);
+    if (!$meta || ($meta['dropGid'] ?? '') !== $gallery['id']) respondError('Upload session not found', 404);
+    @unlink(UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.part');
+    @unlink(UPLOAD_TMP_DIR . '/' . $params['uploadId'] . '.json');
+    respond(['ok' => true]);
+}
+
+// Cheap poll: the item count + mtime marker, so a visitor's page can refresh
+// when someone else adds something. No item data, only the marker.
+if ($method === 'GET' && matchRoute('/api/drop/{token}/version', $uri, $params)) {
+    $gallery = getDropGallery($params['token']);
+    respond([
+        'version' => galleryVersion($gallery['id']),
+        'count' => count(dropItems($gallery)),
+    ]);
 }
 
 if ($method === 'POST' && matchRoute('/api/client/galleries/{token}/comments', $uri, $params)) {

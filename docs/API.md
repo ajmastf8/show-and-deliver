@@ -364,6 +364,69 @@ GET  /api/client/packages/{token}/part/{index}         # download a zip
 GET  /api/client/packages/{token}/file/{fileIndex}     # download one original file
 ```
 
+## Drops (a gallery visitors can add to)
+
+A **drop** is a client gallery other people may add to: one URL, one shared
+password, and an **invite list**. The owner invites people by email (from the
+gallery's **Create drop link** button); each invited address is the **credential**
+that person signs in with, and it is also what their uploads are credited to.
+It is a normal `proofing` gallery with a `drop` object beside its own password
+(see the data shapes below); items land in the same `uploads/` store through the
+same pipeline, so thumbnails, proxies and delivery CRCs are identical to an
+admin upload. Page: `/drop/{token}`.
+
+Only an invited address can unlock. Removing an invite takes effect immediately:
+a session signed in with that address stops working on its next request. The
+password does not protect the files themselves (`/uploads/` serves by direct URL,
+as for any gallery), and the email is never verified — it is checked against the
+owner's invite list, nothing more.
+
+```
+GET  /api/drop/{token}                                 # the drop + items, or {"locked": true}
+POST /api/drop/{token}/unlock                          # {"email": "...", "password": "..."}
+GET  /api/drop/{token}/version                         # {"version", "count"} — cheap poll for new arrivals
+
+POST   /api/drop/{token}/uploads                       # start an upload session (chunked, like the admin's)
+PUT    /api/drop/{token}/uploads/{uploadId}/chunk      # Content-Range: bytes X-Y/TOTAL
+POST   /api/drop/{token}/uploads/{uploadId}/finalize   # attach to the drop, credited to the signed-in invite
+DELETE /api/drop/{token}/uploads/{uploadId}            # cancel
+```
+
+The upload trio mirrors `/api/admin/uploads/*` exactly — same chunk cap, same
+`Content-Range` contract — except the drop token *is* the destination, so there
+is no `target`/`galleryId` to smuggle. Limits enforced before a session starts:
+allowed file types (`allowPhotos`/`allowVideos`), a per-file cap (`maxFileMb`,
+default 500), and an optional per-drop daily cap (`dailyCap`). Everything is
+rate limited.
+
+Admin side, a drop is configured through the gallery's own PUT, and its invite
+list is managed by inviting and removing:
+
+```
+PUT  /api/admin/client/galleries/{id}                  # send {"drop": {...}} to configure
+POST /api/admin/client/galleries/{gid}/drop-invite     # {"to", "name", "password", "message"} — invite + email
+POST /api/admin/client/galleries/{gid}/drop-uninvite   # {"email"} — remove an invite
+```
+
+The `drop` object on a gallery is:
+
+```json
+{
+  "enabled": false,
+  "password": "bcrypt hash",
+  "allowPhotos": true,
+  "allowVideos": true,
+  "maxFileMb": 500,
+  "dailyCap": 0,
+  "invites": [{ "email": "a@example.com", "name": "Alice", "createdAt": "ISO8601" }]
+}
+```
+
+A drop cannot be enabled without a password; a `PUT` that tries gets a `400`.
+`clearPassword: true` removes it (and a drop with no password cannot stay
+enabled). `invites` is replace-style when sent. The admin payload never returns
+the hash — it returns `hasPassword`.
+
 ### Viewer sort, and knowing a gallery changed
 
 `GET /api/client/galleries/{token}` takes two optional query params, `sort` and

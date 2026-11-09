@@ -3203,6 +3203,9 @@ document.addEventListener('DOMContentLoaded', () => {
     $('dropm-save').hidden = !has;
     $('dropm-link').value = has ? dropUrl() : '';
     $('dropm-enabled').classList.toggle('on', has);
+    // For a new drop there is nothing to show under "Invited people" yet, so the
+    // field asks who to invite; once the drop exists the label heads a list.
+    $('dropm-invite-label').textContent = has ? 'Invited people' : 'Who to invite';
     $('dropm-password').value = '';
     $('dropm-password').placeholder = (g.drop && g.drop.hasPassword) ? 'Password set — type to change' : 'Set a password';
     $('dropm-photos').checked = !g.drop || g.drop.allowPhotos !== false;
@@ -3214,6 +3217,8 @@ document.addEventListener('DOMContentLoaded', () => {
     $('dropm-message').value = '';
     renderDropInvites();
     dropModal.hidden = false;
+    // New drop: the first thing to do is set a password, then invite. Existing:
+    // invite the next person.
     setTimeout(() => (has ? $('dropm-invite-email') : $('dropm-password')).focus(), 50);
   }
 

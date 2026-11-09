@@ -258,17 +258,18 @@
           </div>
         </div>
         <div class="switch-row"><div><div class="sr-text">Drop is active</div><div class="sr-sub">Turn off to close the door — invites stop working immediately.</div></div><button type="button" class="switch" id="dropm-enabled"></button></div>
-        <div class="setting-group" style="margin-top:12px;">
-          <label>Invited people</label>
-          <div id="dropm-invites" class="drop-invites"></div>
-          <div style="display:flex;gap:8px;align-items:center;margin-top:10px;">
-            <input type="email" id="dropm-invite-email" class="setting-input" placeholder="name@example.com" autocomplete="off">
-            <input type="text" id="dropm-invite-name" class="setting-input" placeholder="Name (optional)" maxlength="80" autocomplete="off" style="max-width:180px;">
-          </div>
-          <p class="setting-hint" id="dropm-invite-hint">They sign in with this exact email address, so send the invite to the address they will use.</p>
-        </div>
-        <hr class="settings-divider">
       </div>
+
+      <div class="setting-group" style="margin-top:12px;">
+        <label id="dropm-invite-label">Invite someone</label>
+        <div id="dropm-invites" class="drop-invites"></div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:10px;">
+          <input type="email" id="dropm-invite-email" class="setting-input" placeholder="name@example.com" autocomplete="off">
+          <input type="text" id="dropm-invite-name" class="setting-input" placeholder="Name (optional)" maxlength="80" autocomplete="off" style="max-width:180px;">
+        </div>
+        <p class="setting-hint" id="dropm-invite-hint">They sign in with this exact email address, so send the invite to the address they will use.</p>
+      </div>
+      <hr class="settings-divider">
 
       <div class="setting-group">
         <label>Password for this drop</label>

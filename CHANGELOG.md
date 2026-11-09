@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.7.1 — 2026-11-09
+- **Fixed: creating a drop had nowhere to type the invited email.** The invite field only appeared on a drop that already existed, so on a brand-new drop the "who to invite" inputs were hidden and the modal was missing the one thing it needed. The invite field is always visible now — headed "Who to invite" for a new drop and "Invited people" once it exists.
+
 ## 2.7.0 — 2026-11-08
 - **Drop galleries — give someone a link and a password, and they can add to a gallery and see what's in it.** A client gallery can be turned into a *drop*: one URL, one shared password, and an invite list. You invite people by email from the gallery's **Create drop link** button; each invited address is the credential they sign in with, and their uploads are credited to them (by name, if you gave one). Open the button to set the password, choose photos/videos, a per-file size cap and an optional daily upload cap, then invite someone and the link and password are emailed to them. Removing an invite closes that person's access immediately. The page looks and works like a client gallery, with an upload zone at the top. Uploads ride the same chunked pipeline the admin uses, so a multi-GB video isn't capped by the host's `post_max_size`. The password gates the page and adding, not the files themselves — a direct file URL works, exactly as it does for any gallery.
 - **The admin now opens on Client delivery.** Signing in (and every reload) used to return you to whichever tab you last used, which meant it kept opening on Portfolio if you'd ended there. It always lands on Client delivery now; switching tabs still works, it just isn't carried over to the next load.

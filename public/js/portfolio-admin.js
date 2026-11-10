@@ -967,6 +967,7 @@
           <h1>${esc(isHome ? 'Home page' : g.title)}</h1>
           <p class="centre-sub">
             ${urlRow(g.url)}
+            ${isCollection ? '' : `· ${g.publicCount} of ${g.itemCount} ${g.itemCount === 1 ? 'item' : 'items'} live`}
             ${isHome ? '· what visitors see first' : ''}
             ${isHome || g.visible ? '' : '· <span class="pfa-badge">Private</span>'}
           </p>

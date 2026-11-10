@@ -454,9 +454,23 @@ document.addEventListener('DOMContentLoaded', () => {
     return banner;
   }
 
+  // "42 photos · 3 videos" under the title. Section headers don't count.
+  function updateCount(items) {
+    const el = document.getElementById('gallery-count');
+    if (!el) return;
+    const videos = items.filter(i => i.type === 'video').length;
+    const photos = items.filter(i => i.type !== 'video' && i.type !== 'header').length;
+    const parts = [];
+    if (photos) parts.push(`${photos} ${photos === 1 ? 'photo' : 'photos'}`);
+    if (videos) parts.push(`${videos} ${videos === 1 ? 'video' : 'videos'}`);
+    el.textContent = parts.join(' · ');
+    el.hidden = !parts.length;
+  }
+
   function renderVideoList() {
     videoListEl.innerHTML = '';
     const videos = galleryData.items;
+    updateCount(videos);
 
     videos.forEach(item => {
       if (item.type === 'header') {

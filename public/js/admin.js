@@ -357,6 +357,10 @@ document.addEventListener('DOMContentLoaded', () => {
     $('screen-portfolio').hidden = screen !== 'portfolio';
     $('tab-portfolio').classList.toggle('active', screen === 'portfolio');
     $('tab-delivery').classList.toggle('active', screen === 'library' || screen === 'upload');
+    // New menu follows the tab: portfolio things on Portfolio, client things
+    // on Client delivery.
+    const scope = screen === 'portfolio' ? 'pf' : 'client';
+    document.querySelectorAll('#new-menu [data-scope]').forEach(b => { b.hidden = b.dataset.scope !== scope; });
     if (screen === 'upload') renderUpload();
     if (screen === 'portfolio' && window.SDPortfolio) window.SDPortfolio.open();
   }

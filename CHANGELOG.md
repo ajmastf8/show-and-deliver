@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.7.2 — 2026-11-10
+- **The New button follows the tab you're on.** On Portfolio it offers Gallery and Category; on Client delivery it offers Gallery, Collection and Upload files. Before, both sets were listed together under long names, and picking the other tab's item switched tabs under you.
+
 ## 2.7.1 — 2026-11-09
 - **Fixed: creating a drop had nowhere to type the invited email.** The invite field only appeared on a drop that already existed, so on a brand-new drop the "who to invite" inputs were hidden and the modal was missing the one thing it needed. The invite field is always visible now — headed "Who to invite" for a new drop and "Invited people" once it exists.
 

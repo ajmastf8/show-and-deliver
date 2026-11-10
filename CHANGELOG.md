@@ -1,5 +1,8 @@
 # Changelog
 
+## 2.7.3 — 2026-11-10
+- **Galleries show how many pictures they hold.** A client gallery now reads "42 photos · 3 videos" under its title, and the open gallery in the Portfolio admin shows how many of its items are live.
+
 ## 2.7.2 — 2026-11-10
 - **The New button follows the tab you're on.** On Portfolio it offers Gallery and Category; on Client delivery it offers Gallery, Collection and Upload files. Before, both sets were listed together under long names, and picking the other tab's item switched tabs under you.
 
